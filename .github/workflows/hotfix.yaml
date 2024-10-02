@@ -1,0 +1,95 @@
+name: Kubiya API Hotfix CD Workflow
+
+on:
+  pull_request:
+    branches:
+      - production
+
+env:
+  environment: staging
+  SERVICES: conversations_manager,cliConnector,starter,worker,workerInretnal
+  BE_SERVICES: authManager #,core
+
+jobs:
+  build:
+    runs-on: actuated
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Check if source branch is a hotfix
+        env:
+          GH_TOKEN: ${{ secrets.KUBIYA_GITHUB_TOKEN }}
+        run: |
+          if [[ "${{ github.head_ref }}" =~ .*-hotfix-.* || "${{ github.head_ref }}" =~ .*-HOTFIX-.* ]]; then
+            echo "This is a hotfix branch. Updating staging values with production values..."
+          else
+            echo "This is not a hotfix branch. Cancelling the workflow..."
+            gh run cancel ${{ github.run_id }} --repo ${{ github.repository }}
+            sleep 3
+          fi
+
+      - name: Set BRANCH_NAME
+        run: echo "BRANCH_NAME=$(echo ${GITHUB_REF#refs/heads/})" >> $GITHUB_ENV
+
+      # - name: Run tests
+      #   run: go test ./...
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: eu-west-1
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v1
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Buildx and push
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          push: true
+          tags: |
+            564407622114.dkr.ecr.eu-west-1.amazonaws.com/api:${{ github.sha }}
+            564407622114.dkr.ecr.eu-west-1.amazonaws.com/api:${{ github.actor }}
+            564407622114.dkr.ecr.eu-west-1.amazonaws.com/api:${{ env.BRANCH_NAME }}
+          build-args: GITHUB_TOKEN=${{ secrets.KUBIYA_GITHUB_TOKEN }}
+          platforms: linux/amd64,linux/arm64
+
+      - name: Checkout deployments repository
+        uses: actions/checkout@v3
+        with:
+          repository: kubiyabot/deployments
+          ref: main
+          token: ${{ secrets.KUBIYA_GITHUB_TOKEN }}
+
+      - name: Update staging values with production values
+        run: |
+          IFS=',' read -ra SERVICE_LIST <<< "$SERVICES"
+          for service in "${SERVICE_LIST[@]}"; do
+            PROD_TAG=$(yq e ".${service}.image.tag" helm/kubiya-client/values.production.yaml)
+            yq e ".${service}.image.tag = \"$PROD_TAG\"" -i helm/kubiya-client/values.staging.yaml
+          done
+          IFS=',' read -ra SERVICE_LIST <<< "$BE_SERVICES"
+          for service in "${SERVICE_LIST[@]}"; do
+            PROD_TAG=$(yq e ".${service}.image.tag" helm/kubiya-server/values.production.yaml)
+            yq e ".${service}.image.tag = \"$PROD_TAG\"" -i helm/kubiya-server/values.staging.yaml
+          done
+          yq e ".api.image.tag = \"$PROD_TAG\"" -i helm/kubiya-server/values.staging.yaml
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          COMMIT_MSG="Update $GITHUB_REPOSITORY image tag to $GITHUB_SHA for $environment by $GITHUB_ACTOR"
+          git commit -am "$COMMIT_MSG"
+          git push
