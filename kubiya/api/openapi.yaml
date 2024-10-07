@@ -1,0 +1,353 @@
+openapi: 3.0.1
+info:
+  description: API documentation for Kubiya
+  title: Kubiya API
+  version: 1.0.0
+servers:
+- url: https://api.kubiya.com/
+paths:
+  /v1/integrations:
+    get:
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties:
+                  type: string
+                type: object
+          description: OK
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Internal Server Error
+      summary: Get integrations
+      tags:
+      - Integration
+  /v1/integrations/{vendor}:
+    delete:
+      parameters:
+      - description: Vendor name
+        in: path
+        name: vendor
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties:
+                  type: string
+                type: object
+          description: Deleted
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Internal Server Error
+      summary: Delete vendor integration
+      tags:
+      - Integration
+    get:
+      parameters:
+      - description: Vendor name
+        in: path
+        name: vendor
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties:
+                  type: string
+                type: object
+          description: OK
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Internal Server Error
+      summary: Get vendor integration
+      tags:
+      - Integration
+  /v1/integrations/{vendor}/status:
+    post:
+      parameters:
+      - description: Vendor name
+        in: path
+        name: vendor
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/_v1_integrations__vendor__status_post_request'
+        description: Status update
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties:
+                  type: string
+                type: object
+          description: Status updated
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Internal Server Error
+      summary: Update vendor integration status
+      tags:
+      - Integration
+      x-codegen-request-body-name: body
+  /v1/secrets:
+    get:
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties:
+                  type: string
+                type: object
+          description: OK
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Internal Server Error
+      summary: Get secrets
+      tags:
+      - Secrets
+    post:
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SecretRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/WorkflowResponse'
+                type: array
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HttpError'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HttpError'
+          description: Unauthorized
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HttpError'
+          description: Internal Server Error
+      summary: Create secrets
+      tags:
+      - Secrets
+      x-codegen-request-body-name: body
+  /v1/runners:
+    get:
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties:
+                  type: string
+                type: object
+          description: OK
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Internal Server Error
+      summary: Get runners
+      tags:
+      - Runners
+  /v1/runners/{runner}/health:
+    get:
+      parameters:
+      - description: Runner name
+        in: path
+        name: runner
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthCheckResponse'
+          description: OK
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HttpError'
+          description: Unauthorized
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HttpError'
+          description: Internal Server Error
+      summary: Get runner health
+      tags:
+      - Runners
+  /version:
+    get:
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: string
+          description: Current API version
+      summary: Get API version
+      tags:
+      - Health
+  /whoami:
+    get:
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WhoAmIResponse'
+          description: User information
+      summary: Get user information
+      tags:
+      - Health
+components:
+  schemas:
+    ErrorResponse:
+      example:
+        success: true
+        error: error
+      properties:
+        error:
+          type: string
+        success:
+          type: boolean
+      type: object
+    HttpError:
+      example:
+        code: 0
+        error: error
+      properties:
+        code:
+          type: integer
+        error:
+          type: string
+      type: object
+    SecretRequest:
+      example:
+        secrets:
+        - base_64: true
+          trace_id: trace_id
+          name: name
+          description: description
+          value: value
+        - base_64: true
+          trace_id: trace_id
+          name: name
+          description: description
+          value: value
+      properties:
+        secrets:
+          items:
+            $ref: '#/components/schemas/SecretType'
+          type: array
+      type: object
+    SecretType:
+      example:
+        base_64: true
+        trace_id: trace_id
+        name: name
+        description: description
+        value: value
+      properties:
+        base_64:
+          type: boolean
+        description:
+          type: string
+        name:
+          type: string
+        trace_id:
+          type: string
+        value:
+          type: string
+      type: object
+    WorkflowResponse:
+      example:
+        result: "{}"
+        error: error
+        status: status
+      properties:
+        error:
+          type: string
+        result:
+          type: object
+        status:
+          type: string
+      type: object
+    HealthCheckResponse:
+      example:
+        health: health
+        error: error
+      properties:
+        error:
+          type: string
+        health:
+          type: string
+      type: object
+    WhoAmIResponse:
+      example:
+        organization: organization
+        email: email
+      properties:
+        email:
+          type: string
+        organization:
+          type: string
+      type: object
+    _v1_integrations__vendor__status_post_request:
+      properties:
+        status:
+          type: string
+      type: object
+  securitySchemes:
+    JWT:
+      in: header
+      name: token
+      type: apiKey
+x-original-swagger-version: "2.0"
