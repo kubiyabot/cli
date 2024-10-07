@@ -1,0 +1,71 @@
+package cmd
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"strconv"
+
+	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
+
+	"github.com/kubiyabot/cli/kubiya"
+)
+
+var {{ .Tag }}Cmd = &cobra.Command{
+	Use:   "{{ .Tag }}",
+	Short: "Manage {{ .Tag }}",
+	Long:  `Manage {{ .Tag }} in the Kubiya platform.`,
+}
+
+func init() {
+	rootCmd.AddCommand({{ .Tag }}Cmd)
+}
+
+{{ range .Commands }}
+// {{ .Name }}Cmd represents the {{ .Name }} command
+var {{ .Name }}Cmd = &cobra.Command{
+	Use:   "{{ .Name }}",
+	Short: "{{ .Operation.Summary }}",
+	Long:  `{{ .Operation.Description }}`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		{{ if .HasPathParams }}
+		// Retrieve path parameters
+		{{ range .Operation.Parameters }}
+		{{ if eq .In "path" }}
+		{{ .Name }}, err := cmd.Flags().GetString("{{ .Name }}")
+		if err != nil {
+			return err
+		}
+		{{ end }}
+		{{ end }}
+		{{ end }}
+
+		// ... existing code ...
+
+		return nil
+	},
+}
+
+func init() {
+	{{ $.Tag }}Cmd.AddCommand({{ .Name }}Cmd)
+
+	// Capture the command name
+	{{ $cmdName := .Name }}
+
+	{{/* Register command flags */}}
+	{{ range .Operation.Parameters }}
+	{{ if eq .In "path" }}
+	{{ $cmdName }}Cmd.Flags().String("{{ .Name }}", "", "{{ .Description }}")
+	{{ $cmdName }}Cmd.MarkFlagRequired("{{ .Name }}")
+	{{ else if eq .In "query" }}
+	{{ $cmdName }}Cmd.Flags().String("{{ .Name }}", "", "{{ .Description }}")
+	{{ else if eq .In "body" }}
+	{{/* Assuming body parameters are collected via flags */}}
+	{{ $cmdName }}Cmd.Flags().String("{{ .Name }}", "", "{{ .Description }}")
+	{{ $cmdName }}Cmd.MarkFlagRequired("{{ .Name }}")
+	{{ end }}
+	{{ end }}
+}
+{{ end }}
