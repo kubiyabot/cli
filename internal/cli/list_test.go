@@ -3,8 +3,6 @@ package cli
 import (
 	"bytes"
 	"testing"
-
-	"github.com/kubiyabot/cli/internal/config"
 )
 
 func TestListCommand(t *testing.T) {
