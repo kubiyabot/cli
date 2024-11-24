@@ -6,31 +6,20 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 )
 
 // Source-related client methods
 func (c *Client) ListSources(ctx context.Context) ([]Source, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET",
-		fmt.Sprintf("%s/sources", c.cfg.BaseURL), nil)
+	resp, err := c.get(ctx, "/sources")
 	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Set("Authorization", "UserKey "+c.cfg.APIKey)
-
-	resp, err := c.client.Do(req)
-	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to list sources: %w", err)
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
-	}
-
 	var sources []Source
 	if err := json.NewDecoder(resp.Body).Decode(&sources); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to decode sources response: %w", err)
 	}
 
 	return sources, nil
@@ -49,7 +38,7 @@ func (c *Client) GetSourceMetadata(ctx context.Context, uuid string) (*Source, e
 	}
 
 	// Now load the source to get tools
-	loadURL := fmt.Sprintf("%s/sources/load?url=%s", c.baseURL, source.URL)
+	loadURL := fmt.Sprintf("%s/sources/load?url=%s", c.baseURL, url.QueryEscape(source.URL))
 	loadReq, err := http.NewRequestWithContext(ctx, "GET", loadURL, nil)
 	if err != nil {
 		return nil, err
@@ -72,25 +61,36 @@ func (c *Client) GetSourceMetadata(ctx context.Context, uuid string) (*Source, e
 }
 
 func (c *Client) DeleteSource(ctx context.Context, sourceUUID string) error {
-	req, err := http.NewRequestWithContext(ctx, "DELETE",
-		fmt.Sprintf("%s/sources/%s", c.cfg.BaseURL, sourceUUID), nil)
-	if err != nil {
-		return err
-	}
-
-	req.Header.Set("Authorization", "UserKey "+c.cfg.APIKey)
-
-	resp, err := c.client.Do(req)
+	resp, err := c.delete(ctx, fmt.Sprintf("/sources/%s", sourceUUID))
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
+	return nil
+}
 
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+// Helper method for DELETE requests
+func (c *Client) delete(ctx context.Context, path string) (*http.Response, error) {
+	url := fmt.Sprintf("%s%s", c.baseURL, path)
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
-	return nil
+	req.Header.Set("Authorization", "UserKey "+c.cfg.APIKey)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to execute request: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		resp.Body.Close()
+		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+	}
+
+	return resp, nil
 }
 
 // SyncSource triggers a sync for a specific source

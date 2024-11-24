@@ -7,9 +7,11 @@ import (
 	"os/exec"
 	"strings"
 	"text/tabwriter"
+	"time"
 
 	"github.com/kubiyabot/cli/internal/config"
 	"github.com/kubiyabot/cli/internal/kubiya"
+	"github.com/kubiyabot/cli/internal/style"
 	"github.com/kubiyabot/cli/internal/tui"
 	"github.com/spf13/cobra"
 )
@@ -55,7 +57,7 @@ func newListSourcesCommand(cfg *config.Config) *cobra.Command {
 				return json.NewEncoder(os.Stdout).Encode(sources)
 			case "text":
 				w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-				fmt.Fprintln(w, "📦 SOURCES\n")
+				fmt.Fprintln(w, style.TitleStyle.Render(" 📦 SOURCES\n"))
 				fmt.Fprintln(w, "UUID\tNAME\t🛠️ TOOLS\t👥 TEAMMATES\t⚠️ ERRORS\tMANAGED BY")
 				for _, s := range sources {
 					status := "✅"
@@ -87,67 +89,123 @@ func newDescribeSourceCommand(cfg *config.Config) *cobra.Command {
 	var outputFormat string
 
 	cmd := &cobra.Command{
-		Use:     "describe [source-uuid]",
-		Short:   "🔍 Show detailed information about a source",
-		Example: "  kubiya source describe abc-123\n  kubiya source describe abc-123 --output json",
-		Args:    cobra.ExactArgs(1),
+		Use:   "describe [source-uuid]",
+		Short: "📖 Show detailed information about a source",
+		Example: `  # Describe a source
+  kubiya source describe abc-123
+
+  # Output in JSON format
+  kubiya source describe abc-123 --output json`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			client := kubiya.NewClient(cfg)
-			metadata, err := client.GetSourceMetadata(cmd.Context(), args[0])
+			sourceUUID := args[0]
+
+			source, err := client.GetSourceMetadata(cmd.Context(), sourceUUID)
 			if err != nil {
 				return err
 			}
 
 			switch outputFormat {
 			case "json":
-				return json.NewEncoder(os.Stdout).Encode(metadata)
+				return json.NewEncoder(os.Stdout).Encode(source)
 			case "text":
-				fmt.Printf("📦 Source Details\n\n")
-				fmt.Printf("UUID: %s\n", metadata.UUID)
-				if !metadata.CreatedAt.IsZero() {
-					fmt.Printf("Created: %s\n", metadata.CreatedAt.Format("Jan 02, 2006 15:04 MST"))
-				}
-				if !metadata.UpdatedAt.IsZero() {
-					fmt.Printf("Updated: %s\n", metadata.UpdatedAt.Format("Jan 02, 2006 15:04 MST"))
+				// Header section
+				fmt.Printf("\n%s\n\n", style.TitleStyle.Render(" 📦 Source Details "))
+
+				// Basic information section
+				fmt.Printf("%s\n", style.SubtitleStyle.Render("Basic Information"))
+				fmt.Printf("  Name:        %s\n", style.HighlightStyle.Render(source.Name))
+				fmt.Printf("  UUID:        %s\n", source.UUID)
+				fmt.Printf("  Description: %s\n", source.Description)
+				fmt.Printf("  URL:         %s\n", source.URL)
+				fmt.Printf("  Managed By:  %s\n", source.ManagedBy)
+				fmt.Println()
+
+				// Statistics section
+				fmt.Printf("%s\n", style.SubtitleStyle.Render("Statistics"))
+				stats := []struct {
+					name  string
+					count int
+					icon  string
+				}{
+					{"Tools", source.ConnectedToolsCount, "🛠️"},
+					{"Agents", source.ConnectedAgentsCount, "🤖"},
+					{"Workflows", source.ConnectedWorkflowsCount, "📋"},
+					{"Errors", source.ErrorsCount, "⚠️"},
 				}
 
-				if len(metadata.Tools) == 0 {
-					fmt.Printf("\n🛠️  No tools found\n")
-					return nil
+				w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+				for _, stat := range stats {
+					fmt.Fprintf(w, "  %s %s:\t%s\n",
+						stat.icon,
+						stat.name,
+						style.HighlightStyle.Render(fmt.Sprintf("%d", stat.count)))
 				}
+				w.Flush()
+				fmt.Println()
 
-				fmt.Printf("\n🛠️  Tools (%d):\n", len(metadata.Tools))
-				for i, tool := range metadata.Tools {
-					fmt.Printf("\n%d. %s\n", i+1, tool.Name)
-					if tool.Alias != "" {
-						fmt.Printf("   Alias: %s\n", tool.Alias)
+				// Metadata section if available
+				if source.KubiyaMetadata.LastUpdated != "" || source.KubiyaMetadata.UserLastUpdated != "" {
+					fmt.Printf("%s\n", style.SubtitleStyle.Render("Kubiya Metadata"))
+					if source.KubiyaMetadata.LastUpdated != "" {
+						fmt.Printf("  Last Updated: %s\n", source.KubiyaMetadata.LastUpdated)
 					}
-					fmt.Printf("   Description: %s\n", tool.Description)
-					fmt.Printf("   Type: %s\n", tool.Type)
+					if source.KubiyaMetadata.UserLastUpdated != "" {
+						fmt.Printf("  Updated By:   %s\n", source.KubiyaMetadata.UserLastUpdated)
+					}
+					fmt.Println()
+				}
 
-					if len(tool.Args) > 0 {
-						fmt.Printf("   Arguments:\n")
-						for _, arg := range tool.Args {
-							required := "optional"
-							if arg.Required {
-								required = "required"
+				// Tools section
+				if len(source.Tools) > 0 {
+					fmt.Printf("%s\n", style.SubtitleStyle.Render("Available Tools"))
+					for i, tool := range source.Tools {
+						fmt.Printf("  %d. %s\n", i+1, style.HighlightStyle.Render(tool.Name))
+						if tool.Description != "" {
+							fmt.Printf("     %s\n", tool.Description)
+						}
+
+						// Show arguments if any
+						if len(tool.Args) > 0 {
+							fmt.Printf("     %s:\n", style.DimStyle.Render("Arguments"))
+							for _, arg := range tool.Args {
+								required := style.DimStyle.Render("optional")
+								if arg.Required {
+									required = style.HighlightStyle.Render("required")
+								}
+								fmt.Printf("       • %s: %s (%s)\n",
+									style.HighlightStyle.Render(arg.Name),
+									arg.Description,
+									required)
 							}
-							fmt.Printf("   • %s: %s (%s)\n",
-								arg.Name, arg.Description, required)
 						}
-					}
 
-					if len(tool.Env) > 0 {
-						fmt.Printf("   Environment Variables:\n")
-						for _, env := range tool.Env {
-							fmt.Printf("   • %s\n", env)
+						// Show environment variables if any
+						if len(tool.Env) > 0 {
+							fmt.Printf("     %s:\n", style.DimStyle.Render("Environment"))
+							for _, env := range tool.Env {
+								if icon, label, ok := getEnvIntegration(env); ok {
+									fmt.Printf("       • %s %s %s\n",
+										env,
+										icon,
+										style.DimStyle.Render(fmt.Sprintf("(Inherited from %s)", label)))
+								} else {
+									fmt.Printf("       • %s\n", env)
+								}
+							}
 						}
-					}
-
-					if tool.LongRunning {
-						fmt.Printf("   ⏳ Long-running task\n")
+						fmt.Println()
 					}
 				}
+
+				// Timestamps section
+				fmt.Printf("%s\n", style.SubtitleStyle.Render("Timestamps"))
+				fmt.Printf("  Created: %s\n", source.CreatedAt.Format(time.RFC822))
+				fmt.Printf("  Updated: %s\n", source.UpdatedAt.Format(time.RFC822))
+				fmt.Printf("  Age:     %s\n", formatDuration(time.Since(source.CreatedAt)))
+				fmt.Println()
+
 				return nil
 			default:
 				return fmt.Errorf("unknown output format: %s", outputFormat)
@@ -157,6 +215,42 @@ func newDescribeSourceCommand(cfg *config.Config) *cobra.Command {
 
 	cmd.Flags().StringVarP(&outputFormat, "output", "o", "text", "Output format (text|json)")
 	return cmd
+}
+
+// Helper function to format duration in a human-readable way
+func formatDuration(d time.Duration) string {
+	days := int(d.Hours() / 24)
+	hours := int(d.Hours()) % 24
+	minutes := int(d.Minutes()) % 60
+
+	parts := []string{}
+	if days > 0 {
+		if days == 1 {
+			parts = append(parts, "1 day")
+		} else {
+			parts = append(parts, fmt.Sprintf("%d days", days))
+		}
+	}
+	if hours > 0 {
+		if hours == 1 {
+			parts = append(parts, "1 hour")
+		} else {
+			parts = append(parts, fmt.Sprintf("%d hours", hours))
+		}
+	}
+	if minutes > 0 && days == 0 { // Only show minutes if less than a day old
+		if minutes == 1 {
+			parts = append(parts, "1 minute")
+		} else {
+			parts = append(parts, fmt.Sprintf("%d minutes", minutes))
+		}
+	}
+
+	if len(parts) == 0 {
+		return "less than a minute"
+	}
+
+	return strings.Join(parts, ", ")
 }
 
 func newDeleteSourceCommand(cfg *config.Config) *cobra.Command {
