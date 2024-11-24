@@ -74,8 +74,8 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            ${{ github.actor }}-${{ env.SHA_SHORT }}
-            latest
+            type=raw,value=latest
+            type=sha,prefix=sha-,format=short
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v6
