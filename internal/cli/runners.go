@@ -47,7 +47,7 @@ func newListRunnersCommand(cfg *config.Config) *cobra.Command {
 				return json.NewEncoder(os.Stdout).Encode(runners)
 			case "text":
 				w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-				fmt.Fprintln(w, "🏃 RUNNERS\n")
+				fmt.Fprintln(w, "🏃 RUNNERS")
 				fmt.Fprintln(w, "NAME\tTYPE\tNAMESPACE\tSTATUS\tHEALTH")
 				for _, r := range runners {
 					fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",

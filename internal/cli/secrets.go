@@ -48,7 +48,7 @@ func newListSecretsCommand(cfg *config.Config) *cobra.Command {
 				return json.NewEncoder(os.Stdout).Encode(secrets)
 			case "text":
 				w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-				fmt.Fprintln(w, "🔒 SECRETS\n")
+				fmt.Fprintln(w, "🔒 SECRETS")
 				fmt.Fprintln(w, "NAME\tCREATED BY\tCREATED AT\tDESCRIPTION")
 				for _, s := range secrets {
 					fmt.Fprintf(w, "%s\t%s\t%s\t%s\n",
