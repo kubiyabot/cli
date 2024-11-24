@@ -22,7 +22,7 @@ func (c *Client) SendMessage(ctx context.Context, agentUUID, message string) (*C
 	}
 
 	req, err := http.NewRequestWithContext(ctx, "POST",
-		fmt.Sprintf("%s/chat", c.cfg.BaseURL), bytes.NewBuffer(data))
+		fmt.Sprintf("%s/converse", c.cfg.BaseURL), bytes.NewBuffer(data))
 	if err != nil {
 		return nil, err
 	}
