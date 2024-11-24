@@ -7,16 +7,21 @@ on:
 
 env:
   environment: staging
-  SERVICES: conversations_manager,cliConnector,starter,worker,workerInretnal
-  BE_SERVICES: authManager #,core
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+  REPO_NAME: ${{ github.event.repository.name }}
 
 jobs:
   build:
-    runs-on: actuated
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
     
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Check if source branch is a hotfix
         env:
@@ -33,43 +38,43 @@ jobs:
       - name: Set BRANCH_NAME
         run: echo "BRANCH_NAME=$(echo ${GITHUB_REF#refs/heads/})" >> $GITHUB_ENV
 
-      # - name: Run tests
-      #   run: go test ./...
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
 
-      - name: Login to Docker Hub
+      - name: Log in to the Container registry
         uses: docker/login-action@v2
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v1
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: eu-west-1
-
-      - name: Login to Amazon ECR
-        id: login-ecr
-        uses: aws-actions/amazon-ecr-login@v1
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v2
 
-      - name: Buildx and push
-        uses: docker/build-push-action@v4
+      - name: Extract metadata for Docker
+        id: meta
+        uses: docker/metadata-action@v3
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=sha,prefix=sha-,format=short
+            type=ref,event=branch
+            type=raw,value={{branch}}-{{sha}}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
         with:
           context: .
           push: true
-          tags: |
-            564407622114.dkr.ecr.eu-west-1.amazonaws.com/api:${{ github.sha }}
-            564407622114.dkr.ecr.eu-west-1.amazonaws.com/api:${{ github.actor }}
-            564407622114.dkr.ecr.eu-west-1.amazonaws.com/api:${{ env.BRANCH_NAME }}
-          build-args: GITHUB_TOKEN=${{ secrets.KUBIYA_GITHUB_TOKEN }}
           platforms: linux/amd64,linux/arm64
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: GITHUB_TOKEN=${{ secrets.KUBIYA_GITHUB_TOKEN }}
 
       - name: Checkout deployments repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           repository: kubiyabot/deployments
           ref: main

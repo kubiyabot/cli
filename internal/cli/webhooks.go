@@ -50,7 +50,7 @@ func newListWebhooksCommand(cfg *config.Config) *cobra.Command {
 				return json.NewEncoder(os.Stdout).Encode(webhooks)
 			case "text":
 				w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-				fmt.Fprintln(w, "🔗 WEBHOOKS\n")
+				fmt.Fprintln(w, "🔗 WEBHOOKS")
 				fmt.Fprintln(w, "ID\tNAME\tSOURCE\tDESTINATION\tMETHOD")
 				for _, wh := range webhooks {
 					fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
