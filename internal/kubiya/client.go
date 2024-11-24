@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"time"
@@ -23,14 +24,13 @@ type Client struct {
 
 // NewClient creates a new Kubiya API client
 func NewClient(cfg *config.Config) *Client {
-	client := &Client{
+	return &Client{
 		cfg:     cfg,
 		client:  &http.Client{Timeout: 30 * time.Second},
 		baseURL: cfg.BaseURL,
 		debug:   cfg.Debug,
 		cache:   NewCache(5 * time.Minute),
 	}
-	return client
 }
 
 // do performs an HTTP request and decodes the response into v
@@ -329,4 +329,93 @@ func (c *Client) ListTools(ctx context.Context, sourceURL string) ([]Tool, error
 	}
 
 	return source.Tools, nil
+}
+
+func (c *Client) GetRunner(ctx context.Context, name string) (Runner, error) {
+	// Call the runners describe endpoint directly
+	resp, err := c.get(ctx, fmt.Sprintf("/runners/%s/describe", name))
+	if err != nil {
+		return Runner{}, fmt.Errorf("failed to get runner details: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var runner Runner
+	if err := json.NewDecoder(resp.Body).Decode(&runner); err != nil {
+		return Runner{}, fmt.Errorf("failed to decode runner response: %w", err)
+	}
+
+	// Convert version if it's a number
+	if runner.Version == "0" {
+		runner.Version = "v1"
+	} else if runner.Version == "2" {
+		runner.Version = "v2"
+	}
+
+	return runner, nil
+}
+
+// Add this method to list all runners
+func (c *Client) ListRunners(ctx context.Context) ([]Runner, error) {
+	resp, err := c.get(ctx, "/runners")
+	if err != nil {
+		return nil, fmt.Errorf("failed to list runners: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var runners []Runner
+	if err := json.NewDecoder(resp.Body).Decode(&runners); err != nil {
+		return nil, fmt.Errorf("failed to decode runners response: %w", err)
+	}
+
+	// Convert version numbers to strings for consistency
+	for i := range runners {
+		if runners[i].Version == "0" {
+			runners[i].Version = "v1"
+		} else if runners[i].Version == "2" {
+			runners[i].Version = "v2"
+		}
+	}
+
+	return runners, nil
+}
+
+// Add this method to get runner manifest
+func (c *Client) GetRunnerManifest(ctx context.Context, name string) (RunnerManifest, error) {
+	resp, err := c.get(ctx, fmt.Sprintf("/runners/%s/manifest", name))
+	if err != nil {
+		return RunnerManifest{}, fmt.Errorf("failed to get runner manifest: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var manifest RunnerManifest
+	if err := json.NewDecoder(resp.Body).Decode(&manifest); err != nil {
+		return RunnerManifest{}, fmt.Errorf("failed to decode manifest response: %w", err)
+	}
+
+	return manifest, nil
+}
+
+// Add this method to download manifest content
+func (c *Client) DownloadManifest(ctx context.Context, url string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to download manifest: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+	}
+
+	content, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read manifest content: %w", err)
+	}
+
+	return content, nil
 }
