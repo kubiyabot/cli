@@ -40,6 +40,7 @@ type Source struct {
 	UUID                    string         `json:"uuid"`
 	URL                     string         `json:"url"`
 	Name                    string         `json:"name"`
+	Description             string         `json:"description"`
 	TaskID                  string         `json:"task_id"`
 	ManagedBy               string         `json:"managed_by"`
 	ConnectedAgentsCount    int            `json:"connected_agents_count"`
@@ -47,6 +48,9 @@ type Source struct {
 	ConnectedWorkflowsCount int            `json:"connected_workflows_count"`
 	KubiyaMetadata          KubiyaMetadata `json:"kubiya_metadata"`
 	ErrorsCount             int            `json:"errors_count"`
+	Tools                   []Tool         `json:"tools"`
+	CreatedAt               time.Time      `json:"created_at"`
+	UpdatedAt               time.Time      `json:"updated_at"`
 }
 
 // KubiyaMetadata represents metadata about source creation and updates
@@ -227,4 +231,17 @@ type Webhook struct {
 type Communication struct {
 	Method      string `json:"method"`
 	Destination string `json:"destination"`
+}
+
+// Add this to types.go
+type Secret struct {
+	Name        string `json:"name"`
+	CreatedBy   string `json:"created_by"`
+	CreatedAt   string `json:"created_at"`
+	Description string `json:"description"`
+}
+
+type SecretValue struct {
+	Name  string `json:"name"`
+	Value string `json:"value"`
 }

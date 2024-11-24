@@ -2,6 +2,7 @@ package cli
 
 import (
 	"github.com/kubiyabot/cli/internal/config"
+	"github.com/kubiyabot/cli/internal/tui"
 	"github.com/spf13/cobra"
 )
 
@@ -17,37 +18,37 @@ Use 'kubiya --help' to see all available commands.
 Quick Start:
   • List teammates:    kubiya list
   • Chat:             kubiya chat --interactive
+  • Browse sources:    kubiya browse  # Interactive source browser
   • List sources:     kubiya source list
   • Manage knowledge: kubiya knowledge list
   • Manage runners:   kubiya runner list
   • Manage webhooks:  kubiya webhook list
 
 Need help? Visit: https://docs.kubiya.ai`,
-		Example: `  # Interactive chat
-  kubiya chat --interactive
-
-  # List sources
-  kubiya source list
-
-  # Manage knowledge
-  kubiya knowledge list
-
-  # Manage runners
-  kubiya runner list
-
-  # Manage webhooks
-  kubiya webhook list`,
-		SilenceUsage: true,
 	}
 
-	// Add subcommands
+	// Add the browse command as a top-level alias for source interactive
+	browseCmd := &cobra.Command{
+		Use:     "browse",
+		Aliases: []string{"b"},
+		Short:   "🎮 Browse and execute tools interactively",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			app := tui.NewSourceBrowser(cfg)
+			return app.Run()
+		},
+	}
+	rootCmd.AddCommand(browseCmd)
+
+	// Add other subcommands
 	rootCmd.AddCommand(
 		newChatCommand(cfg),
 		newListCommand(cfg),
 		newSourcesCommand(cfg),
+		newToolsCommand(cfg),
 		newKnowledgeCommand(cfg),
 		newRunnersCommand(cfg),
 		newWebhooksCommand(cfg),
+		newSecretsCommand(cfg),
 	)
 
 	return rootCmd.Execute()

@@ -36,31 +36,39 @@ func (c *Client) ListSources(ctx context.Context) ([]Source, error) {
 	return sources, nil
 }
 
-func (c *Client) GetSourceMetadata(ctx context.Context, sourceUUID string) (*SourceMetadata, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET",
-		fmt.Sprintf("%s/sources/%s", c.cfg.BaseURL, sourceUUID), nil)
+func (c *Client) GetSourceMetadata(ctx context.Context, uuid string) (*Source, error) {
+	// First get the source to get its URL
+	req, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("%s/sources/%s", c.baseURL, uuid), nil)
 	if err != nil {
 		return nil, err
 	}
 
-	req.Header.Set("Authorization", "UserKey "+c.cfg.APIKey)
+	var source Source
+	if err := c.do(req, &source); err != nil {
+		return nil, err
+	}
 
-	resp, err := c.client.Do(req)
+	// Now load the source to get tools
+	loadURL := fmt.Sprintf("%s/sources/load?url=%s", c.baseURL, source.URL)
+	loadReq, err := http.NewRequestWithContext(ctx, "GET", loadURL, nil)
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
-	}
-
-	var metadata SourceMetadata
-	if err := json.NewDecoder(resp.Body).Decode(&metadata); err != nil {
+	var loadedSource Source
+	if err := c.do(loadReq, &loadedSource); err != nil {
 		return nil, err
 	}
 
-	return &metadata, nil
+	// Merge the loaded source data with the original source
+	source.Tools = loadedSource.Tools
+
+	if c.debug {
+		fmt.Printf("Source URL: %s\n", source.URL)
+		fmt.Printf("Number of tools: %d\n", len(source.Tools))
+	}
+
+	return &source, nil
 }
 
 func (c *Client) DeleteSource(ctx context.Context, sourceUUID string) error {
@@ -116,31 +124,26 @@ func (c *Client) SyncSource(ctx context.Context, sourceUUID string) (*Source, er
 }
 
 // LoadSource loads a source from a URL or local path
-func (c *Client) LoadSource(ctx context.Context, url string) (*SourceMetadata, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET",
-		fmt.Sprintf("%s/sources/load?url=%s", c.cfg.BaseURL, url), nil)
+func (c *Client) LoadSource(ctx context.Context, url string) (*Source, error) {
+	reqURL := fmt.Sprintf("%s/sources/load?url=%s", c.baseURL, url)
+
+	req, err := http.NewRequestWithContext(ctx, "GET", reqURL, nil)
 	if err != nil {
 		return nil, err
 	}
 
-	req.Header.Set("Authorization", "UserKey "+c.cfg.APIKey)
-
-	resp, err := c.client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
-	}
-
-	var metadata SourceMetadata
-	if err := json.NewDecoder(resp.Body).Decode(&metadata); err != nil {
+	var source Source
+	if err := c.do(req, &source); err != nil {
 		return nil, err
 	}
 
-	return &metadata, nil
+	// Add debug logging
+	if c.debug {
+		fmt.Printf("Load source response: %+v\n", source)
+		fmt.Printf("Number of tools: %d\n", len(source.Tools))
+	}
+
+	return &source, nil
 }
 
 // CreateSource creates a new source from a URL
