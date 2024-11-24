@@ -18,17 +18,18 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
 
-      - name: Check if source branch is a release
-        env:
-          GITHUB_TOKEN: ${{ secrets.KUBIYA_GITHUB_TOKEN }}
-          GH_TOKEN: ${{ secrets.KUBIYA_GITHUB_TOKEN }}
-        run: |
-          if [[ "${{ github.ref }}" =~ release-.* ]]; then
-            echo "This is a release branch. Updating ArgoCD values file and pushing..."
-          else
-            echo "This is not a release branch. Cancelling the workflow..."
-            gh run cancel ${{ github.run_id }} --repo ${{ env.REPO_NAME }}
-          fi
+      # TODO: Uncomment this when we have a release branch
+      # - name: Check if source branch is a release
+      #   env:
+      #     GITHUB_TOKEN: ${{ secrets.KUBIYA_GITHUB_TOKEN }}
+      #     GH_TOKEN: ${{ secrets.KUBIYA_GITHUB_TOKEN }}
+      #   run: |
+      #     if [[ "${{ github.ref }}" =~ release-.* ]]; then
+      #       echo "This is a release branch. Updating ArgoCD values file and pushing..."
+      #     else
+      #       echo "This is not a release branch. Cancelling the workflow..."
+      #       gh run cancel ${{ github.run_id }} --repo ${{ env.REPO_NAME }}
+      #     fi
 
       - name: Set BRANCH_NAME
         run: echo "BRANCH_NAME=$(echo ${GITHUB_REF#refs/heads/})" >> $GITHUB_ENV
