@@ -39,7 +39,7 @@ func newListRunnersCommand(cfg *config.Config) *cobra.Command {
 			client := kubiya.NewClient(cfg)
 			runners, err := client.ListRunners(cmd.Context())
 			if err != nil {
-				return fmt.Errorf("failed to list runners: %w", err)
+				return err
 			}
 
 			switch outputFormat {
@@ -94,13 +94,13 @@ func newGetRunnerManifestCommand(cfg *config.Config) *cobra.Command {
 			// Get manifest URL
 			manifest, err := client.GetRunnerManifest(cmd.Context(), args[0])
 			if err != nil {
-				return fmt.Errorf("failed to get manifest URL: %w", err)
+				return err
 			}
 
 			// Download manifest content
 			content, err := client.DownloadManifest(cmd.Context(), manifest.URL)
 			if err != nil {
-				return fmt.Errorf("failed to download manifest: %w", err)
+				return err
 			}
 
 			if outputFile != "" {

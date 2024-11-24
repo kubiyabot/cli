@@ -329,7 +329,7 @@ You can also provide content from a file using --content-file.`,
 				var confirm string
 				fmt.Scanln(&confirm)
 				if strings.ToLower(confirm) != "y" {
-					return fmt.Errorf("update cancelled")
+					return fmt.Errorf("operation cancelled")
 				}
 			}
 

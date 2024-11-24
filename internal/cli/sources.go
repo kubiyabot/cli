@@ -10,6 +10,7 @@ import (
 
 	"github.com/kubiyabot/cli/internal/config"
 	"github.com/kubiyabot/cli/internal/kubiya"
+	"github.com/kubiyabot/cli/internal/tui"
 	"github.com/spf13/cobra"
 )
 
@@ -29,6 +30,7 @@ Sources contain the tools and capabilities that your teammates can use.`,
 		newSyncSourceCommand(cfg),
 		newSyncBatchCommand(cfg),
 		newAddSourceCommand(cfg),
+		newInteractiveSourceCommand(cfg),
 	)
 
 	return cmd
@@ -102,8 +104,17 @@ func newDescribeSourceCommand(cfg *config.Config) *cobra.Command {
 			case "text":
 				fmt.Printf("📦 Source Details\n\n")
 				fmt.Printf("UUID: %s\n", metadata.UUID)
-				fmt.Printf("Created: %s\n", metadata.CreatedAt.Format("Jan 02, 2006 15:04 MST"))
-				fmt.Printf("Updated: %s\n", metadata.UpdatedAt.Format("Jan 02, 2006 15:04 MST"))
+				if !metadata.CreatedAt.IsZero() {
+					fmt.Printf("Created: %s\n", metadata.CreatedAt.Format("Jan 02, 2006 15:04 MST"))
+				}
+				if !metadata.UpdatedAt.IsZero() {
+					fmt.Printf("Updated: %s\n", metadata.UpdatedAt.Format("Jan 02, 2006 15:04 MST"))
+				}
+
+				if len(metadata.Tools) == 0 {
+					fmt.Printf("\n🛠️  No tools found\n")
+					return nil
+				}
 
 				fmt.Printf("\n🛠️  Tools (%d):\n", len(metadata.Tools))
 				for i, tool := range metadata.Tools {
@@ -210,14 +221,14 @@ func newSyncSourceCommand(cfg *config.Config) *cobra.Command {
 				var confirm string
 				fmt.Scanln(&confirm)
 				if strings.ToLower(confirm) != "y" {
-					return fmt.Errorf("sync cancelled")
+					return fmt.Errorf("operation cancelled")
 				}
 			}
 
 			fmt.Printf("🔄 Syncing source %s...\n", source.Name)
 			updated, err := client.SyncSource(cmd.Context(), args[0])
 			if err != nil {
-				return fmt.Errorf("failed to sync source: %w", err)
+				return err
 			}
 
 			fmt.Printf("✅ Successfully synced source: %s\n", updated.Name)
@@ -225,7 +236,7 @@ func newSyncSourceCommand(cfg *config.Config) *cobra.Command {
 			fmt.Printf("Updated by: %s\n", updated.KubiyaMetadata.UserLastUpdated)
 
 			if updated.ErrorsCount > 0 {
-				fmt.Printf("⚠️ Source has %d error(s)\n", updated.ErrorsCount)
+				return fmt.Errorf("source has %d error(s)", updated.ErrorsCount)
 			}
 
 			return nil
@@ -299,7 +310,7 @@ func newSyncBatchCommand(cfg *config.Config) *cobra.Command {
 				var confirm string
 				fmt.Scanln(&confirm)
 				if strings.ToLower(confirm) != "y" {
-					return fmt.Errorf("sync cancelled")
+					return fmt.Errorf("operation cancelled")
 				}
 			}
 
@@ -324,11 +335,12 @@ func newSyncBatchCommand(cfg *config.Config) *cobra.Command {
 			// Show summary
 			fmt.Printf("\nSync completed for %d sources\n", len(relatedSources))
 			if len(syncErrors) > 0 {
-				fmt.Println("\n⚠️ Errors occurred:")
+				var errMsg strings.Builder
+				errMsg.WriteString(fmt.Sprintf("%d sources had errors:\n", len(syncErrors)))
 				for _, err := range syncErrors {
-					fmt.Printf("  • %s\n", err)
+					errMsg.WriteString(fmt.Sprintf("  • %s\n", err))
 				}
-				return fmt.Errorf("%d sources had errors", len(syncErrors))
+				return fmt.Errorf(errMsg.String())
 			}
 
 			return nil
@@ -491,4 +503,16 @@ func isSourceRelatedToRepo(source kubiya.Source, repoURL string) bool {
 
 	// Check if the source URL is part of the repository
 	return strings.HasPrefix(normalizedSourceURL, repoURL)
+}
+
+func newInteractiveSourceCommand(cfg *config.Config) *cobra.Command {
+	return &cobra.Command{
+		Use:     "interactive",
+		Aliases: []string{"i"},
+		Short:   "🎮 Start interactive source browser",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			app := tui.NewSourceBrowser(cfg)
+			return app.Run()
+		},
+	}
 }

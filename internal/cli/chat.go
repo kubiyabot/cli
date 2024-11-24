@@ -50,7 +50,7 @@ You can either use interactive mode or specify a teammate and message directly.`
 			if teammateID == "" {
 				teammates, err := client.ListTeammates(cmd.Context())
 				if err != nil {
-					return fmt.Errorf("failed to list teammates: %w", err)
+					return err
 				}
 
 				// Find matching teammates
@@ -106,7 +106,7 @@ You can either use interactive mode or specify a teammate and message directly.`
 			fmt.Printf("\n💭 Sending message...\n")
 			resp, err := client.SendMessage(cmd.Context(), teammateID, message)
 			if err != nil {
-				return fmt.Errorf("failed to send message: %w", err)
+				return err
 			}
 
 			if interactive {

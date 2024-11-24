@@ -277,7 +277,7 @@ func newDeleteWebhookCommand(cfg *config.Config) *cobra.Command {
 			// Get webhook details first for better feedback
 			webhook, err := client.GetWebhook(cmd.Context(), args[0])
 			if err != nil {
-				return fmt.Errorf("failed to get webhook details: %w", err)
+				return err
 			}
 
 			if !force {
@@ -289,12 +289,12 @@ func newDeleteWebhookCommand(cfg *config.Config) *cobra.Command {
 				var confirm string
 				fmt.Scanln(&confirm)
 				if strings.ToLower(confirm) != "y" {
-					return fmt.Errorf("deletion cancelled")
+					return fmt.Errorf("operation cancelled")
 				}
 			}
 
 			if err := client.DeleteWebhook(cmd.Context(), args[0]); err != nil {
-				return fmt.Errorf("failed to delete webhook: %w", err)
+				return err
 			}
 
 			fmt.Printf("✅ Successfully deleted webhook: %s (%s)\n", webhook.Name, args[0])
