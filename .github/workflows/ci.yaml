@@ -1,0 +1,39 @@
+name: CLI CI
+
+on:
+  push:
+    branches:
+      - '**'
+    paths-ignore:
+      - '.github/**'
+      - '.git/**'
+      - '!examples/**'
+  pull_request:
+    branches:
+      - '**'
+    paths-ignore:
+      - '.github/**'
+      - '.git/**'
+      - '!examples/**'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Run tests
+        run: go test ./... -v
+
+      - name: scan-push
+        id: scan-push
+        uses: trufflesecurity/trufflehog@main
+        with:
+          base: ""
+          head: ${{ github.ref_name }}
+          extra_args: --only-verified

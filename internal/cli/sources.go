@@ -57,7 +57,7 @@ func newListSourcesCommand(cfg *config.Config) *cobra.Command {
 				return json.NewEncoder(os.Stdout).Encode(sources)
 			case "text":
 				w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-				fmt.Fprintln(w, style.TitleStyle.Render(" 📦 SOURCES\n"))
+				fmt.Fprintln(w, style.TitleStyle.Render(" 📦 SOURCES"))
 				fmt.Fprintln(w, "UUID\tNAME\t🛠️ TOOLS\t👥 TEAMMATES\t⚠️ ERRORS\tMANAGED BY")
 				for _, s := range sources {
 					status := "✅"
