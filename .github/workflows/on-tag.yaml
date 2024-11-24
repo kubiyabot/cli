@@ -31,11 +31,11 @@ jobs:
       - name: Build release binaries
         run: |
           mkdir -p dist
-          GOOS=linux GOARCH=amd64 go build -o dist/kubiya-linux-amd64 ./cmd/kubiya/main.go
-          GOOS=linux GOARCH=arm64 go build -o dist/kubiya-linux-arm64 ./cmd/kubiya/main.go
-          GOOS=darwin GOARCH=amd64 go build -o dist/kubiya-darwin-amd64 ./cmd/kubiya/main.go
-          GOOS=darwin GOARCH=arm64 go build -o dist/kubiya-darwin-arm64 ./cmd/kubiya/main.go
-          GOOS=windows GOARCH=amd64 go build -o dist/kubiya-windows-amd64.exe ./cmd/kubiya/main.go
+          GOOS=linux GOARCH=amd64 go build -o dist/kubiya-cli-linux-amd64 ./cmd/kubiya/main.go
+          GOOS=linux GOARCH=arm64 go build -o dist/kubiya-cli-linux-arm64 ./cmd/kubiya/main.go
+          GOOS=darwin GOARCH=amd64 go build -o dist/kubiya-cli-darwin-amd64 ./cmd/kubiya/main.go
+          GOOS=darwin GOARCH=arm64 go build -o dist/kubiya-cli-darwin-arm64 ./cmd/kubiya/main.go
+          GOOS=windows GOARCH=amd64 go build -o dist/kubiya-cli-windows-amd64.exe ./cmd/kubiya/main.go
           cd dist && sha256sum * > checksums.txt
 
       - name: Log in to the Container registry
