@@ -4,10 +4,11 @@ import "time"
 
 // Agent represents a Kubiya teammate
 type Agent struct {
-	UUID           string `json:"uuid"`
-	Name           string `json:"name"`
-	Desc           string `json:"description"`
-	AIInstructions string `json:"ai_instructions"`
+	UUID           string            `json:"uuid"`
+	Name           string            `json:"name"`
+	Desc           string            `json:"description"`
+	AIInstructions string            `json:"ai_instructions"`
+	Environment    map[string]string `json:"environment"`
 	Metadata       struct {
 		CreatedAt   string `json:"created_at"`
 		LastUpdated string `json:"last_updated"`
@@ -244,4 +245,19 @@ type Secret struct {
 type SecretValue struct {
 	Name  string `json:"name"`
 	Value string `json:"value"`
+}
+
+// Add these types
+type EnvVarSource struct {
+	Type     string // "teammate", "local", "aws", "manual"
+	Value    string
+	Icon     string
+	Label    string
+	Teammate *Teammate // if from teammate
+}
+
+// EnvVarStatus represents the status of an environment variable
+type EnvVarStatus struct {
+	Value string
+	// ... other fields if needed
 }
