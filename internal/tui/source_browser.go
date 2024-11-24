@@ -358,3 +358,41 @@ func (s *SourceBrowser) cleanup() {
 func (s *SourceBrowser) clearError() {
 	s.err = nil
 }
+
+// Update the handleEnter() method to properly handle execution confirmation
+func (s *SourceBrowser) handleExecutionConfirmation() tea.Cmd {
+	switch s.state {
+	case stateExecuteConfirm:
+		if s.execution.prepared {
+			s.execution.confirmed = true
+			s.state = stateExecuting
+			return s.executeTool()
+		}
+	}
+	return nil
+}
+
+// Add validation before execution
+func (s *SourceBrowser) validateExecution() error {
+	if s.currentTool == nil {
+		return fmt.Errorf("no tool selected")
+	}
+
+	// Validate required arguments
+	for _, arg := range s.currentTool.Args {
+		if arg.Required {
+			if value, exists := s.execution.args[arg.Name]; !exists || value == "" {
+				return fmt.Errorf("missing required argument: %s", arg.Name)
+			}
+		}
+	}
+
+	// Validate required env vars
+	for _, env := range s.currentTool.Env {
+		if value, exists := s.execution.envVars[env]; !exists || value == nil || value.Value == "" {
+			return fmt.Errorf("missing required environment variable: %s", env)
+		}
+	}
+
+	return nil
+}

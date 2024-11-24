@@ -24,6 +24,8 @@ func (c *Client) ListAgents(ctx context.Context) ([]Agent, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
+		// print more details
+		fmt.Printf("path: %s, url: %s\n", req.URL.Path, req.URL.String())
 		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 	}
 

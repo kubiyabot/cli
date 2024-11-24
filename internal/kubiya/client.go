@@ -99,11 +99,25 @@ func (c *Client) GetSourceMetadataCached(ctx context.Context, sourceUUID string)
 
 // GetTeammates retrieves the list of teammates from the API
 func (c *Client) GetTeammates(ctx context.Context) ([]Teammate, error) {
-	resp, err := c.get(ctx, "/agents?mode=all")
+	resp, err := c.get(ctx, "/api/v1/agents")
 	if err != nil {
-		return nil, err
+		if c.debug {
+			fmt.Printf("Error getting teammates: %v\n", err)
+			fmt.Printf("BaseURL: %s\n", c.baseURL)
+			fmt.Printf("Full URL: %s/api/v1/agents\n", c.baseURL)
+			fmt.Printf("API Key present: %v\n", c.cfg.APIKey != "")
+		}
+		return nil, fmt.Errorf("failed to get teammates: %w", err)
 	}
 	defer resp.Body.Close()
+
+	if c.debug {
+		body, _ := io.ReadAll(resp.Body)
+		fmt.Printf("Response Status: %d\n", resp.StatusCode)
+		fmt.Printf("Response Headers: %v\n", resp.Header)
+		fmt.Printf("Response Body: %s\n", string(body))
+		resp.Body = io.NopCloser(bytes.NewBuffer(body))
+	}
 
 	var agents []struct {
 		UUID        string            `json:"uuid"`
@@ -112,7 +126,10 @@ func (c *Client) GetTeammates(ctx context.Context) ([]Teammate, error) {
 		Environment map[string]string `json:"environment_variables"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&agents); err != nil {
-		return nil, err
+		if c.debug {
+			fmt.Printf("Error decoding response: %v\n", err)
+		}
+		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}
 
 	// Convert agents to teammates
@@ -181,7 +198,7 @@ func (c *Client) get(ctx context.Context, path string) (*http.Response, error) {
 
 // Add this helper method for POST requests
 func (c *Client) post(ctx context.Context, path string, payload interface{}) (*http.Response, error) {
-	url := fmt.Sprintf("%s%s", c.baseURL, path)
+	url := fmt.Sprintf("%s/%s", c.baseURL, path)
 
 	var body bytes.Buffer
 	if payload != nil {

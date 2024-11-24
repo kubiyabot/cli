@@ -136,13 +136,6 @@ type SourceStats struct {
 	LastActivity        time.Time `json:"last_activity"`
 }
 
-// ChatMessage represents a message in a chat session
-type ChatMessage struct {
-	SenderName string    `json:"senderName"`
-	Content    string    `json:"content"`
-	Timestamp  time.Time `json:"timestamp"`
-}
-
 // ChatResponse represents a response from the chat API
 type ChatResponse struct {
 	Content string `json:"content"`
