@@ -42,9 +42,29 @@ func newListRunnersCommand(cfg *config.Config) *cobra.Command {
 				return err
 			}
 
+			// Filter out v1 runners and add warning
+			var v1Runners []string
+			validRunners := make([]kubiya.Runner, 0, len(runners))
+			for _, r := range runners {
+				if r.Version == "v1" {
+					v1Runners = append(v1Runners, r.Name)
+				} else {
+					validRunners = append(validRunners, r)
+				}
+			}
+
+			// Show warning for v1 runners if any found
+			if len(v1Runners) > 0 {
+				fmt.Fprintf(os.Stderr, "⚠️  Warning: The following runners are using deprecated v1 version:\n")
+				for _, name := range v1Runners {
+					fmt.Fprintf(os.Stderr, "   - %s\n", name)
+				}
+				fmt.Fprintf(os.Stderr, "Please upgrade these runners to the latest version.\n\n")
+			}
+
 			switch outputFormat {
 			case "json":
-				return json.NewEncoder(os.Stdout).Encode(runners)
+				return json.NewEncoder(os.Stdout).Encode(validRunners)
 			case "text":
 				w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 				fmt.Fprintln(w, "🏃 RUNNERS")
@@ -53,6 +73,7 @@ func newListRunnersCommand(cfg *config.Config) *cobra.Command {
 					fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
 						r.Name,
 						r.RunnerType,
+						r.Version,
 						r.Namespace,
 						r.RunnerHealth.Status,
 						r.RunnerHealth.Health,
@@ -90,6 +111,16 @@ func newGetRunnerManifestCommand(cfg *config.Config) *cobra.Command {
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			client := kubiya.NewClient(cfg)
+
+			// Check runner version first
+			runner, err := client.GetRunner(cmd.Context(), args[0])
+			if err != nil {
+				return err
+			}
+
+			if runner.Version == "v1" {
+				return fmt.Errorf("⚠️  runner '%s' is using deprecated v1 version. Please upgrade to the latest version", args[0])
+			}
 
 			// Get manifest URL
 			manifest, err := client.GetRunnerManifest(cmd.Context(), args[0])

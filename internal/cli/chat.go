@@ -2,17 +2,17 @@ package cli
 
 import (
 	"fmt"
-	"strings"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/kubiyabot/cli/internal/config"
-	"github.com/kubiyabot/cli/internal/kubiya"
 	"github.com/kubiyabot/cli/internal/tui"
 	"github.com/spf13/cobra"
 )
 
 func newChatCommand(cfg *config.Config) *cobra.Command {
 	var (
-		teammateID   string
+		teammateID string
+
 		teammateName string
 		message      string
 		interactive  bool
@@ -34,102 +34,56 @@ You can either use interactive mode or specify a teammate and message directly.`
   # Non-interactive mode (for scripts)
   kubiya chat -n "security" -m "Review permissions"`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			// Set debug mode if requested
 			cfg.Debug = debug
 
-			// If interactive mode is requested, start the Chat TUI
 			if interactive {
-				app := tui.NewChatTUI(cfg)
-				return app.Run()
-			}
-
-			client := kubiya.NewClient(cfg)
-
-			// Validate input
-			if teammateID == "" && teammateName == "" {
-				return fmt.Errorf("either --id or --name is required in non-interactive mode")
-			}
-			if message == "" {
-				return fmt.Errorf("message is required in non-interactive mode")
-			}
-
-			// If teammate ID is not provided, search by name
-			if teammateID == "" {
-				teammates, err := client.ListTeammates(cmd.Context())
+				// Start with teammate selection model
+				selectionModel, err := tui.NewTeammateSelectionModel(cfg)
 				if err != nil {
 					return err
 				}
 
-				// Find matching teammates
-				var matches []kubiya.Teammate
-				searchName := strings.ToLower(teammateName)
-				for _, teammate := range teammates {
-					if strings.Contains(strings.ToLower(teammate.Name), searchName) {
-						matches = append(matches, teammate)
-					}
+				p := tea.NewProgram(selectionModel, tea.WithAltScreen())
+				model, err := p.Run()
+				if err != nil {
+					return err
 				}
 
-				switch len(matches) {
-				case 0:
-					return fmt.Errorf("no teammates found matching name: %s", teammateName)
-				case 1:
-					teammateID = matches[0].UUID
-					if !interactive {
-						fmt.Printf("👋 Found teammate: %s (%s)\n", matches[0].Name, matches[0].UUID)
-					}
-				default:
-					if interactive {
-						return fmt.Errorf("multiple teammates found matching '%s'. Please use --id or provide a more specific name", teammateName)
+				// Get the selected teammate from the model
+				if selectionModel, ok := model.(*tui.TeammateSelectionModel); ok {
+					selected := selectionModel.Selected()
+					if selected.UUID == "" {
+						return fmt.Errorf("no teammate selected")
 					}
 
-					fmt.Println("👥 Multiple teammates found:")
-					for i, teammate := range matches {
-						status := "🟢"
-						if teammate.AIInstructions != "" {
-							status = "🌟"
-						}
-						fmt.Printf("\n%d. %s %s\n", i+1, status, teammate.Name)
-						if teammate.Desc != "" {
-							fmt.Printf("   %s\n", teammate.Desc)
-						}
-						if teammate.AIInstructions != "" {
-							fmt.Printf("   Special skills: %s\n", teammate.AIInstructions)
-						}
+					// Start chat with selected teammate
+					chatModel, err := tui.NewChatModel(cfg, selected)
+					if err != nil {
+						return err
 					}
 
-					var choice int
-					fmt.Print("\nSelect a teammate (1-" + fmt.Sprint(len(matches)) + "): ")
-					_, err := fmt.Scanf("%d", &choice)
-					if err != nil || choice < 1 || choice > len(matches) {
-						return fmt.Errorf("invalid selection")
-					}
-
-					teammateID = matches[choice-1].UUID
-					fmt.Printf("\n👋 Selected: %s\n", matches[choice-1].Name)
+					// Start new program with alt screen for chat
+					p = tea.NewProgram(chatModel, tea.WithAltScreen())
+					return p.Start()
 				}
+				return fmt.Errorf("unexpected model type")
 			}
 
-			// Send the message
-			fmt.Printf("\n💭 Sending message...\n")
-			resp, err := client.SendMessage(cmd.Context(), teammateID, message)
+			// Non-interactive mode
+			chatModel, err := tui.NewChatModel(cfg)
 			if err != nil {
 				return err
 			}
 
-			if interactive {
-				fmt.Println(resp.Content)
-			} else {
-				fmt.Printf("\n💬 Response:\n%s\n", resp.Content)
-			}
-
-			return nil
+			p := tea.NewProgram(chatModel, tea.WithAltScreen())
+			return p.Start()
 		},
 	}
 
-	cmd.Flags().StringVarP(&teammateID, "id", "i", "", "Teammate ID")
+	cmd.Flags().StringVarP(&teammateID, "id", "", "", "Teammate ID")
 	cmd.Flags().StringVarP(&teammateName, "name", "n", "", "Teammate name")
 	cmd.Flags().StringVarP(&message, "message", "m", "", "Message to send")
-	cmd.Flags().BoolVarP(&interactive, "interactive", "t", false, "Start interactive chat mode")
+	cmd.Flags().BoolVarP(&interactive, "interactive", "i", false, "Start interactive chat mode")
 	cmd.Flags().BoolVar(&debug, "debug", false, "Enable debug mode")
 
 	return cmd
