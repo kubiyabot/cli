@@ -5,35 +5,48 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/signal"
 	"sort"
 	"strings"
 	"text/tabwriter"
 	"time"
 
-	"github.com/charmbracelet/lipgloss"
 	"github.com/kubiyabot/cli/internal/config"
 	"github.com/kubiyabot/cli/internal/kubiya"
+	"github.com/kubiyabot/cli/internal/style"
 	"github.com/spf13/cobra"
 )
 
-var (
-	titleStyle = lipgloss.NewStyle().
-			Bold(true).
-			Foreground(lipgloss.Color("#FAFAFA")).
-			Background(lipgloss.Color("#7D56F4")).
-			Padding(0, 1)
+var envIntegrationIcons = map[string]struct {
+	icon  string
+	label string
+}{
+	"AWS":        {"☁️", "AWS integration"},
+	"SLACK":      {"💬", "Slack integration"},
+	"KUBERNETES": {"⎈", "Kubernetes integration"},
+	"GITHUB":     {"🐙", "GitHub integration"},
+	"GITLAB":     {"🦊", "GitLab integration"},
+	"JIRA":       {"📋", "Jira integration"},
+	"DATADOG":    {"🐕", "Datadog integration"},
+	"PROMETHEUS": {"📊", "Prometheus integration"},
+	"VAULT":      {"🔒", "Vault integration"},
+	"JENKINS":    {"🔧", "Jenkins integration"},
+	"TERRAFORM":  {"🏗️", "Terraform integration"},
+	"AZURE":      {"☁️", "Azure integration"},
+	"GCP":        {"☁️", "GCP integration"},
+	"BITBUCKET":  {"🪣", "Bitbucket integration"},
+	"SERVICENOW": {"🔧", "ServiceNow integration"},
+	"PAGERDUTY":  {"🚨", "PagerDuty integration"},
+}
 
-	subtitleStyle = lipgloss.NewStyle().
-			Bold(true).
-			Foreground(lipgloss.Color("#7D56F4"))
-
-	highlightStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#7D56F4")).
-			Bold(true)
-
-	dimStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#666666"))
-)
+func getEnvIntegration(env string) (string, string, bool) {
+	for prefix, integration := range envIntegrationIcons {
+		if strings.HasPrefix(env, prefix+"_") {
+			return integration.icon, integration.label, true
+		}
+	}
+	return "", "", false
+}
 
 func newToolsCommand(cfg *config.Config) *cobra.Command {
 	cmd := &cobra.Command{
@@ -47,6 +60,7 @@ func newToolsCommand(cfg *config.Config) *cobra.Command {
 		newListToolsCommand(cfg),
 		newSearchToolsCommand(cfg),
 		newDescribeToolCommand(cfg),
+		newExecuteCommand(cfg),
 	)
 
 	return cmd
@@ -105,26 +119,26 @@ func newListToolsCommand(cfg *config.Config) *cobra.Command {
 					return nil
 				}
 
-				fmt.Printf("\n%s\n\n", titleStyle.Render(" 🛠️  Tools "))
+				fmt.Printf("\n%s\n\n", style.TitleStyle.Render(" 🛠️  Tools "))
 
 				w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 				for _, tool := range tools {
 					// Tool name and description
-					fmt.Fprintf(w, "%s\n", highlightStyle.Render(tool.Name))
+					fmt.Fprintf(w, "%s\n", style.HighlightStyle.Render(tool.Name))
 					if tool.Description != "" {
 						fmt.Fprintf(w, "  %s\n", tool.Description)
 					}
 
 					// Arguments section
 					if len(tool.Args) > 0 {
-						fmt.Fprintf(w, "  %s:\n", subtitleStyle.Render("Arguments"))
+						fmt.Fprintf(w, "  %s:\n", style.SubtitleStyle.Render("Arguments"))
 						for _, arg := range tool.Args {
-							required := dimStyle.Render("optional")
+							required := style.DimStyle.Render("optional")
 							if arg.Required {
-								required = highlightStyle.Render("required")
+								required = style.HighlightStyle.Render("required")
 							}
 							fmt.Fprintf(w, "    • %s: %s (%s)\n",
-								highlightStyle.Render(arg.Name),
+								style.HighlightStyle.Render(arg.Name),
 								arg.Description,
 								required,
 							)
@@ -133,9 +147,16 @@ func newListToolsCommand(cfg *config.Config) *cobra.Command {
 
 					// Environment variables section
 					if len(tool.Env) > 0 {
-						fmt.Fprintf(w, "  %s:\n", subtitleStyle.Render("Environment"))
+						fmt.Fprintf(w, "  %s:\n", style.SubtitleStyle.Render("Environment"))
 						for _, env := range tool.Env {
-							fmt.Fprintf(w, "    • %s\n", env)
+							if icon, label, ok := getEnvIntegration(env); ok {
+								fmt.Fprintf(w, "    • %s %s %s\n",
+									env,
+									icon,
+									style.DimStyle.Render(fmt.Sprintf("(Inherited from %s)", label)))
+							} else {
+								fmt.Fprintf(w, "    • %s\n", env)
+							}
 						}
 					}
 
@@ -154,144 +175,193 @@ func newListToolsCommand(cfg *config.Config) *cobra.Command {
 }
 
 func newSearchToolsCommand(cfg *config.Config) *cobra.Command {
-	var outputFormat string
+	var (
+		outputFormat   string
+		nonInteractive bool
+	)
 
 	cmd := &cobra.Command{
 		Use:   "search [query]",
 		Short: "🔍 Search for tools",
-		Example: `  # Search for tools by name or description
+		Args:  cobra.ExactArgs(1),
+		Example: `  # Interactive search (default)
   kubiya tool search kubernetes
 
-  # Search with JSON output
+  # Non-interactive search
+  kubiya tool search kubernetes --non-interactive
+
+  # JSON output
   kubiya tool search deploy --output json`,
-		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			client := kubiya.NewClient(cfg)
-			sources, err := client.ListSources(cmd.Context())
+			query := strings.ToLower(args[0])
+
+			// Create context that can be cancelled
+			ctx, cancel := context.WithCancel(cmd.Context())
+			defer cancel()
+
+			// Handle interrupt
+			sigChan := make(chan os.Signal, 1)
+			signal.Notify(sigChan, os.Interrupt)
+			go func() {
+				<-sigChan
+				cancel()
+			}()
+
+			// Initialize all variables before any goto statements
+			var matches []struct {
+				Tool     kubiya.Tool
+				Source   kubiya.Source
+				Distance int
+			}
+			var completed int
+			spinner := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+			spinnerIdx := 0
+			ticker := time.NewTicker(100 * time.Millisecond)
+			defer ticker.Stop()
+
+			sources, err := client.ListSources(ctx)
 			if err != nil {
 				return err
 			}
 
-			query := strings.ToLower(args[0])
-			type searchResult struct {
-				Tool   kubiya.Tool
-				Source kubiya.Source
-				Error  error
-			}
-
-			// Create channels
-			resultChan := make(chan searchResult)
-			done := make(chan struct{})
-			sem := make(chan struct{}, 3) // Limit concurrent requests
-
-			// Start search goroutines
-			var activeSearches int
+			// Pre-filter sources based on name/description prefix match
+			var relevantSources []kubiya.Source
 			for _, source := range sources {
-				// Skip sources that don't match query in name/description
-				if !strings.Contains(strings.ToLower(source.Name), query) &&
-					!strings.Contains(strings.ToLower(source.Description), query) {
+				if strings.Contains(strings.ToLower(source.Name), query) ||
+					strings.Contains(strings.ToLower(source.Description), query) {
+					relevantSources = append(relevantSources, source)
 					continue
 				}
+				// If no direct match, check if source name starts with any word from query
+				queryWords := strings.Fields(query)
+				for _, word := range queryWords {
+					if strings.HasPrefix(strings.ToLower(source.Name), word) ||
+						strings.HasPrefix(strings.ToLower(source.Description), word) {
+						relevantSources = append(relevantSources, source)
+						break
+					}
+				}
+			}
 
-				sem <- struct{}{} // Acquire semaphore
+			// If no relevant sources found, search all sources
+			if len(relevantSources) == 0 {
+				relevantSources = sources
+			}
+
+			type searchResult struct {
+				Tool     kubiya.Tool
+				Source   kubiya.Source
+				Distance int
+				Error    error
+			}
+
+			resultChan := make(chan searchResult, len(relevantSources))
+			sem := make(chan struct{}, 5)
+
+			if !nonInteractive {
+				fmt.Printf("🔍 Starting search for '%s' in %d sources...\n", args[0], len(relevantSources))
+			}
+
+			var activeSearches int
+			for _, source := range relevantSources {
+				select {
+				case <-ctx.Done():
+					goto SUMMARIZE
+				case sem <- struct{}{}:
+				}
+
 				activeSearches++
-
 				go func(s kubiya.Source) {
 					defer func() {
-						<-sem // Release semaphore
+						<-sem
 						resultChan <- searchResult{Source: s, Error: fmt.Errorf("done")}
 					}()
 
-					// Set timeout for each source search
-					ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
-					defer cancel()
-
-					metadata, err := client.GetSourceMetadata(ctx, s.UUID)
+					metadata, err := client.GetSourceMetadataCached(ctx, s.UUID)
 					if err != nil {
 						resultChan <- searchResult{Source: s, Error: err}
 						return
 					}
 
-					// Send matching tools
+					// First check for exact matches
 					for _, tool := range metadata.Tools {
-						if strings.Contains(strings.ToLower(tool.Name), query) ||
-							strings.Contains(strings.ToLower(tool.Description), query) {
-							resultChan <- searchResult{Tool: tool, Source: s}
+						select {
+						case <-ctx.Done():
+							return
+						default:
+							toolName := strings.ToLower(tool.Name)
+							toolDesc := strings.ToLower(tool.Description)
+
+							// Prioritize exact matches
+							if strings.Contains(toolName, query) || strings.Contains(toolDesc, query) {
+								resultChan <- searchResult{Tool: tool, Source: s, Distance: 0}
+								continue
+							}
+
+							// Then check Levenshtein distance for close matches
+							nameDistance := kubiya.LevenshteinDistance(toolName, query)
+							descDistance := kubiya.LevenshteinDistance(toolDesc, query)
+							distance := min(nameDistance, descDistance)
+
+							if distance <= len(query)/2 {
+								resultChan <- searchResult{Tool: tool, Source: s, Distance: distance}
+							}
 						}
 					}
 				}(source)
 			}
 
-			if activeSearches == 0 {
-				fmt.Printf("No sources found matching '%s'\n", args[0])
-				return nil
-			}
-
-			// Collect results with timeout
-			var matches []struct {
-				Tool   kubiya.Tool
-				Source kubiya.Source
-			}
-			var errors []string
-			completed := 0
-
-			// Show progress
-			spinner := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
-			spinnerIdx := 0
-			lastUpdate := time.Now()
-
-			// Start result collection in goroutine
-			go func() {
-				for completed < activeSearches {
-					select {
-					case result := <-resultChan:
-						if result.Error != nil {
-							if result.Error.Error() != "done" {
-								errors = append(errors, fmt.Sprintf("%s: %v", result.Source.Name, result.Error))
-							}
-							completed++
-						} else {
-							matches = append(matches, struct {
-								Tool   kubiya.Tool
-								Source kubiya.Source
-							}{result.Tool, result.Source})
-						}
-					}
-				}
-				close(done)
-			}()
-
-			// Show progress with timeout
-			fmt.Printf("🔍 Searching for '%s' ", args[0])
-			timeout := time.After(30 * time.Second)
-			for {
+			for completed < activeSearches {
 				select {
-				case <-done:
-					fmt.Printf("\r\033[K") // Clear line
-					goto DONE
-				case <-timeout:
-					fmt.Printf("\r\033[K") // Clear line
-					return fmt.Errorf("search timed out after 30 seconds")
-				case <-time.After(100 * time.Millisecond):
-					if time.Since(lastUpdate) >= 100*time.Millisecond {
-						fmt.Printf("\r\033[K🔍 Searching for '%s' %s", args[0], spinner[spinnerIdx])
+				case <-ctx.Done():
+					goto SUMMARIZE
+				case result := <-resultChan:
+					if result.Error != nil {
+						if result.Error.Error() != "done" {
+							continue
+						}
+						completed++
+					} else {
+						matches = append(matches, struct {
+							Tool     kubiya.Tool
+							Source   kubiya.Source
+							Distance int
+						}{result.Tool, result.Source, result.Distance})
+					}
+					if !nonInteractive {
+						fmt.Printf("\r\033[K🔍 Progress: %d/%d sources (%d matches)",
+							completed, activeSearches, len(matches))
+					}
+				case <-ticker.C:
+					if !nonInteractive {
+						fmt.Printf("\r\033[K🔍 Searching... %s", spinner[spinnerIdx])
 						spinnerIdx = (spinnerIdx + 1) % len(spinner)
-						lastUpdate = time.Now()
 					}
 				}
-			}
 
-		DONE:
-			// Show any errors that occurred during search
-			if len(errors) > 0 {
-				fmt.Printf("\n⚠️  Some sources had errors:\n")
-				for _, err := range errors {
-					fmt.Printf("  • %s\n", err)
+				// Early return if we have enough exact matches
+				if len(matches) >= 10 && matches[0].Distance == 0 {
+					goto SUMMARIZE
 				}
-				fmt.Println()
 			}
 
-			// Output results
+		SUMMARIZE:
+			fmt.Printf("\r\033[K") // Clear line
+
+			// Sort first by distance, then by name for ties
+			sort.Slice(matches, func(i, j int) bool {
+				if matches[i].Distance == matches[j].Distance {
+					return matches[i].Tool.Name < matches[j].Tool.Name
+				}
+				return matches[i].Distance < matches[j].Distance
+			})
+
+			// Limit to top 10 matches
+			if len(matches) > 10 {
+				matches = matches[:10]
+			}
+
 			switch outputFormat {
 			case "json":
 				return json.NewEncoder(os.Stdout).Encode(matches)
@@ -301,40 +371,16 @@ func newSearchToolsCommand(cfg *config.Config) *cobra.Command {
 					return nil
 				}
 
-				// Sort results
-				sort.Slice(matches, func(i, j int) bool {
-					if matches[i].Source.Name == matches[j].Source.Name {
-						return matches[i].Tool.Name < matches[j].Tool.Name
-					}
-					return matches[i].Source.Name < matches[j].Source.Name
-				})
-
-				// Display results
-				fmt.Printf("\n%s\n\n", titleStyle.Render(fmt.Sprintf(" Found %d Tools ", len(matches))))
+				fmt.Printf("\n%s\n\n", style.TitleStyle.Render(fmt.Sprintf(" Top %d Tools ", len(matches))))
 
 				w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-				currentSource := ""
-				for _, match := range matches {
-					if currentSource != match.Source.Name {
-						currentSource = match.Source.Name
-						fmt.Fprintf(w, "\n%s\n", subtitleStyle.Render(fmt.Sprintf("📦 %s", match.Source.Name)))
-					}
-
-					fmt.Fprintf(w, "  %s\n", highlightStyle.Render(match.Tool.Name))
+				for i, match := range matches {
+					fmt.Fprintf(w, "%d. %s\n", i+1, style.HighlightStyle.Render(match.Tool.Name))
+					fmt.Fprintf(w, "   Source: %s\n", match.Source.Name)
 					if match.Tool.Description != "" {
-						fmt.Fprintf(w, "    %s\n", match.Tool.Description)
+						fmt.Fprintf(w, "   %s\n", match.Tool.Description)
 					}
-
-					if len(match.Tool.Args) > 0 {
-						reqCount := countRequiredArgs(match.Tool.Args)
-						fmt.Fprintf(w, "    %s: %d (%d required)\n",
-							dimStyle.Render("Arguments"),
-							len(match.Tool.Args),
-							reqCount,
-						)
-					}
-
-					fmt.Fprintln(w, "")
+					fmt.Fprintln(w)
 				}
 				return w.Flush()
 			default:
@@ -344,6 +390,7 @@ func newSearchToolsCommand(cfg *config.Config) *cobra.Command {
 	}
 
 	cmd.Flags().StringVarP(&outputFormat, "output", "o", "text", "Output format (text|json)")
+	cmd.Flags().BoolVarP(&nonInteractive, "non-interactive", "n", false, "Non-interactive search mode")
 	return cmd
 }
 
@@ -415,23 +462,23 @@ func newDescribeToolCommand(cfg *config.Config) *cobra.Command {
 			case "json":
 				return json.NewEncoder(os.Stdout).Encode(tool)
 			case "text":
-				fmt.Printf("\n%s\n\n", titleStyle.Render(fmt.Sprintf(" 🛠️  Tool: %s ", tool.Name)))
-				fmt.Printf("%s %s\n\n", subtitleStyle.Render("Source:"), sourceName)
+				fmt.Printf("\n%s\n\n", style.TitleStyle.Render(fmt.Sprintf(" 🛠️  Tool: %s ", tool.Name)))
+				fmt.Printf("%s %s\n\n", style.SubtitleStyle.Render("Source:"), sourceName)
 
 				if tool.Description != "" {
-					fmt.Printf("%s\n%s\n\n", subtitleStyle.Render("Description:"), tool.Description)
+					fmt.Printf("%s\n%s\n\n", style.SubtitleStyle.Render("Description:"), tool.Description)
 				}
 
 				if len(tool.Args) > 0 {
-					fmt.Printf("%s\n", subtitleStyle.Render("Arguments:"))
+					fmt.Printf("%s\n", style.SubtitleStyle.Render("Arguments:"))
 					w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 					for _, arg := range tool.Args {
-						required := dimStyle.Render("optional")
+						required := style.DimStyle.Render("optional")
 						if arg.Required {
-							required = highlightStyle.Render("required")
+							required = style.HighlightStyle.Render("required")
 						}
 						fmt.Fprintf(w, "  • %s\t%s\t(%s)\n",
-							highlightStyle.Render(arg.Name),
+							style.HighlightStyle.Render(arg.Name),
 							arg.Description,
 							required,
 						)
@@ -441,23 +488,30 @@ func newDescribeToolCommand(cfg *config.Config) *cobra.Command {
 				}
 
 				if len(tool.Env) > 0 {
-					fmt.Printf("%s\n", subtitleStyle.Render("Environment Variables:"))
+					fmt.Printf("%s\n", style.SubtitleStyle.Render("Environment Variables:"))
 					for _, env := range tool.Env {
-						fmt.Printf("  • %s\n", env)
+						if icon, label, ok := getEnvIntegration(env); ok {
+							fmt.Printf("  • %s %s %s\n",
+								env,
+								icon,
+								style.DimStyle.Render(fmt.Sprintf("(Inherited from %s)", label)))
+						} else {
+							fmt.Printf("  • %s\n", env)
+						}
 					}
 					fmt.Println()
 				}
 
 				if tool.LongRunning {
 					fmt.Printf("%s\n%s\n\n",
-						subtitleStyle.Render("Execution:"),
+						style.SubtitleStyle.Render("Execution:"),
 						"⏳ This is a long-running task",
 					)
 				}
 
 				fmt.Printf("To execute this tool:\n")
-				fmt.Printf("  %s\n", highlightStyle.Render(fmt.Sprintf("kubiya browse")))
-				fmt.Printf("  %s\n", highlightStyle.Render(fmt.Sprintf("kubiya source interactive")))
+				fmt.Printf("  %s\n", style.HighlightStyle.Render(fmt.Sprintf("kubiya browse")))
+				fmt.Printf("  %s\n", style.HighlightStyle.Render(fmt.Sprintf("kubiya source interactive")))
 				return nil
 			default:
 				return fmt.Errorf("unknown output format: %s", outputFormat)

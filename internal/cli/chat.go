@@ -16,6 +16,7 @@ func newChatCommand(cfg *config.Config) *cobra.Command {
 		teammateName string
 		message      string
 		interactive  bool
+		debug        bool
 	)
 
 	cmd := &cobra.Command{
@@ -27,12 +28,18 @@ You can either use interactive mode or specify a teammate and message directly.`
   kubiya chat --interactive
   kubiya chat -i
 
+  # Debug mode
+  kubiya chat -i --debug
+
   # Non-interactive mode (for scripts)
   kubiya chat -n "security" -m "Review permissions"`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			// If interactive mode is requested, start the TUI
+			// Set debug mode if requested
+			cfg.Debug = debug
+
+			// If interactive mode is requested, start the Chat TUI
 			if interactive {
-				app := tui.New(cfg)
+				app := tui.NewChatTUI(cfg)
 				return app.Run()
 			}
 
@@ -123,6 +130,7 @@ You can either use interactive mode or specify a teammate and message directly.`
 	cmd.Flags().StringVarP(&teammateName, "name", "n", "", "Teammate name")
 	cmd.Flags().StringVarP(&message, "message", "m", "", "Message to send")
 	cmd.Flags().BoolVarP(&interactive, "interactive", "t", false, "Start interactive chat mode")
+	cmd.Flags().BoolVar(&debug, "debug", false, "Enable debug mode")
 
 	return cmd
 }
