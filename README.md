@@ -5,7 +5,7 @@
 
 Welcome to Kubiya CLI! 👋 A powerful command-line interface for interacting with your Kubiya teammates and managing your automation workflows.
 
-![Kubiya CLI Demo](docs/assets/demo.gif)
+![image](https://github.com/user-attachments/assets/c9bedf25-97fa-49fa-933e-4d874278fcb1)
 
 ## Features ✨
 
