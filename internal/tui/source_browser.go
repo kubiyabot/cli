@@ -19,12 +19,6 @@ import (
 	"github.com/kubiyabot/cli/internal/style"
 )
 
-// After the existing imports, add these type definitions and styles
-
-type errMsg struct {
-	err error
-}
-
 var (
 	selectedItemStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("205")).

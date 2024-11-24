@@ -138,9 +138,9 @@ type SourceStats struct {
 
 // ChatMessage represents a message in a chat session
 type ChatMessage struct {
-	Message   string `json:"message"`
-	AgentUUID string `json:"agent_uuid"`
-	SessionID string `json:"session_id"`
+	SenderName string    `json:"senderName"`
+	Content    string    `json:"content"`
+	Timestamp  time.Time `json:"timestamp"`
 }
 
 // ChatResponse represents a response from the chat API
@@ -184,7 +184,7 @@ type Runner struct {
 	ManagedBy           string       `json:"managed_by"`
 	Description         string       `json:"description"`
 	AuthenticationType  string       `json:"authentication_type"`
-	Version             int          `json:"version"`
+	Version             string       `json:"version"`
 	RunnerType          string       `json:"runner_type"`
 	GatewayURL          *string      `json:"gateway_url"`
 	GatewayPassword     *string      `json:"gateway_password"`

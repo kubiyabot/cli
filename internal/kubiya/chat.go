@@ -1,50 +1,77 @@
 package kubiya
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
-	"io"
 	"net/http"
+
+	"github.com/google/uuid"
 )
 
-// SendMessage sends a message to a teammate and returns their response
-func (c *Client) SendMessage(ctx context.Context, agentUUID, message string) (*ChatResponse, error) {
-	msg := ChatMessage{
+// generateSessionID generates a random session ID
+func generateSessionID() string {
+	return uuid.New().String()
+}
+
+// SendMessage sends a message to a teammate
+func (c *Client) SendMessage(ctx context.Context, teammateID, message string) error {
+	payload := struct {
+		Message   string `json:"message"`
+		AgentUUID string `json:"agent_uuid"`
+		SessionID string `json:"session_id"`
+	}{
 		Message:   message,
-		AgentUUID: agentUUID,
+		AgentUUID: teammateID,
+		SessionID: generateSessionID(),
 	}
 
-	data, err := json.Marshal(msg)
+	resp, err := c.post(ctx, "/api/v1/converse", payload)
 	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequestWithContext(ctx, "POST",
-		fmt.Sprintf("%s/converse", c.cfg.BaseURL), bytes.NewBuffer(data))
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Set("Authorization", "UserKey "+c.cfg.APIKey)
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.client.Do(req)
-	if err != nil {
-		return nil, err
+		return err
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("unexpected status code: %d, body: %s", resp.StatusCode, string(body))
-	}
+	return nil
+}
 
-	var response ChatResponse
-	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+// ReceiveMessages implements SSE for receiving messages
+func (c *Client) ReceiveMessages(ctx context.Context, teammateID string) (<-chan ChatMessage, error) {
+	messagesChan := make(chan ChatMessage)
+
+	req, err := http.NewRequestWithContext(
+		ctx,
+		"GET",
+		c.baseURL+"/chat/stream/"+teammateID,
+		nil,
+	)
+	if err != nil {
 		return nil, err
 	}
 
-	return &response, nil
+	resp, err := c.client.Do(req)
+	if err != nil {
+		close(messagesChan)
+		return nil, err
+	}
+
+	go func() {
+		defer resp.Body.Close()
+		defer close(messagesChan)
+
+		decoder := json.NewDecoder(resp.Body)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+				var msg ChatMessage
+				if err := decoder.Decode(&msg); err != nil {
+					return
+				}
+				messagesChan <- msg
+			}
+		}
+	}()
+
+	return messagesChan, nil
 }
