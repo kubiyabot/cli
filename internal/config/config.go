@@ -14,6 +14,8 @@ type Config struct {
 func Load() (*Config, error) {
 	apiKey := os.Getenv("KUBIYA_API_KEY")
 	if apiKey == "" {
+		fmt.Println("KUBIYA_API_KEY environment variable is required in ~/.kubiya/config.yaml or as an environment variable")
+		fmt.Println("You can get your API key from https://app.kubiya.ai/api-keys")
 		return nil, fmt.Errorf("KUBIYA_API_KEY environment variable is required")
 	}
 

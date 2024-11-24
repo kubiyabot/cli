@@ -20,6 +20,8 @@ const (
 	chatScreen
 )
 
+type tickMsg struct{}
+
 type ChatModel struct {
 	client           *kubiya.Client
 	messages         []kubiya.ChatMessage
@@ -33,6 +35,7 @@ type ChatModel struct {
 	height           int
 	cursor           int
 	showTeamHelp     bool
+	program          *tea.Program
 }
 
 func NewChatModel(cfg *config.Config, teammate ...kubiya.Teammate) (*ChatModel, error) {
@@ -50,7 +53,7 @@ func NewChatModel(cfg *config.Config, teammate ...kubiya.Teammate) (*ChatModel, 
 		client:        client,
 		messages:      []kubiya.ChatMessage{},
 		teammates:     teammates,
-		currentScreen: chatScreen,
+		currentScreen: teammateSelectScreen,
 		spinner:       s,
 		thinking:      false,
 	}
@@ -59,6 +62,9 @@ func NewChatModel(cfg *config.Config, teammate ...kubiya.Teammate) (*ChatModel, 
 		model.selectedTeammate = teammate[0]
 		model.currentScreen = chatScreen
 	}
+
+	p := tea.NewProgram(model, tea.WithAltScreen())
+	model.program = p
 
 	return model, nil
 }
@@ -82,7 +88,7 @@ func (m *ChatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 
 	case errMsg:
-		// Handle error, maybe store it in the model to display
+		m.handleError(msg.err)
 		return m, nil
 
 	case tea.KeyMsg:
@@ -114,13 +120,17 @@ func (m *ChatModel) handleTeammateSelectInput(msg tea.KeyMsg) (tea.Model, tea.Cm
 		}
 	case "?":
 		m.showTeamHelp = !m.showTeamHelp
-	case "enter":
+	case "enter", " ":
 		if len(m.teammates) > 0 {
 			m.selectedTeammate = m.teammates[m.cursor]
 			m.currentScreen = chatScreen
-			return m, m.fetchMessages()
+			m.messages = []kubiya.ChatMessage{} // Clear messages when switching
+			return m, tea.Batch(
+				m.spinner.Tick,
+				m.fetchMessages(),
+			)
 		}
-	case "ctrl+c", "q":
+	case "ctrl+c", "q", "esc":
 		return m, tea.Quit
 	}
 	return m, nil
@@ -129,13 +139,21 @@ func (m *ChatModel) handleTeammateSelectInput(msg tea.KeyMsg) (tea.Model, tea.Cm
 func (m *ChatModel) handleChatInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.Type {
 	case tea.KeyEnter:
-		if m.inputBuffer == "" {
+		if m.inputBuffer == "" || m.thinking {
 			return m, nil
 		}
-		m.thinking = true
-		m.sendMessage(m.inputBuffer)
+
+		message := m.inputBuffer
 		m.inputBuffer = ""
-		return m, tea.Batch(m.spinner.Tick, m.fetchMessages())
+		m.thinking = true
+
+		go func() {
+			if err := m.sendMessage(message); err != nil {
+				m.program.Send(errMsg{err})
+			}
+		}()
+
+		return m, tea.Batch(m.spinner.Tick)
 
 	case tea.KeyTab:
 		m.currentScreen = teammateSelectScreen
@@ -177,38 +195,38 @@ func (m *ChatModel) teammateSelectView() string {
 	b.WriteString(headerStyle.Render("🤖 Select a Teammate to Chat With\n\n"))
 
 	helpStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#666666"))
-	b.WriteString(helpStyle.Render("↑/↓: Navigate  •  Enter: Select  •  ?: Toggle Help\n\n"))
+	b.WriteString(helpStyle.Render("↑/↓: Navigate  •  Enter/Space: Select  •  ?: Toggle Help  •  Esc: Quit\n\n"))
+
+	selectedStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("#FFFFFF")).
+		Background(lipgloss.Color("#333333")).
+		Padding(0, 1)
 
 	for i, t := range m.teammates {
-		teammateStyle := lipgloss.NewStyle()
-		prefix := "  "
-
 		if i == m.cursor {
-			teammateStyle = teammateStyle.
-				Background(lipgloss.Color("#333333")).
-				Bold(true)
-			prefix = "▶ "
+			b.WriteString(fmt.Sprintf("▶ %s", selectedStyle.Render(fmt.Sprintf("%s %s", "🟢", t.Name))))
+			if t.Desc != "" {
+				descStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#666666"))
+				b.WriteString("\n    " + descStyle.Render(t.Desc))
+			}
+		} else {
+			b.WriteString(fmt.Sprintf("  %s %s", "🟢", t.Name))
+			if t.Desc != "" {
+				descStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#666666"))
+				b.WriteString("\n    " + descStyle.Render(t.Desc))
+			}
 		}
-
-		status := "🟢"
-		name := fmt.Sprintf("%s %s", status, t.Name)
-
-		b.WriteString(teammateStyle.Render(fmt.Sprintf("%s%s\n", prefix, name)))
-		if t.Desc != "" {
-			descStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#666666"))
-			b.WriteString(descStyle.Render(fmt.Sprintf("    %s\n", t.Desc)))
-		}
-		b.WriteString("\n")
+		b.WriteString("\n\n")
 	}
 
 	if m.showTeamHelp {
 		b.WriteString("\nKeyboard Shortcuts:\n")
 		b.WriteString(helpStyle.Render("• ↑/↓ or k/j: Navigate teammates\n"))
-		b.WriteString(helpStyle.Render("• Enter: Start chat with selected teammate\n"))
-		b.WriteString(helpStyle.Render("• Tab: Switch to next teammate during chat\n"))
-		b.WriteString(helpStyle.Render("• Shift+Tab: Switch to previous teammate\n"))
-		b.WriteString(helpStyle.Render("• Esc: Return to teammate selection\n"))
-		b.WriteString(helpStyle.Render("• Ctrl+C: Quit\n"))
+		b.WriteString(helpStyle.Render("• Enter/Space: Start chat with selected teammate\n"))
+		b.WriteString(helpStyle.Render("• Tab: Switch teammate during chat\n"))
+		b.WriteString(helpStyle.Render("• Esc: Quit\n"))
+		b.WriteString(helpStyle.Render("• ?: Toggle help\n"))
 	}
 
 	return b.String()
@@ -234,11 +252,16 @@ func (m *ChatModel) chatView() string {
 
 	var chatView string
 	for _, msg := range m.messages {
-		timestamp := timestampStyle.Render(msg.Timestamp.Format("15:04:05"))
+		t, err := time.Parse(time.RFC3339, msg.Timestamp)
+		timestamp := msg.Timestamp
+		if err == nil {
+			timestamp = t.Format("15:04:05")
+		}
+		timestamp = timestampStyle.Render(timestamp)
 		if msg.SenderName == "You" {
 			chatView += messageStyle.Render(fmt.Sprintf("[%s] You: %s\n", timestamp, msg.Content))
 		} else {
-			chatView += messageStyle.Render(fmt.Sprintf("[%s] %s: %s\n", timestamp, msg.SenderName, msg.Content))
+			chatView += messageStyle.Render(fmt.Sprintf("[%s] %s: %s\n", timestamp, "Bot", msg.Content))
 		}
 	}
 
@@ -261,32 +284,69 @@ func (m *ChatModel) chatView() string {
 
 func (m *ChatModel) fetchMessages() tea.Cmd {
 	return func() tea.Msg {
-		messagesChan, err := m.client.ReceiveMessages(context.Background(), m.selectedTeammate.UUID)
+		if m.selectedTeammate.UUID == "" {
+			return nil
+		}
+
+		msgChan, err := m.client.ReceiveMessages(context.Background(), m.selectedTeammate.UUID)
 		if err != nil {
 			return errMsg{err}
 		}
 
-		select {
-		case msg, ok := <-messagesChan:
-			if !ok {
-				return nil
+		for msg := range msgChan {
+			if msg.Error != "" {
+				return errMsg{fmt.Errorf(msg.Error)}
 			}
 			return msg
 		}
+
+		return nil
 	}
 }
 
-func (m *ChatModel) sendMessage(content string) {
-	msg := kubiya.ChatMessage{
-		SenderName: "You",
-		Content:    content,
-		Timestamp:  time.Now(),
+func (m *ChatModel) sendMessage(msg string) error {
+	if m.selectedTeammate.UUID == "" {
+		return fmt.Errorf("no teammate selected")
 	}
-	m.messages = append(m.messages, msg)
 
-	go m.client.SendMessage(context.Background(), m.selectedTeammate.UUID, content)
+	m.messages = append(m.messages, kubiya.ChatMessage{
+		Content:    msg,
+		SenderName: "You",
+		Timestamp:  time.Now().Format(time.RFC3339),
+	})
+
+	msgChan, err := m.client.SendMessage(context.Background(), m.selectedTeammate.UUID, msg, "")
+	if err != nil {
+		return err
+	}
+
+	go func() {
+		defer func() {
+			m.thinking = false
+			m.program.Send(tickMsg{}) // Force UI update
+		}()
+
+		for msg := range msgChan {
+			if msg.Error != "" {
+				m.program.Send(errMsg{fmt.Errorf(msg.Error)})
+				return
+			}
+			m.program.Send(msg)
+		}
+	}()
+
+	return nil
 }
 
 type errMsg struct {
 	err error
+}
+
+func (m *ChatModel) handleError(err error) {
+	m.thinking = false
+	m.messages = append(m.messages, kubiya.ChatMessage{
+		Content:    fmt.Sprintf("Error: %v", err),
+		SenderName: "System",
+		Timestamp:  time.Now().Format(time.RFC3339),
+	})
 }

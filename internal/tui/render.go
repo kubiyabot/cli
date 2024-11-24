@@ -162,7 +162,17 @@ func (s *SourceBrowser) renderExecutionConfirmation() string {
 func (s *SourceBrowser) renderExecutionProgress() string {
 	var b strings.Builder
 	b.WriteString(fmt.Sprintf("\n%s\n\n", titleStyle.Render(" 🚀 Executing ")))
-	b.WriteString(s.execution.output)
+
+	if s.execution.error != nil {
+		b.WriteString(style.ErrorStyle.Render(fmt.Sprintf("Error: %v\n", s.execution.error)))
+	} else if s.execution.executing {
+		b.WriteString(fmt.Sprintf("%s Executing...\n\n", s.spinner.View()))
+	}
+
+	if s.execution.output != "" {
+		b.WriteString(s.execution.output)
+	}
+
 	return b.String()
 }
 

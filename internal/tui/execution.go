@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -13,48 +12,15 @@ import (
 
 func (s *SourceBrowser) executeTool() tea.Cmd {
 	return func() tea.Msg {
-		// If not prepared, run validations first
-		if !s.execution.prepared {
-			validation := s.validateToolExecution()
-			if len(validation) > 0 {
-				var errMsg strings.Builder
-				errMsg.WriteString("❌ Validation errors:\n")
-				for _, err := range validation {
-					errMsg.WriteString(fmt.Sprintf("• %s\n", err))
-				}
-				return toolExecutedMsg{err: fmt.Errorf(errMsg.String())}
-			}
-
-			s.execution.prepared = true
+		// Validate before execution
+		if err := s.validateExecution(); err != nil {
+			return toolExecutedMsg{err: err}
 		}
 
-		// If prepared but not confirmed, show confirmation
-		if !s.execution.confirmed {
-			s.state = stateExecuteConfirm
-			s.execution.output = s.renderExecutionSummary()
-			return nil
-		}
-
-		// Start actual execution
-		s.state = stateExecuting
-		s.execution.executing = true
-		return s.startExecution()
-	}
-}
-
-func (s *SourceBrowser) startExecution() tea.Cmd {
-	return func() tea.Msg {
-		// Check if port forward is ready
+		// Ensure port forward is ready
 		if !s.portForward.ready {
-			s.execution.output = "⚡ Setting up connection to tool manager...\n"
-			msg := s.setupPortForward()()
-			if pfMsg, ok := msg.(portForwardMsg); ok {
-				if pfMsg.err != nil {
-					return toolExecutedMsg{err: pfMsg.err}
-				}
-				if !pfMsg.ready {
-					return toolExecutedMsg{err: fmt.Errorf("Failed to establish connection to tool manager")}
-				}
+			if err := s.setupPortForward()(); err != nil {
+				return toolExecutedMsg{err: fmt.Errorf("failed to setup port forward: %w", err)}
 			}
 		}
 
@@ -76,21 +42,19 @@ func (s *SourceBrowser) startExecution() tea.Cmd {
 		// Execute the tool
 		jsonData, err := json.Marshal(execReq)
 		if err != nil {
-			return toolExecutedMsg{err: fmt.Errorf("Failed to prepare request:\n%w", err)}
+			return toolExecutedMsg{err: fmt.Errorf("failed to prepare request: %w", err)}
 		}
 
-		// Make the HTTP request
+		// Make HTTP request with proper error handling
 		httpClient := &http.Client{Timeout: 30 * time.Second}
-		resp, err := httpClient.Post("http://localhost:5001/tool/execute", "application/json", bytes.NewBuffer(jsonData))
+		resp, err := httpClient.Post("http://localhost:5001/tool/execute",
+			"application/json", bytes.NewBuffer(jsonData))
 		if err != nil {
-			return toolExecutedMsg{err: fmt.Errorf("Failed to execute tool:\n%w\n\nPlease check:\n"+
-				"1. The tool manager is running\n"+
-				"2. The port forward is working\n"+
-				"3. Your network connection", err)}
+			return toolExecutedMsg{err: fmt.Errorf("failed to execute tool: %w", err)}
 		}
 		defer resp.Body.Close()
 
-		// Parse the response
+		// Handle response
 		var execResp struct {
 			Status      string `json:"status"`
 			ExecutionID string `json:"execution_id,omitempty"`
@@ -99,43 +63,43 @@ func (s *SourceBrowser) startExecution() tea.Cmd {
 		}
 
 		if err := json.NewDecoder(resp.Body).Decode(&execResp); err != nil {
-			return toolExecutedMsg{err: fmt.Errorf("Failed to decode response:\n%w", err)}
+			return toolExecutedMsg{err: fmt.Errorf("failed to decode response: %w", err)}
 		}
 
-		// Handle execution response
 		if execResp.Error != "" {
-			return toolExecutedMsg{err: fmt.Errorf("Tool execution failed:\n%s", execResp.Error)}
+			return toolExecutedMsg{err: fmt.Errorf(execResp.Error)}
 		}
 
-		s.execution.output = execResp.Output
-		if execResp.Status == "completed" {
+		// Handle execution status
+		switch execResp.Status {
+		case "completed":
 			s.execution.executing = false
 			return toolExecutedMsg{output: execResp.Output}
-		}
 
-		// Handle async execution
-		if execResp.Status == "async" {
-			go func() {
-				err := followAsyncExecution(httpClient, execResp.ExecutionID, &s.execution)
-				if err != nil {
-					s.execution.error = err
-				}
-				s.execution.executing = false
-			}()
-		}
+		case "async":
+			s.execution.executing = true
+			go s.followAsyncExecution(execResp.ExecutionID)
+			return toolExecutedMsg{output: "Execution started..."}
 
-		return toolExecutedMsg{output: s.execution.output}
+		default:
+			return toolExecutedMsg{err: fmt.Errorf("unknown execution status: %s", execResp.Status)}
+		}
 	}
 }
 
-func followAsyncExecution(client *http.Client, execID string, state *executionState) error {
+// Add method to follow async execution
+func (s *SourceBrowser) followAsyncExecution(execID string) {
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
+
+	client := &http.Client{Timeout: 5 * time.Second}
 
 	for range ticker.C {
 		resp, err := client.Get(fmt.Sprintf("http://localhost:5001/tool/status/%s", execID))
 		if err != nil {
-			return err
+			s.execution.error = err
+			s.execution.executing = false
+			return
 		}
 
 		var status struct {
@@ -146,19 +110,20 @@ func followAsyncExecution(client *http.Client, execID string, state *executionSt
 
 		if err := json.NewDecoder(resp.Body).Decode(&status); err != nil {
 			resp.Body.Close()
-			return err
+			s.execution.error = err
+			s.execution.executing = false
+			return
 		}
 		resp.Body.Close()
 
-		state.output = status.Output
+		s.execution.output = status.Output
 
 		if status.Status == "completed" || status.Status == "failed" {
+			s.execution.executing = false
 			if status.Error != "" {
-				return fmt.Errorf(status.Error)
+				s.execution.error = fmt.Errorf(status.Error)
 			}
-			return nil
+			return
 		}
 	}
-
-	return nil
 }
