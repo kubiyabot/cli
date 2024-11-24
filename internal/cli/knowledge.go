@@ -52,7 +52,7 @@ func newListKnowledgeCommand(cfg *config.Config) *cobra.Command {
 				return json.NewEncoder(os.Stdout).Encode(items)
 			case "text":
 				w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-				fmt.Fprintln(w, "📚 KNOWLEDGE BASE\n")
+				fmt.Fprintln(w, "📚 KNOWLEDGE BASE")
 				fmt.Fprintln(w, "UUID\tNAME\tDESCRIPTION\tLABELS")
 				for _, k := range items {
 					fmt.Fprintf(w, "%s\t%s\t%s\t%s\n",
@@ -176,7 +176,7 @@ func newUpdateKnowledgeCommand(cfg *config.Config) *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "update [uuid]",
-		Short: "✏️ Update knowledge item",
+		Short: "��️ Update knowledge item",
 		Long: `Update a knowledge item by UUID.
 		
 By default, this will open your default editor (set by $EDITOR) to edit the content.

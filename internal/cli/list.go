@@ -30,7 +30,7 @@ func newListCommand(cfg *config.Config) *cobra.Command {
 				return json.NewEncoder(os.Stdout).Encode(teammates)
 			case "text":
 				w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-				fmt.Fprintln(w, "👥 TEAMMATES\n")
+				fmt.Fprintln(w, "👥 TEAMMATES")
 				fmt.Fprintln(w, "UUID\tNAME\tSTATUS\tDESCRIPTION")
 				for _, t := range teammates {
 					status := "🟢"
