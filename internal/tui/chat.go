@@ -134,7 +134,7 @@ func (ui *ChatUI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					ui.messages = append(ui.messages, kubiya.ChatMessage{
 						Content:    message,
 						SenderName: "You",
-						Timestamp:  time.Now().Format("15:04:05"),
+						Timestamp:  time.Now().Format(time.RFC3339),
 						Final:      true,
 					})
 					return ui, ui.sendMessage(message)
@@ -186,7 +186,7 @@ func (ui *ChatUI) sendMessage(message string) tea.Cmd {
 		placeholderMsg := kubiya.ChatMessage{
 			Content:    "",
 			SenderName: ui.selected.Name,
-			Timestamp:  time.Now().Format("15:04:05"),
+			Timestamp:  time.Now().Format(time.RFC3339),
 			Final:      false,
 		}
 		ui.messages = append(ui.messages, placeholderMsg)
@@ -218,11 +218,12 @@ func (ui *ChatUI) handleChatMessage(msg kubiya.ChatMessage) {
 		// Update the last message from the teammate
 		if len(ui.messages) > 0 {
 			lastMsg := &ui.messages[len(ui.messages)-1]
-			if lastMsg.SenderName == ui.selected.Name && !lastMsg.Final {
-				// Only update if the content has changed
-				if msg.Content != lastMsg.Content {
+			if lastMsg.SenderName == ui.selected.Name {
+				// Only update if the content or finality has changed
+				if msg.Content != lastMsg.Content || msg.Final != lastMsg.Final {
 					lastMsg.Content = msg.Content
 					lastMsg.Final = msg.Final
+					lastMsg.Timestamp = msg.Timestamp
 				}
 			} else {
 				ui.messages = append(ui.messages, msg)
@@ -291,7 +292,7 @@ func (ui *ChatUI) renderChatScreen() string {
 
 	// Messages
 	for _, msg := range ui.messages {
-		timestamp := trimTimestamp(msg.Timestamp)
+		timestamp := formatTimestamp(msg.Timestamp)
 		var senderStyle, messageStyle lipgloss.Style
 
 		if msg.SenderName == "You" {
@@ -325,10 +326,11 @@ func (ui *ChatUI) renderChatScreen() string {
 	return b.String()
 }
 
-// Helper function to trim timestamp to HH:MM:SS
-func trimTimestamp(ts string) string {
-	if len(ts) >= 8 {
-		return ts[len(ts)-8:]
+// Helper function to format timestamp to HH:MM:SS
+func formatTimestamp(ts string) string {
+	t, err := time.Parse(time.RFC3339, ts)
+	if err != nil {
+		return ts // Return the original timestamp if parsing fails
 	}
-	return ts
+	return t.Format("15:04:05")
 }
