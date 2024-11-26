@@ -21,31 +21,43 @@ const (
 	chatScreen
 )
 
+type toolExecution struct {
+	startTime time.Time
+	name      string
+	output    string
+	messageID string
+	isFinal   bool
+}
+
 type ChatUI struct {
-	cfg         *config.Config
-	client      *kubiya.Client
-	messages    []kubiya.ChatMessage
-	inputBuffer string
-	spinner     spinner.Model
-	list        list.Model
-	err         error
-	teammates   []kubiya.Teammate
-	selected    kubiya.Teammate
-	width       int
-	height      int
-	state       screenState
-	cursor      int
-	ready       bool
-	cancelFuncs []context.CancelFunc
-	P           *tea.Program
-	isBotTyping bool   // Indicates if the bot is currently typing/responding
-	toolOutput  string // Stores the output from the tool execution
-	toolRunning bool   // Indicates if a tool execution is in progress
+	cfg                  *config.Config
+	client               *kubiya.Client
+	messages             []kubiya.ChatMessage
+	inputBuffer          string
+	spinner              spinner.Model
+	list                 list.Model
+	err                  error
+	teammates            []kubiya.Teammate
+	selected             kubiya.Teammate
+	width                int
+	height               int
+	state                screenState
+	cursor               int
+	ready                bool
+	cancelFuncs          []context.CancelFunc
+	P                    *tea.Program
+	isBotTyping          bool
+	spinnerStartTime     time.Time
+	toolName             string
+	toolRunning          bool
+	toolExecutions       map[string]*toolExecution // Map to track ongoing tool executions
+	currentToolMessageID string                    // Track current tool's MessageID
 }
 
 func NewChatUI(cfg *config.Config) *ChatUI {
 	s := spinner.New()
-	s.Spinner = spinner.Dot
+	s.Spinner = spinner.Line
+	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#3B82F6"))
 
 	delegate := list.NewDefaultDelegate()
 	delegate.Styles.SelectedTitle = lipgloss.NewStyle().Foreground(lipgloss.Color("205")).Bold(true)
@@ -57,11 +69,13 @@ func NewChatUI(cfg *config.Config) *ChatUI {
 	uiList.Styles.Title = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("205"))
 
 	return &ChatUI{
-		cfg:     cfg,
-		client:  kubiya.NewClient(cfg),
-		spinner: s,
-		state:   teammateSelectScreen,
-		list:    uiList,
+		cfg:                  cfg,
+		client:               kubiya.NewClient(cfg),
+		spinner:              s,
+		state:                teammateSelectScreen,
+		list:                 uiList,
+		toolExecutions:       make(map[string]*toolExecution),
+		currentToolMessageID: "",
 	}
 }
 
@@ -70,6 +84,7 @@ func (ui *ChatUI) Init() tea.Cmd {
 }
 
 func (ui *ChatUI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	var cmds []tea.Cmd
 	var cmd tea.Cmd
 
 	switch msg := msg.(type) {
@@ -92,14 +107,6 @@ func (ui *ChatUI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case kubiya.ChatMessage:
 		ui.handleChatMessage(msg)
-		// If the bot has started responding, set isBotTyping to true
-		if msg.SenderName == ui.selected.Name && !msg.Final {
-			ui.isBotTyping = true
-		}
-		// When the bot message is finalized, set isBotTyping to false
-		if msg.Final {
-			ui.isBotTyping = false
-		}
 		return ui, nil
 
 	case finalizeMessage:
@@ -165,8 +172,13 @@ func (ui *ChatUI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	ui.spinner, cmd = ui.spinner.Update(msg)
-	return ui, cmd
+	// Update spinner for typing indicator
+	if ui.isBotTyping {
+		ui.spinner, cmd = ui.spinner.Update(msg)
+		cmds = append(cmds, cmd)
+	}
+
+	return ui, tea.Batch(cmds...)
 }
 
 func (ui *ChatUI) View() string {
@@ -198,14 +210,9 @@ func (ui *ChatUI) sendMessage(message string) tea.Cmd {
 			return err
 		}
 
-		// Add a placeholder message for the bot's response
-		placeholderMsg := kubiya.ChatMessage{
-			Content:    "",
-			SenderName: ui.selected.Name,
-			Timestamp:  time.Now().Format(time.RFC3339),
-			Final:      false,
-		}
-		ui.messages = append(ui.messages, placeholderMsg)
+		// Indicate that the bot is typing and start the spinner timer
+		ui.isBotTyping = true
+		ui.spinnerStartTime = time.Now()
 
 		go func() {
 			for {
@@ -232,24 +239,139 @@ func (ui *ChatUI) sendMessage(message string) tea.Cmd {
 func (ui *ChatUI) handleChatMessage(msg kubiya.ChatMessage) {
 	// Handle tool execution messages
 	if msg.Type == "tool" || msg.Type == "tool_output" {
-		ui.toolRunning = !msg.Final // Update toolRunning status based on message finality
+		te, exists := ui.toolExecutions[msg.MessageID]
+		if !exists {
+			// First time seeing this tool execution, create new entry
+			te = &toolExecution{
+				startTime: time.Now(),
+				name:      "", // Initialize with empty name
+				messageID: msg.MessageID,
+				output:    "",
+				isFinal:   false,
+			}
+			ui.toolExecutions[msg.MessageID] = te
+
+			// Display tool execution initiation message only once
+			if msg.Type == "tool" && msg.Content != "" {
+				te.name = msg.Content
+			} else {
+				te.name = "Unknown Tool"
+			}
+
+			initMsg := kubiya.ChatMessage{
+				Content:    te.name,
+				SenderName: msg.SenderName,
+				Timestamp:  msg.Timestamp,
+				Type:       "tool_init",
+				Final:      false,
+				MessageID:  msg.MessageID,
+			}
+			ui.messages = append(ui.messages, initMsg)
+		} else {
+			// Update tool name if available
+			if msg.Type == "tool" && msg.Content != "" {
+				te.name = msg.Content
+				// Update the init message with the correct tool name
+				for i := len(ui.messages) - 1; i >= 0; i-- {
+					if ui.messages[i].Type == "tool_init" && ui.messages[i].MessageID == msg.MessageID {
+						ui.messages[i].Content = te.name
+						break
+					}
+				}
+			}
+		}
+
+		// Accumulate output and update the message in ui.messages
+		if msg.Content != "" && msg.Type == "tool_output" {
+			te.output += msg.Content + "\n"
+
+			// Update or add a message in ui.messages for the tool output
+			var existingMsg *kubiya.ChatMessage
+			for i := len(ui.messages) - 1; i >= 0; i-- {
+				if ui.messages[i].Type == "tool_output" && ui.messages[i].MessageID == msg.MessageID {
+					existingMsg = &ui.messages[i]
+					break
+				}
+			}
+
+			if existingMsg != nil {
+				existingMsg.Content = te.output
+				existingMsg.Timestamp = msg.Timestamp
+			} else {
+				// Add new message for tool output
+				toolOutputMsg := kubiya.ChatMessage{
+					Content:    te.output,
+					SenderName: msg.SenderName,
+					Timestamp:  msg.Timestamp,
+					Type:       "tool_output",
+					MessageID:  msg.MessageID,
+					Final:      false,
+				}
+				ui.messages = append(ui.messages, toolOutputMsg)
+			}
+		}
+
+		if msg.Final {
+			// Tool execution finished
+			te.isFinal = true
+			duration := time.Since(te.startTime)
+
+			// Update the tool output message to be final
+			for i := len(ui.messages) - 1; i >= 0; i-- {
+				if ui.messages[i].Type == "tool_output" && ui.messages[i].MessageID == msg.MessageID {
+					ui.messages[i].Final = true
+					break
+				}
+			}
+
+			// Append a message indicating the tool execution completion
+			executionMsg := kubiya.ChatMessage{
+				Content:    fmt.Sprintf("🔧 Executed `%s`\n\n⏱ Duration: %dms", te.name, duration.Milliseconds()),
+				SenderName: msg.SenderName,
+				Timestamp:  msg.Timestamp,
+				Type:       "tool_execution_complete",
+				Final:      true,
+			}
+			ui.messages = append(ui.messages, executionMsg)
+
+			// Remove from ongoing tool executions
+			delete(ui.toolExecutions, msg.MessageID)
+			ui.toolRunning = false
+			// Reset currentToolMessageID
+			ui.currentToolMessageID = ""
+		} else {
+			// Tool execution in progress
+			ui.toolRunning = true
+			ui.toolName = te.name
+			ui.currentToolMessageID = msg.MessageID
+		}
+		return // We handled the tool message
 	}
 
+	// Handle regular chat messages
 	if msg.SenderName == ui.selected.Name {
-		// Update the last message from the teammate if it's not final
-		if len(ui.messages) > 0 {
-			lastMsg := &ui.messages[len(ui.messages)-1]
-			if lastMsg.SenderName == ui.selected.Name && !lastMsg.Final {
-				// Update the content, finality, and timestamp
-				lastMsg.Content = msg.Content
-				lastMsg.Final = msg.Final
-				lastMsg.Timestamp = msg.Timestamp
-			} else {
-				// Append a new message if the last one is final
-				ui.messages = append(ui.messages, msg)
+		// Update typing indicator
+		ui.isBotTyping = !msg.Final
+		if ui.isBotTyping {
+			ui.spinnerStartTime = time.Now() // Reset spinner timer
+		}
+
+		// Find if a message with the same MessageID already exists
+		var existingMsg *kubiya.ChatMessage
+		for i := len(ui.messages) - 1; i >= 0; i-- {
+			if ui.messages[i].MessageID == msg.MessageID {
+				existingMsg = &ui.messages[i]
+				break
 			}
+		}
+
+		if existingMsg != nil {
+			// Update the existing message content and finality
+			existingMsg.Content = msg.Content
+			existingMsg.Final = msg.Final
+			existingMsg.Timestamp = msg.Timestamp
 		} else {
-			// No previous messages; append the new message
+			// Append new message if it doesn't exist
 			ui.messages = append(ui.messages, msg)
 		}
 	} else {
@@ -299,17 +421,18 @@ func (t teammateItem) Title() string       { return t.teammate.Name }
 func (t teammateItem) Description() string { return t.teammate.Desc }
 func (t teammateItem) FilterValue() string { return t.teammate.Name }
 
-// Rendering the chat screen with styling
+// Rendering the chat screen with enhanced UI and typing indicator
 func (ui *ChatUI) renderChatScreen() string {
 	var b strings.Builder
 
 	// Header
 	headerStyle := lipgloss.NewStyle().
 		Bold(true).
-		Foreground(lipgloss.Color("205")).
+		Background(lipgloss.Color("#6366F1")).
+		Foreground(lipgloss.Color("#FFFFFF")).
 		Padding(0, 1)
 
-	b.WriteString(headerStyle.Render(fmt.Sprintf("Chatting with %s", ui.selected.Name)))
+	b.WriteString(headerStyle.Render(fmt.Sprintf(" Chatting with %s ", ui.selected.Name)))
 	b.WriteString("\n\n")
 
 	// Messages rendering
@@ -318,49 +441,99 @@ func (ui *ChatUI) renderChatScreen() string {
 		var senderStyle, messageStyle lipgloss.Style
 
 		if msg.SenderName == "You" {
-			senderStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("32")).Bold(true)
-			messageStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("32"))
+			senderStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#10B981")).Bold(true)
+			messageStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#A7F3D0"))
 		} else {
-			senderStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("33")).Bold(true)
-			messageStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("33"))
+			senderStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#3B82F6")).Bold(true)
+			messageStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#BFDBFE"))
 		}
 
 		sender := senderStyle.Render(msg.SenderName)
 		content := messageStyle.Render(msg.Content)
 
-		// Check if the message is tool output and format accordingly
-		if msg.Type == "tool_output" {
+		// Check the message type and format accordingly
+		switch msg.Type {
+		case "tool_init":
+			// Format tool execution initiation message
+			toolInfoStyle := lipgloss.NewStyle().
+				Border(lipgloss.RoundedBorder()).
+				Padding(1).
+				BorderForeground(lipgloss.Color("#F59E0B"))
+
+			toolInfo := fmt.Sprintf("🔧 Executing Tool: `%s`", msg.Content)
+			content = toolInfoStyle.Render(toolInfo)
+
+		case "tool_output":
+			// Format tool output message in a box
+			toolOutputStyle := lipgloss.NewStyle().
+				Border(lipgloss.NormalBorder()).
+				Padding(1).
+				Margin(0, 2).
+				BorderForeground(lipgloss.Color("#FBBF24"))
+
+			content = toolOutputStyle.Render(msg.Content)
+
+		case "tool_execution_complete":
+			// Format tool execution completion message
 			toolStyle := lipgloss.NewStyle().
-				Foreground(lipgloss.Color("244")).
-				Italic(true)
+				Foreground(lipgloss.Color("#FBBF24")).
+				Bold(true)
+
 			content = toolStyle.Render(msg.Content)
+		case "error":
+			// Format error messages
+			errorStyle := lipgloss.NewStyle().
+				Foreground(lipgloss.Color("#EF4444")).
+				Bold(true)
+			content = errorStyle.Render("Error: " + msg.Content)
 		}
 
 		b.WriteString(fmt.Sprintf("[%s] %s: %s\n", timestamp, sender, content))
 	}
 
-	// Show "Bot is typing..." when bot is responding
+	// Show typing indicator when bot is typing
 	if ui.isBotTyping {
 		typingStyle := lipgloss.NewStyle().
-			Foreground(lipgloss.Color("33")).
+			Foreground(lipgloss.Color("#3B82F6")).
 			Italic(true)
-		// show team mate name and "is typing..."
-		b.WriteString(typingStyle.Render(fmt.Sprintf("%s is typing...", ui.selected.Name)))
+
+		// Create animated dots
+		elapsed := time.Since(ui.spinnerStartTime).Milliseconds()
+		dotsCount := (elapsed / 300) % 4 // Change every 300ms
+		dots := strings.Repeat(".", int(dotsCount))
+
+		typingIndicator := typingStyle.Render(fmt.Sprintf("%s is typing%s", ui.selected.Name, dots))
+		b.WriteString(typingIndicator + "\n")
+	}
+
+	// Show tool execution indicator when a tool is running
+	if ui.toolRunning {
+		te := ui.toolExecutions[ui.currentToolMessageID]
+		if te != nil {
+			toolStyle := lipgloss.NewStyle().
+				Foreground(lipgloss.Color("#FBBF24")).
+				Bold(true)
+
+			// Create animated dots for the execution indicator
+			elapsed := time.Since(te.startTime).Milliseconds()
+			dotsCount := (elapsed / 300) % 4
+			dots := strings.Repeat(".", int(dotsCount))
+
+			toolIndicator := toolStyle.Render(fmt.Sprintf("Executing `%s`%s", ui.toolName, dots))
+			b.WriteString(toolIndicator + "\n")
+		}
 	}
 
 	// Input prompt
-	// Disable input when bot is typing
-	if !ui.isBotTyping {
-		inputStyle := lipgloss.NewStyle().
-			Foreground(lipgloss.Color("244")).
-			Bold(true)
-		prompt := inputStyle.Render("\n> ") + ui.inputBuffer
-		b.WriteString(prompt)
-	}
+	inputStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#9CA3AF")).
+		Bold(true)
+	prompt := inputStyle.Render("\n> ") + ui.inputBuffer
+	b.WriteString(prompt)
 
 	// Footer
 	footerStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("240"))
+		Foreground(lipgloss.Color("#6B7280"))
 
 	b.WriteString(footerStyle.Render("\n\nPress 'esc' to go back to teammate selection."))
 
