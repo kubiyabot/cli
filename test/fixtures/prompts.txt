@@ -1,0 +1,19 @@
+# DevOps prompts
+explain_kubernetes=Explain the basic concepts of Kubernetes
+review_deployment=Review this deployment configuration for best practices
+debug_error=Debug this connection error in the logs
+
+# Security prompts
+check_security=Perform a security audit of this code
+scan_dockerfile=Check this Dockerfile for security issues
+review_config=Review this configuration for security vulnerabilities
+
+# Documentation prompts
+generate_docs=Generate documentation for this code
+explain_api=Document this API endpoint
+write_readme=Create a README for this project
+
+# Code Review prompts
+review_code=Review this code for improvements
+check_tests=Review these test cases
+optimize_performance=Suggest performance optimizations 
