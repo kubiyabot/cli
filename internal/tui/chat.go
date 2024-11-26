@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -20,333 +21,314 @@ const (
 	chatScreen
 )
 
-type tickMsg struct{}
-
-type ChatModel struct {
-	client           *kubiya.Client
-	messages         []kubiya.ChatMessage
-	inputBuffer      string
-	selectedTeammate kubiya.Teammate
-	teammates        []kubiya.Teammate
-	currentScreen    screenState
-	spinner          spinner.Model
-	thinking         bool
-	width            int
-	height           int
-	cursor           int
-	showTeamHelp     bool
-	program          *tea.Program
+type ChatUI struct {
+	cfg         *config.Config
+	client      *kubiya.Client
+	messages    []kubiya.ChatMessage
+	inputBuffer string
+	spinner     spinner.Model
+	list        list.Model
+	err         error
+	teammates   []kubiya.Teammate
+	selected    kubiya.Teammate
+	width       int
+	height      int
+	state       screenState
+	cursor      int
+	ready       bool
+	cancelFuncs []context.CancelFunc
+	P           *tea.Program
 }
 
-func NewChatModel(cfg *config.Config, teammate ...kubiya.Teammate) (*ChatModel, error) {
-	client := kubiya.NewClient(cfg)
-	teammates, err := client.ListTeammates(context.Background())
-	if err != nil {
-		return nil, err
-	}
-
+func NewChatUI(cfg *config.Config) *ChatUI {
 	s := spinner.New()
 	s.Spinner = spinner.Dot
-	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
 
-	model := &ChatModel{
-		client:        client,
-		messages:      []kubiya.ChatMessage{},
-		teammates:     teammates,
-		currentScreen: teammateSelectScreen,
-		spinner:       s,
-		thinking:      false,
+	delegate := list.NewDefaultDelegate()
+	delegate.Styles.SelectedTitle = lipgloss.NewStyle().Foreground(lipgloss.Color("205")).Bold(true)
+
+	uiList := list.New([]list.Item{}, delegate, 0, 0)
+	uiList.Title = "Select a Teammate"
+	uiList.SetShowStatusBar(false)
+	uiList.SetFilteringEnabled(true)
+	uiList.Styles.Title = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("205"))
+
+	return &ChatUI{
+		cfg:     cfg,
+		client:  kubiya.NewClient(cfg),
+		spinner: s,
+		state:   teammateSelectScreen,
+		list:    uiList,
 	}
-
-	if len(teammate) > 0 {
-		model.selectedTeammate = teammate[0]
-		model.currentScreen = chatScreen
-	}
-
-	p := tea.NewProgram(model, tea.WithAltScreen())
-	model.program = p
-
-	return model, nil
 }
 
-func (m *ChatModel) Init() tea.Cmd {
-	return tea.Batch(
-		m.spinner.Tick,
-		m.fetchMessages(),
-	)
+func (ui *ChatUI) Init() tea.Cmd {
+	return tea.Batch(ui.spinner.Tick, ui.fetchTeammates)
 }
 
-func (m *ChatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (ui *ChatUI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	var cmd tea.Cmd
+
 	switch msg := msg.(type) {
+
 	case tea.WindowSizeMsg:
-		m.width = msg.Width
-		m.height = msg.Height
+		ui.width = msg.Width
+		ui.height = msg.Height
+		ui.list.SetSize(ui.width, ui.height-4)
 
-	case spinner.TickMsg:
-		var cmd tea.Cmd
-		m.spinner, cmd = m.spinner.Update(msg)
-		return m, cmd
-
-	case errMsg:
-		m.handleError(msg.err)
-		return m, nil
-
-	case tea.KeyMsg:
-		switch m.currentScreen {
-		case teammateSelectScreen:
-			return m.handleTeammateSelectInput(msg)
-		case chatScreen:
-			return m.handleChatInput(msg)
+	case []kubiya.Teammate:
+		ui.teammates = msg
+		items := make([]list.Item, len(msg))
+		for i, t := range msg {
+			items[i] = teammateItem{teammate: t}
 		}
+
+		ui.list.SetItems(items)
+		ui.ready = true
+		return ui, nil
 
 	case kubiya.ChatMessage:
-		m.thinking = false
-		m.messages = append(m.messages, msg)
-		return m, m.fetchMessages()
+		ui.handleChatMessage(msg)
+		return ui, nil
+
+	case finalizeMessage:
+		ui.finalizeBotMessage()
+		return ui, nil
+
+	case error:
+		ui.err = msg
+		return ui, nil
+
+	case tea.KeyMsg:
+		switch ui.state {
+
+		case teammateSelectScreen:
+			switch msg.String() {
+			case "ctrl+c", "q":
+				ui.cancelContexts()
+				return ui, tea.Quit
+			case "enter":
+				if item, ok := ui.list.SelectedItem().(teammateItem); ok {
+					ui.selected = item.teammate
+					ui.state = chatScreen
+					ui.messages = nil
+					ui.inputBuffer = ""
+				}
+			default:
+				ui.list, cmd = ui.list.Update(msg)
+				return ui, cmd
+			}
+
+		case chatScreen:
+			switch msg.String() {
+			case "ctrl+c", "q":
+				ui.cancelContexts()
+				return ui, tea.Quit
+			case "esc":
+				ui.cancelContexts()
+				ui.state = teammateSelectScreen
+			case "enter":
+				if strings.TrimSpace(ui.inputBuffer) != "" {
+					message := ui.inputBuffer
+					ui.inputBuffer = ""
+					ui.messages = append(ui.messages, kubiya.ChatMessage{
+						Content:    message,
+						SenderName: "You",
+						Timestamp:  time.Now().Format("15:04:05"),
+						Final:      true,
+					})
+					return ui, ui.sendMessage(message)
+				}
+			case "backspace":
+				if len(ui.inputBuffer) > 0 {
+					ui.inputBuffer = ui.inputBuffer[:len(ui.inputBuffer)-1]
+				}
+			default:
+				ui.inputBuffer += msg.String()
+			}
+		}
 	}
 
-	return m, nil
+	ui.spinner, cmd = ui.spinner.Update(msg)
+	return ui, cmd
 }
 
-func (m *ChatModel) handleTeammateSelectInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case "up", "k":
-		if m.cursor > 0 {
-			m.cursor--
-		}
-	case "down", "j":
-		if m.cursor < len(m.teammates)-1 {
-			m.cursor++
-		}
-	case "?":
-		m.showTeamHelp = !m.showTeamHelp
-	case "enter", " ":
-		if len(m.teammates) > 0 {
-			m.selectedTeammate = m.teammates[m.cursor]
-			m.currentScreen = chatScreen
-			m.messages = []kubiya.ChatMessage{} // Clear messages when switching
-			return m, tea.Batch(
-				m.spinner.Tick,
-				m.fetchMessages(),
-			)
-		}
-	case "ctrl+c", "q", "esc":
-		return m, tea.Quit
+func (ui *ChatUI) View() string {
+	if ui.err != nil {
+		return fmt.Sprintf("Error: %v\n", ui.err)
 	}
-	return m, nil
+
+	if !ui.ready {
+		return fmt.Sprintf("Loading... %s", ui.spinner.View())
+	}
+
+	switch ui.state {
+	case teammateSelectScreen:
+		return ui.list.View()
+
+	case chatScreen:
+		return ui.renderChatScreen()
+	}
+
+	return ""
 }
 
-func (m *ChatModel) handleChatInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.Type {
-	case tea.KeyEnter:
-		if m.inputBuffer == "" || m.thinking {
-			return m, nil
+func (ui *ChatUI) sendMessage(message string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithCancel(context.Background())
+		ui.cancelFuncs = append(ui.cancelFuncs, cancel)
+		msgChan, err := ui.client.SendMessage(ctx, ui.selected.UUID, message, "")
+		if err != nil {
+			return err
 		}
 
-		message := m.inputBuffer
-		m.inputBuffer = ""
-		m.thinking = true
+		// Add a placeholder message for the bot's response
+		placeholderMsg := kubiya.ChatMessage{
+			Content:    "",
+			SenderName: ui.selected.Name,
+			Timestamp:  time.Now().Format("15:04:05"),
+			Final:      false,
+		}
+		ui.messages = append(ui.messages, placeholderMsg)
 
 		go func() {
-			if err := m.sendMessage(message); err != nil {
-				m.program.Send(errMsg{err})
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case msg, ok := <-msgChan:
+					if !ok {
+						// Mark the last message as final when the channel is closed
+						ui.P.Send(finalizeMessage{})
+						return
+					}
+					// Set the sender name to the teammate's name
+					msg.SenderName = ui.selected.Name
+					ui.P.Send(msg)
+				}
 			}
 		}()
-
-		return m, tea.Batch(m.spinner.Tick)
-
-	case tea.KeyTab:
-		m.currentScreen = teammateSelectScreen
-		m.messages = []kubiya.ChatMessage{} // Clear messages when switching
-		return m, nil
-
-	case tea.KeyCtrlC, tea.KeyEsc:
-		return m, tea.Quit
-
-	case tea.KeyBackspace:
-		if len(m.inputBuffer) > 0 {
-			m.inputBuffer = m.inputBuffer[:len(m.inputBuffer)-1]
-		}
-		return m, nil
-
-	default:
-		if msg.Type == tea.KeyRunes {
-			m.inputBuffer += string(msg.Runes)
-		}
-		return m, nil
-	}
-}
-
-func (m *ChatModel) View() string {
-	switch m.currentScreen {
-	case teammateSelectScreen:
-		return m.teammateSelectView()
-	case chatScreen:
-		return m.chatView()
-	default:
-		return "Unknown screen state"
-	}
-}
-
-func (m *ChatModel) teammateSelectView() string {
-	var b strings.Builder
-
-	headerStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#00FF7F"))
-	b.WriteString(headerStyle.Render("🤖 Select a Teammate to Chat With\n\n"))
-
-	helpStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#666666"))
-	b.WriteString(helpStyle.Render("↑/↓: Navigate  •  Enter/Space: Select  •  ?: Toggle Help  •  Esc: Quit\n\n"))
-
-	selectedStyle := lipgloss.NewStyle().
-		Bold(true).
-		Foreground(lipgloss.Color("#FFFFFF")).
-		Background(lipgloss.Color("#333333")).
-		Padding(0, 1)
-
-	for i, t := range m.teammates {
-		if i == m.cursor {
-			b.WriteString(fmt.Sprintf("▶ %s", selectedStyle.Render(fmt.Sprintf("%s %s", "🟢", t.Name))))
-			if t.Desc != "" {
-				descStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#666666"))
-				b.WriteString("\n    " + descStyle.Render(t.Desc))
-			}
-		} else {
-			b.WriteString(fmt.Sprintf("  %s %s", "🟢", t.Name))
-			if t.Desc != "" {
-				descStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#666666"))
-				b.WriteString("\n    " + descStyle.Render(t.Desc))
-			}
-		}
-		b.WriteString("\n\n")
-	}
-
-	if m.showTeamHelp {
-		b.WriteString("\nKeyboard Shortcuts:\n")
-		b.WriteString(helpStyle.Render("• ↑/↓ or k/j: Navigate teammates\n"))
-		b.WriteString(helpStyle.Render("• Enter/Space: Start chat with selected teammate\n"))
-		b.WriteString(helpStyle.Render("• Tab: Switch teammate during chat\n"))
-		b.WriteString(helpStyle.Render("• Esc: Quit\n"))
-		b.WriteString(helpStyle.Render("• ?: Toggle help\n"))
-	}
-
-	return b.String()
-}
-
-func (m *ChatModel) chatView() string {
-	headerStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#00FF7F"))
-	inputStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#FFA500"))
-	messageStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#FFFFFF"))
-	timestampStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#666666"))
-
-	header := headerStyle.Render(fmt.Sprintf("💬 Chatting with %s", m.selectedTeammate.Name))
-	shortcuts := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#666666")).
-		Render("(Tab/Shift+Tab: Switch Teammate • Esc: Back • Ctrl+C: Quit)")
-
-	var teamInfo string
-	if m.selectedTeammate.Desc != "" {
-		teamInfo = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#666666")).
-			Render(fmt.Sprintf("\n%s", m.selectedTeammate.Desc))
-	}
-
-	var chatView string
-	for _, msg := range m.messages {
-		t, err := time.Parse(time.RFC3339, msg.Timestamp)
-		timestamp := msg.Timestamp
-		if err == nil {
-			timestamp = t.Format("15:04:05")
-		}
-		timestamp = timestampStyle.Render(timestamp)
-		if msg.SenderName == "You" {
-			chatView += messageStyle.Render(fmt.Sprintf("[%s] You: %s\n", timestamp, msg.Content))
-		} else {
-			chatView += messageStyle.Render(fmt.Sprintf("[%s] %s: %s\n", timestamp, "Bot", msg.Content))
-		}
-	}
-
-	input := inputStyle.Render("> " + m.inputBuffer)
-	thinking := ""
-	if m.thinking {
-		thinking = fmt.Sprintf("\n%s Thinking...", m.spinner.View())
-	}
-
-	return fmt.Sprintf(
-		"%s\n%s%s\n\n%s\n\n%s%s",
-		header,
-		shortcuts,
-		teamInfo,
-		chatView,
-		input,
-		thinking,
-	)
-}
-
-func (m *ChatModel) fetchMessages() tea.Cmd {
-	return func() tea.Msg {
-		if m.selectedTeammate.UUID == "" {
-			return nil
-		}
-
-		msgChan, err := m.client.ReceiveMessages(context.Background(), m.selectedTeammate.UUID)
-		if err != nil {
-			return errMsg{err}
-		}
-
-		for msg := range msgChan {
-			if msg.Error != "" {
-				return errMsg{fmt.Errorf(msg.Error)}
-			}
-			return msg
-		}
 
 		return nil
 	}
 }
 
-func (m *ChatModel) sendMessage(msg string) error {
-	if m.selectedTeammate.UUID == "" {
-		return fmt.Errorf("no teammate selected")
+func (ui *ChatUI) handleChatMessage(msg kubiya.ChatMessage) {
+	if msg.SenderName == ui.selected.Name {
+		// Update the last message from the teammate
+		if len(ui.messages) > 0 {
+			lastMsg := &ui.messages[len(ui.messages)-1]
+			if lastMsg.SenderName == ui.selected.Name && !lastMsg.Final {
+				// Only update if the content has changed
+				if msg.Content != lastMsg.Content {
+					lastMsg.Content = msg.Content
+					lastMsg.Final = msg.Final
+				}
+			} else {
+				ui.messages = append(ui.messages, msg)
+			}
+		} else {
+			ui.messages = append(ui.messages, msg)
+		}
+	} else {
+		ui.messages = append(ui.messages, msg)
 	}
+}
 
-	m.messages = append(m.messages, kubiya.ChatMessage{
-		Content:    msg,
-		SenderName: "You",
-		Timestamp:  time.Now().Format(time.RFC3339),
-	})
+func (ui *ChatUI) finalizeBotMessage() {
+	if len(ui.messages) > 0 {
+		lastMsg := &ui.messages[len(ui.messages)-1]
+		if lastMsg.SenderName == ui.selected.Name {
+			lastMsg.Final = true
+		}
+	}
+}
 
-	msgChan, err := m.client.SendMessage(context.Background(), m.selectedTeammate.UUID, msg, "")
+func (ui *ChatUI) Run() error {
+	p := tea.NewProgram(ui)
+	ui.P = p
+	return p.Start()
+}
+
+func (ui *ChatUI) fetchTeammates() tea.Msg {
+	teammates, err := ui.client.ListTeammates(context.Background())
 	if err != nil {
 		return err
 	}
+	return teammates
+}
 
-	go func() {
-		defer func() {
-			m.thinking = false
-			m.program.Send(tickMsg{}) // Force UI update
-		}()
+func (ui *ChatUI) cancelContexts() {
+	for _, cancel := range ui.cancelFuncs {
+		cancel()
+	}
+	ui.cancelFuncs = nil
+}
 
-		for msg := range msgChan {
-			if msg.Error != "" {
-				m.program.Send(errMsg{fmt.Errorf(msg.Error)})
-				return
-			}
-			m.program.Send(msg)
+// finalizeMessage is used to mark the last teammate message as final when msgChan closes
+type finalizeMessage struct{}
+
+type teammateItem struct {
+	teammate kubiya.Teammate
+}
+
+func (t teammateItem) Title() string       { return t.teammate.Name }
+func (t teammateItem) Description() string { return t.teammate.Desc }
+func (t teammateItem) FilterValue() string { return t.teammate.Name }
+
+// Rendering the chat screen with styling
+func (ui *ChatUI) renderChatScreen() string {
+	var b strings.Builder
+
+	// Header
+	headerStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("205")).
+		Padding(0, 1)
+
+	b.WriteString(headerStyle.Render(fmt.Sprintf("Chatting with %s", ui.selected.Name)))
+	b.WriteString("\n\n")
+
+	// Messages
+	for _, msg := range ui.messages {
+		timestamp := trimTimestamp(msg.Timestamp)
+		var senderStyle, messageStyle lipgloss.Style
+
+		if msg.SenderName == "You" {
+			senderStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("32")).Bold(true)
+			messageStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("32"))
+		} else {
+			senderStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("33")).Bold(true)
+			messageStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("33"))
 		}
-	}()
 
-	return nil
+		sender := senderStyle.Render(msg.SenderName)
+		content := messageStyle.Render(msg.Content)
+
+		b.WriteString(fmt.Sprintf("[%s] %s: %s\n", timestamp, sender, content))
+	}
+
+	// Input prompt
+	inputStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("244")).
+		Bold(true)
+
+	prompt := inputStyle.Render("\n> ") + ui.inputBuffer
+	b.WriteString(prompt)
+
+	// Footer
+	footerStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("240"))
+
+	b.WriteString(footerStyle.Render("\n\nPress 'esc' to go back to teammate selection."))
+
+	return b.String()
 }
 
-type errMsg struct {
-	err error
-}
-
-func (m *ChatModel) handleError(err error) {
-	m.thinking = false
-	m.messages = append(m.messages, kubiya.ChatMessage{
-		Content:    fmt.Sprintf("Error: %v", err),
-		SenderName: "System",
-		Timestamp:  time.Now().Format(time.RFC3339),
-	})
+// Helper function to trim timestamp to HH:MM:SS
+func trimTimestamp(ts string) string {
+	if len(ts) >= 8 {
+		return ts[len(ts)-8:]
+	}
+	return ts
 }

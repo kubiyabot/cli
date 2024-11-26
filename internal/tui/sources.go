@@ -8,12 +8,14 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
+type errMsg error
+
 // fetchSources retrieves the list of sources
 func (s *SourceBrowser) fetchSources() tea.Cmd {
 	return func() tea.Msg {
 		sources, err := s.client.ListSources(context.Background())
 		if err != nil {
-			return errMsg{err}
+			return errMsg(err)
 		}
 
 		items := make([]list.Item, len(sources))

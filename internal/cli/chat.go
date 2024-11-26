@@ -3,7 +3,6 @@ package cli
 import (
 	"fmt"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/kubiyabot/cli/internal/config"
 	"github.com/kubiyabot/cli/internal/kubiya"
 	"github.com/kubiyabot/cli/internal/tui"
@@ -37,18 +36,8 @@ You can either use interactive mode or specify a teammate and message directly.`
 			cfg.Debug = debug
 
 			if interactive {
-				chatModel, err := tui.NewChatModel(cfg)
-				if err != nil {
-					return fmt.Errorf("failed to create chat model: %w", err)
-				}
-
-				// Create and run the program
-				p := tea.NewProgram(chatModel, tea.WithAltScreen())
-
-				if _, err := p.Run(); err != nil {
-					return fmt.Errorf("failed to run chat interface: %w", err)
-				}
-				return nil
+				chatUI := tui.NewChatUI(cfg)
+				return chatUI.Run()
 			}
 
 			// Non-interactive mode

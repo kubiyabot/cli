@@ -1,13 +1,32 @@
+// kubiya/chat.go
+
 package kubiya
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"log"
+	"net/http"
+	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
+
+var logger *log.Logger
+
+func init() {
+	file, err := os.OpenFile("kubiya_chat.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+	if err != nil {
+		return
+	}
+	logger = log.New(file, "", log.LstdFlags|log.Lshortfile)
+}
 
 // ChatSession maintains chat session state
 type ChatSession struct {
@@ -24,6 +43,15 @@ type ChatMessage struct {
 	SenderName string `json:"sender_name"`
 	Type       string `json:"type,omitempty"`
 	Message    string `json:"message,omitempty"`
+	MessageID  string `json:"message_id,omitempty"`
+	Final      bool   `json:"final,omitempty"`
+	Status     string `json:"status,omitempty"`
+}
+
+// Config holds the client configuration
+type Config struct {
+	APIKey string
+	URL    string
 }
 
 var (
@@ -31,41 +59,40 @@ var (
 	mu       sync.RWMutex
 )
 
-// getOrCreateSession retrieves existing session or creates new one
+// SSEEvent represents a Server-Sent Event
+type SSEEvent struct {
+	Message string `json:"message"`
+	ID      string `json:"id"`
+	Type    string `json:"type"`
+	Done    bool   `json:"done,omitempty"`
+	Status  string `json:"status,omitempty"`
+}
+
 func getOrCreateSession(teammateID string) *ChatSession {
 	mu.Lock()
 	defer mu.Unlock()
 
-	// Try to find existing session for this teammate
-	for _, session := range sessions {
-		if session.Messages != nil && len(session.Messages) > 0 {
-			if msg := session.Messages[0]; msg.SessionID != "" {
-				return session
-			}
+	session, exists := sessions[teammateID]
+	if !exists {
+		sessionID := strconv.FormatInt(time.Now().UnixNano(), 10)
+		session = &ChatSession{
+			ID:       sessionID,
+			Messages: make([]ChatMessage, 0),
 		}
+		sessions[teammateID] = session
 	}
-
-	// Create new session if none exists
-	sessionID := strconv.FormatInt(time.Now().UnixNano(), 10)
-	session := &ChatSession{
-		ID:       sessionID,
-		Messages: make([]ChatMessage, 0),
-	}
-	sessions[teammateID] = session
 	return session
 }
 
-// SendMessage sends a message to a teammate
+// SendMessage sends a message to a teammate and handles SSE responses
 func (c *Client) SendMessage(ctx context.Context, teammateID, message string, sessionID string) (<-chan ChatMessage, error) {
-	messagesChan := make(chan ChatMessage)
+	messagesChan := make(chan ChatMessage, 100)
 
-	// Don't send empty messages
 	if message == "" {
 		close(messagesChan)
 		return messagesChan, nil
 	}
 
-	// Get or create session
 	session := getOrCreateSession(teammateID)
 	if sessionID == "" {
 		sessionID = session.ID
@@ -81,51 +108,110 @@ func (c *Client) SendMessage(ctx context.Context, teammateID, message string, se
 		SessionID: sessionID,
 	}
 
-	resp, err := c.post(ctx, "converse", payload)
+	logger.Printf("=== Starting SendMessage ===")
+	logger.Printf("Payload: %+v", payload)
+
+	reqURL := fmt.Sprintf("%s/converse", c.baseURL)
+	jsonData, err := json.Marshal(payload)
 	if err != nil {
+		logger.Printf("Error marshalling payload: %v", err)
 		close(messagesChan)
-		return nil, err
+		return nil, fmt.Errorf("failed to marshal payload: %w", err)
+	}
+
+	req, err := http.NewRequest("POST", reqURL, bytes.NewBuffer(jsonData))
+	if err != nil {
+		logger.Printf("Error creating request: %v", err)
+		close(messagesChan)
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "text/event-stream")
+	req.Header.Set("Authorization", "UserKey "+c.cfg.APIKey)
+	req.Header.Set("Cache-Control", "no-cache")
+	req.Header.Set("Connection", "keep-alive")
+
+	client := &http.Client{Timeout: 0}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		logger.Printf("Error executing request: %v", err)
+		close(messagesChan)
+		return nil, fmt.Errorf("failed to execute request: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		close(messagesChan)
+		logger.Printf("Unexpected status code: %d, body: %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("unexpected status code: %d, body: %s", resp.StatusCode, string(body))
 	}
 
 	go func() {
 		defer resp.Body.Close()
 		defer close(messagesChan)
 
-		decoder := json.NewDecoder(resp.Body)
+		reader := bufio.NewReader(resp.Body)
+		var lastMessage string
 
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			default:
-				var msg ChatMessage
-				err := decoder.Decode(&msg)
+				line, err := reader.ReadString('\n')
 				if err != nil {
-					if err.Error() != "EOF" {
-						messagesChan <- ChatMessage{Error: fmt.Sprintf("failed to decode message: %v", err)}
+					if err != io.EOF {
+						logger.Printf("Error reading line: %v", err)
+						messagesChan <- ChatMessage{
+							Content:    fmt.Sprintf("Stream error: %v", err),
+							Timestamp:  time.Now().Format(time.RFC3339),
+							SenderName: "System",
+							Type:       "error",
+							Final:      true,
+						}
 					}
 					return
 				}
 
-				// Handle message format
-				if msg.Content == "" && msg.Message != "" {
-					msg.Content = msg.Message
-				}
-				if msg.SenderName == "" {
-					msg.SenderName = "Bot"
-				}
-				if msg.Timestamp == "" {
-					msg.Timestamp = time.Now().Format(time.RFC3339)
-				}
-				if msg.SessionID == "" {
-					msg.SessionID = sessionID
+				line = strings.TrimSpace(line)
+				if line == "" {
+					continue
 				}
 
-				// Add message to session history
-				mu.Lock()
-				session.Messages = append(session.Messages, msg)
-				mu.Unlock()
+				var event struct {
+					Message string `json:"message"`
+					ID      string `json:"id"`
+					Type    string `json:"type"`
+				}
+				if err := json.Unmarshal([]byte(line), &event); err != nil {
+					logger.Printf("JSON unmarshal error: %v for line: %s", err, line)
+					continue
+				}
 
+				// Skip empty messages
+				if event.Message == "" {
+					continue
+				}
+
+				isFinal := event.Message == lastMessage ||
+					strings.HasSuffix(event.Message, ".") ||
+					strings.HasSuffix(event.Message, "?") ||
+					strings.HasSuffix(event.Message, "!")
+
+				msg := ChatMessage{
+					Content:    event.Message,
+					Type:       event.Type,
+					MessageID:  event.ID,
+					Timestamp:  time.Now().Format(time.RFC3339),
+					SenderName: "Bot",
+					Final:      isFinal,
+				}
+
+				lastMessage = event.Message
+				logger.Printf("Sending message: %+v", msg)
 				messagesChan <- msg
 			}
 		}
@@ -137,23 +223,23 @@ func (c *Client) SendMessage(ctx context.Context, teammateID, message string, se
 // ReceiveMessages implements SSE for receiving messages
 func (c *Client) ReceiveMessages(ctx context.Context, teammateID string) (<-chan ChatMessage, error) {
 	messagesChan := make(chan ChatMessage)
-	
+
 	go func() {
 		defer close(messagesChan)
-		
-		// Get existing session if any
+
 		session := getOrCreateSession(teammateID)
-		
-		// Send existing messages
 		mu.RLock()
-		for _, msg := range session.Messages {
+		messages := make([]ChatMessage, len(session.Messages))
+		copy(messages, session.Messages)
+		mu.RUnlock()
+
+		for _, msg := range messages {
 			select {
 			case <-ctx.Done():
 				return
 			case messagesChan <- msg:
 			}
 		}
-		mu.RUnlock()
 	}()
 
 	return messagesChan, nil
