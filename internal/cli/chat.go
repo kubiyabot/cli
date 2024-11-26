@@ -2,6 +2,9 @@ package cli
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/kubiyabot/cli/internal/config"
 	"github.com/kubiyabot/cli/internal/kubiya"
@@ -16,6 +19,9 @@ func newChatCommand(cfg *config.Config) *cobra.Command {
 		message      string
 		interactive  bool
 		debug        bool
+		stream       bool
+		clearSession bool
+		sessionID    string
 	)
 
 	cmd := &cobra.Command{
@@ -27,17 +33,43 @@ You can either use interactive mode or specify a teammate and message directly.`
   kubiya chat --interactive
   kubiya chat -i
 
-  # Debug mode
-  kubiya chat -i --debug
+  # Non-interactive mode with session management
+  kubiya chat -n "security" -m "Review permissions"
 
-  # Non-interactive mode (for scripts)
-  kubiya chat -n "security" -m "Review permissions"`,
+  # Continue a previous session
+  kubiya chat -n "security" -m "Continue our discussion"
+
+  # Stream assistant's response
+  kubiya chat -n "security" -m "Review permissions" --stream
+
+  # Clear stored session
+  kubiya chat --clear-session`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg.Debug = debug
+			cfg.Debug = cfg.Debug || debug
 
 			if interactive {
 				chatUI := tui.NewChatUI(cfg)
 				return chatUI.Run()
+			}
+
+			// Session storage file path
+			sessionFile := filepath.Join(os.TempDir(), "kubiya_last_session")
+
+			// Handle clear session flag
+			if clearSession {
+				if err := os.Remove(sessionFile); err != nil && !os.IsNotExist(err) {
+					return fmt.Errorf("failed to clear session: %w", err)
+				}
+				fmt.Println("Session cleared.")
+				return nil
+			}
+
+			// Load last session ID if autoSession is enabled and sessionID is not provided
+			if sessionID == "" && cfg.AutoSession {
+				if data, err := os.ReadFile(sessionFile); err == nil {
+					sessionID = string(data)
+					fmt.Printf("Resuming session ID: %s\n", sessionID)
+				}
 			}
 
 			// Non-interactive mode
@@ -72,18 +104,42 @@ You can either use interactive mode or specify a teammate and message directly.`
 
 			// Send message
 			client := kubiya.NewClient(cfg)
-			msgChan, err := client.SendMessage(cmd.Context(), teammateID, message, "")
+			msgChan, err := client.SendMessage(cmd.Context(), teammateID, message, sessionID)
 			if err != nil {
 				return err
 			}
 
-			// Print messages as they arrive
+			// Read messages and handle session ID
+			var finalResponse strings.Builder
+			var lastContent string
+
 			for msg := range msgChan {
 				if msg.Error != "" {
 					return fmt.Errorf("error from server: %s", msg.Error)
 				}
-				fmt.Printf("%s\n", msg.Content)
+
+				if stream {
+					fmt.Printf("%s", msg.Content[len(lastContent):])
+				} else {
+					newContent := msg.Content[len(lastContent):]
+					finalResponse.WriteString(newContent)
+				}
+
+				lastContent = msg.Content
+
+				// Save session ID if autoSession is enabled
+				if cfg.AutoSession && sessionID == "" && msg.SessionID != "" {
+					sessionID = msg.SessionID
+					if err := os.WriteFile(sessionFile, []byte(sessionID), 0644); err != nil {
+						return fmt.Errorf("failed to save session ID: %w", err)
+					}
+				}
 			}
+
+			if !stream {
+				fmt.Println(finalResponse.String())
+			}
+
 			return nil
 		},
 	}
@@ -93,6 +149,9 @@ You can either use interactive mode or specify a teammate and message directly.`
 	cmd.Flags().StringVarP(&message, "message", "m", "", "Message to send")
 	cmd.Flags().BoolVarP(&interactive, "interactive", "i", false, "Start interactive chat mode")
 	cmd.Flags().BoolVar(&debug, "debug", false, "Enable debug mode")
+	cmd.Flags().BoolVar(&stream, "stream", false, "Stream assistant's response as it is received")
+	cmd.Flags().BoolVar(&clearSession, "clear-session", false, "Clear stored session ID")
+	cmd.Flags().StringVarP(&sessionID, "session-id", "s", "", "Session ID to continue conversation")
 
 	return cmd
 }
