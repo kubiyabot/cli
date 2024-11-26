@@ -8,7 +8,7 @@ require (
 	github.com/charmbracelet/bubbles v0.20.0
 	github.com/charmbracelet/bubbletea v1.1.0
 	github.com/charmbracelet/lipgloss v0.13.0
-	github.com/nsf/termbox-go v1.1.1
+	github.com/mattn/go-isatty v0.0.20
 	github.com/spf13/cobra v1.8.1
 	k8s.io/api v0.31.3
 	k8s.io/apimachinery v0.31.3
@@ -42,7 +42,6 @@ require (
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/lucasb-eyer/go-colorful v1.2.0 // indirect
 	github.com/mailru/easyjson v0.7.7 // indirect
-	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/mattn/go-localereader v0.0.1 // indirect
 	github.com/mattn/go-runewidth v0.0.16 // indirect
 	github.com/moby/spdystream v0.4.0 // indirect
