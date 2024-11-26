@@ -3,8 +3,6 @@ package cli
 import (
 	"bytes"
 	"testing"
-
-	"github.com/kubiyabot/cli/internal/config"
 )
 
 func TestSourcesCommand(t *testing.T) {
@@ -49,4 +47,4 @@ func TestSourcesCommand(t *testing.T) {
 			}
 		})
 	}
-} 
+}
