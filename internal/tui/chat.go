@@ -298,8 +298,11 @@ func (ui *ChatUI) handleChatMessage(msg kubiya.ChatMessage) {
 				// Update existing tool output message
 				for i := len(ui.messages) - 1; i >= 0; i-- {
 					if ui.messages[i].Type == "tool_output" && ui.messages[i].MessageID == msg.MessageID {
-						ui.messages[i].Content = te.output
-						ui.messages[i].Timestamp = msg.Timestamp
+						// Only update if content has changed to avoid duplicate output
+						if ui.messages[i].Content != te.output {
+							ui.messages[i].Content = te.output
+							ui.messages[i].Timestamp = msg.Timestamp
+						}
 						break
 					}
 				}
@@ -310,7 +313,6 @@ func (ui *ChatUI) handleChatMessage(msg kubiya.ChatMessage) {
 			// Tool execution finished
 			te.isFinal = true
 			te.isComplete = true
-			duration := time.Since(te.startTime)
 
 			// Update the tool output message to be final
 			if te.hasOutputMessage {
@@ -321,16 +323,17 @@ func (ui *ChatUI) handleChatMessage(msg kubiya.ChatMessage) {
 					}
 				}
 			}
-
-			// Append a message indicating the tool execution completion
-			executionMsg := kubiya.ChatMessage{
-				Content:    fmt.Sprintf("🔧 Executed `%s`\n\n⏱ Duration: %dms", te.name, duration.Milliseconds()),
-				SenderName: msg.SenderName,
-				Timestamp:  msg.Timestamp,
-				Type:       "tool_execution_complete",
-				Final:      true,
+			if te.name != "" {
+				// Append a message indicating the tool execution completion
+				executionMsg := kubiya.ChatMessage{
+					Content:    fmt.Sprintf("🔧 Executed `%s`", te.name),
+					SenderName: msg.SenderName,
+					Timestamp:  msg.Timestamp,
+					Type:       "tool_execution_complete",
+					Final:      true,
+				}
+				ui.messages = append(ui.messages, executionMsg)
 			}
-			ui.messages = append(ui.messages, executionMsg)
 
 			// Remove from ongoing tool executions
 			delete(ui.toolExecutions, msg.MessageID)
@@ -466,9 +469,11 @@ func (ui *ChatUI) renderChatScreen() string {
 
 			var toolInfo string
 			if arguments != "" {
-				toolInfo = fmt.Sprintf("🔧 Running %s\nParameters:\n%s", toolName, arguments)
+				// format the arguments with a bullet point
+				arguments = strings.ReplaceAll(arguments, "\n", "\n• ")
+				toolInfo = fmt.Sprintf("🔧 ▶️ Running %s\nWith:\n%s", toolName, arguments)
 			} else {
-				toolInfo = fmt.Sprintf("🔧 Running %s", toolName)
+				toolInfo = "🧠🔧 Determining best tool to use..."
 			}
 			content = toolInfoStyle.Render(toolInfo)
 

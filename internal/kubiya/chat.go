@@ -61,11 +61,12 @@ var (
 
 // SSEEvent represents a Server-Sent Event
 type SSEEvent struct {
-	Message string `json:"message"`
-	ID      string `json:"id"`
-	Type    string `json:"type"`
-	Done    bool   `json:"done,omitempty"`
-	Status  string `json:"status,omitempty"`
+	Message   string `json:"message"`
+	ID        string `json:"id"`
+	Type      string `json:"type"`
+	Done      bool   `json:"done,omitempty"`
+	Status    string `json:"status,omitempty"`
+	SessionID string `json:"session_id,omitempty"`
 }
 
 func getOrCreateSession(teammateID string) *ChatSession {
@@ -182,9 +183,12 @@ func (c *Client) SendMessage(ctx context.Context, teammateID, message string, se
 				}
 
 				var event struct {
-					Message string `json:"message"`
-					ID      string `json:"id"`
-					Type    string `json:"type"`
+					Message   string `json:"message"`
+					ID        string `json:"id"`
+					Type      string `json:"type"`
+					Done      bool   `json:"done,omitempty"`
+					Status    string `json:"status,omitempty"`
+					SessionID string `json:"session_id,omitempty"`
 				}
 				if err := json.Unmarshal([]byte(line), &event); err != nil {
 					logger.Printf("JSON unmarshal error: %v for line: %s", err, line)
@@ -208,6 +212,7 @@ func (c *Client) SendMessage(ctx context.Context, teammateID, message string, se
 					Timestamp:  time.Now().Format(time.RFC3339),
 					SenderName: "Bot",
 					Final:      isFinal,
+					SessionID:  event.SessionID,
 				}
 
 				lastMessage = event.Message

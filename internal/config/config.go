@@ -3,12 +3,14 @@ package config
 import (
 	"fmt"
 	"os"
+	"strconv"
 )
 
 type Config struct {
-	APIKey  string
-	BaseURL string
-	Debug   bool
+	APIKey      string
+	BaseURL     string
+	Debug       bool
+	AutoSession bool
 }
 
 func Load() (*Config, error) {
@@ -24,9 +26,18 @@ func Load() (*Config, error) {
 		baseURL = "https://api.kubiya.ai/api/v1"
 	}
 
+	// AutoSession is enabled by default but can be overridden by KUBIYA_AUTO_SESSION environment variable
+	autoSession := true
+	if val, exists := os.LookupEnv("KUBIYA_AUTO_SESSION"); exists {
+		if parsed, err := strconv.ParseBool(val); err == nil {
+			autoSession = parsed
+		}
+	}
+
 	return &Config{
-		APIKey:  apiKey,
-		BaseURL: baseURL,
-		Debug:   os.Getenv("KUBIYA_DEBUG") == "true",
+		APIKey:      apiKey,
+		BaseURL:     baseURL,
+		Debug:       os.Getenv("KUBIYA_DEBUG") == "true",
+		AutoSession: autoSession,
 	}, nil
 }

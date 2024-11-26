@@ -3,55 +3,22 @@
 [![Go Report Card](https://goreportcard.com/badge/github.com/kubiyabot/cli)](https://goreportcard.com/report/github.com/kubiyabot/cli)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-Welcome to Kubiya CLI! 👋 A powerful command-line interface for interacting with your Kubiya teammates and managing your automation workflows.
-
-![image](https://github.com/user-attachments/assets/c9bedf25-97fa-49fa-933e-4d874278fcb1)
+Welcome to Kubiya CLI! 👋 A powerful command-line interface for interacting with your Kubiya AI teammates and automating your workflows directly from the terminal.
 
 ## Features ✨
 
 - **Interactive Chat** 💬
-  - Chat with AI teammates directly from your terminal
-  - Smart context switching between teammates
-  - Real-time responses with typing indicators
-  - Command history and auto-completion
-
-- **Source Management** 📦
-  - Browse and manage automation sources
-  - Add sources from GitHub or local repositories
-  - Sync sources with remote repositories
-  - View source details and statistics
-
-- **Tool Execution** 🛠️
-  - Execute automation tools interactively
-  - Handle tool arguments and environment variables
-  - View real-time execution progress
-  - Manage execution contexts
-
-- **Knowledge Base** 🧠
-  - Create and manage knowledge items
-  - Organize with labels and groups
-  - Full-text search capabilities
-  - Version tracking
-
-- **Runner Management** 🏃
-  - List and manage Kubiya runners
-  - Get runner manifests
-  - Monitor runner health
-  - Easy Kubernetes integration
-
-- **Webhook Management** 🔔
-  - Create and manage webhooks
-  - Configure event triggers
-  - Set up automated responses
-  - Monitor webhook activity
+  - Chat with AI teammates directly from your terminal.
+  - Real-time responses with typing indicators.
+  - Session management for ongoing conversations.
+  - Stream assistant's responses as they are generated.
 
 ## Installation 📥
 
 ### Prerequisites
 
-- Go 1.21 or higher
-- Kubernetes cluster (for runner management)
-- Kubiya account and API key
+- **Go 1.18** or higher.
+- **Kubiya account and API key**.
 
 ### Quick Install
 
