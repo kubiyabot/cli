@@ -22,11 +22,14 @@ const (
 )
 
 type toolExecution struct {
-	startTime time.Time
-	name      string
-	output    string
-	messageID string
-	isFinal   bool
+	startTime        time.Time
+	name             string
+	output           string
+	messageID        string
+	isFinal          bool
+	hasInitMessage   bool
+	hasOutputMessage bool
+	isComplete       bool
 }
 
 type ChatUI struct {
@@ -243,21 +246,26 @@ func (ui *ChatUI) handleChatMessage(msg kubiya.ChatMessage) {
 		if !exists {
 			// First time seeing this tool execution, create new entry
 			te = &toolExecution{
-				startTime: time.Now(),
-				name:      "", // Initialize with empty name
-				messageID: msg.MessageID,
-				output:    "",
-				isFinal:   false,
+				startTime:        time.Now(),
+				name:             "",
+				messageID:        msg.MessageID,
+				output:           "",
+				isFinal:          false,
+				hasInitMessage:   false,
+				hasOutputMessage: false,
+				isComplete:       false,
 			}
 			ui.toolExecutions[msg.MessageID] = te
+		}
 
-			// Display tool execution initiation message only once
-			if msg.Type == "tool" && msg.Content != "" {
-				te.name = msg.Content
-			} else {
-				te.name = "Unknown Tool"
-			}
+		// Update tool name if available
+		if msg.Type == "tool" && msg.Content != "" {
+			te.name = msg.Content
+		}
 
+		// Display tool initiation message only once
+		if !te.hasInitMessage {
+			te.hasInitMessage = true
 			initMsg := kubiya.ChatMessage{
 				Content:    te.name,
 				SenderName: msg.SenderName,
@@ -267,18 +275,6 @@ func (ui *ChatUI) handleChatMessage(msg kubiya.ChatMessage) {
 				MessageID:  msg.MessageID,
 			}
 			ui.messages = append(ui.messages, initMsg)
-		} else {
-			// Update tool name if available
-			if msg.Type == "tool" && msg.Content != "" {
-				te.name = msg.Content
-				// Update the init message with the correct tool name
-				for i := len(ui.messages) - 1; i >= 0; i-- {
-					if ui.messages[i].Type == "tool_init" && ui.messages[i].MessageID == msg.MessageID {
-						ui.messages[i].Content = te.name
-						break
-					}
-				}
-			}
 		}
 
 		// Accumulate output and update the message in ui.messages
@@ -286,19 +282,8 @@ func (ui *ChatUI) handleChatMessage(msg kubiya.ChatMessage) {
 			te.output += msg.Content + "\n"
 
 			// Update or add a message in ui.messages for the tool output
-			var existingMsg *kubiya.ChatMessage
-			for i := len(ui.messages) - 1; i >= 0; i-- {
-				if ui.messages[i].Type == "tool_output" && ui.messages[i].MessageID == msg.MessageID {
-					existingMsg = &ui.messages[i]
-					break
-				}
-			}
-
-			if existingMsg != nil {
-				existingMsg.Content = te.output
-				existingMsg.Timestamp = msg.Timestamp
-			} else {
-				// Add new message for tool output
+			if !te.hasOutputMessage {
+				// First time adding the tool output message
 				toolOutputMsg := kubiya.ChatMessage{
 					Content:    te.output,
 					SenderName: msg.SenderName,
@@ -308,19 +293,32 @@ func (ui *ChatUI) handleChatMessage(msg kubiya.ChatMessage) {
 					Final:      false,
 				}
 				ui.messages = append(ui.messages, toolOutputMsg)
+				te.hasOutputMessage = true
+			} else {
+				// Update existing tool output message
+				for i := len(ui.messages) - 1; i >= 0; i-- {
+					if ui.messages[i].Type == "tool_output" && ui.messages[i].MessageID == msg.MessageID {
+						ui.messages[i].Content = te.output
+						ui.messages[i].Timestamp = msg.Timestamp
+						break
+					}
+				}
 			}
 		}
 
-		if msg.Final {
+		if msg.Final && !te.isComplete {
 			// Tool execution finished
 			te.isFinal = true
+			te.isComplete = true
 			duration := time.Since(te.startTime)
 
 			// Update the tool output message to be final
-			for i := len(ui.messages) - 1; i >= 0; i-- {
-				if ui.messages[i].Type == "tool_output" && ui.messages[i].MessageID == msg.MessageID {
-					ui.messages[i].Final = true
-					break
+			if te.hasOutputMessage {
+				for i := len(ui.messages) - 1; i >= 0; i-- {
+					if ui.messages[i].Type == "tool_output" && ui.messages[i].MessageID == msg.MessageID {
+						ui.messages[i].Final = true
+						break
+					}
 				}
 			}
 
@@ -337,7 +335,6 @@ func (ui *ChatUI) handleChatMessage(msg kubiya.ChatMessage) {
 			// Remove from ongoing tool executions
 			delete(ui.toolExecutions, msg.MessageID)
 			ui.toolRunning = false
-			// Reset currentToolMessageID
 			ui.currentToolMessageID = ""
 		} else {
 			// Tool execution in progress
@@ -459,8 +456,20 @@ func (ui *ChatUI) renderChatScreen() string {
 				Border(lipgloss.RoundedBorder()).
 				Padding(1).
 				BorderForeground(lipgloss.Color("#F59E0B"))
+			// Extract tool name and arguments from message content
+			parts := strings.Split(msg.Content, "Arguments:")
+			toolName := strings.TrimSpace(strings.TrimPrefix(parts[0], "Tool:"))
+			var arguments string
+			if len(parts) > 1 {
+				arguments = strings.TrimSpace(parts[1])
+			}
 
-			toolInfo := fmt.Sprintf("🔧 Executing Tool: `%s`", msg.Content)
+			var toolInfo string
+			if arguments != "" {
+				toolInfo = fmt.Sprintf("🔧 Running %s\nParameters:\n%s", toolName, arguments)
+			} else {
+				toolInfo = fmt.Sprintf("🔧 Running %s", toolName)
+			}
 			content = toolInfoStyle.Render(toolInfo)
 
 		case "tool_output":
