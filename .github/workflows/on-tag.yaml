@@ -67,6 +67,51 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
 
+      # - name: Create DEB Package
+      #   run: |
+      #     sudo apt-get update
+      #     sudo apt-get install -y build-essential debhelper
+      #     mkdir -p packaging/debian/kubiya-cli/usr/local/bin
+      #     cp dist/kubiya-cli-linux-amd64 packaging/debian/kubiya-cli/usr/local/bin/kubiya
+      #     chmod +x packaging/debian/kubiya-cli/usr/local/bin/kubiya
+      #     cd packaging/debian
+      #     dpkg-deb --build kubiya-cli
+      #     mv kubiya-cli.deb ../../dist/kubiya-cli_${{ github.ref_name }}_amd64.deb
+
+      - name: Create Homebrew Formula
+        run: |
+          cat > dist/kubiya.rb << EOF
+          class Kubiya < Formula
+            desc "Kubiya CLI tool"
+            homepage "https://github.com/${{ github.repository }}"
+            version "${{ github.ref_name }}"
+            
+            on_macos do
+              if Hardware::CPU.arm?
+                url "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/kubiya-cli-darwin-arm64"
+                sha256 "$(sha256sum dist/kubiya-cli-darwin-arm64 | cut -d ' ' -f 1)"
+              else
+                url "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/kubiya-cli-darwin-amd64"
+                sha256 "$(sha256sum dist/kubiya-cli-darwin-amd64 | cut -d ' ' -f 1)"
+              end
+            end
+
+            on_linux do
+              if Hardware::CPU.arm?
+                url "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/kubiya-cli-linux-arm64"
+                sha256 "$(sha256sum dist/kubiya-cli-linux-arm64 | cut -d ' ' -f 1)"
+              else
+                url "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/kubiya-cli-linux-amd64"
+                sha256 "$(sha256sum dist/kubiya-cli-linux-amd64 | cut -d ' ' -f 1)"
+              end
+            end
+
+            def install
+              bin.install Dir["*"].first => "kubiya"
+            end
+          end
+          EOF
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
         with:
@@ -78,3 +123,20 @@ jobs:
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Update Homebrew Tap
+        run: |
+          git config --global user.name "GitHub Actions"
+          git config --global user.email "actions@github.com"
+          
+          # Clone the Homebrew tap repository
+          git clone https://x-access-token:${{ secrets.HOMEBREW_TAP_TOKEN }}@github.com/${{ github.repository_owner }}/homebrew-tap.git
+          
+          # Copy the formula to the tap
+          cp dist/kubiya.rb homebrew-tap/Formula/
+          
+          # Commit and push
+          cd homebrew-tap
+          git add Formula/kubiya.rb
+          git commit -m "Update kubiya to ${{ github.ref_name }}"
+          git push
