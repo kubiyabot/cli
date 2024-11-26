@@ -38,6 +38,23 @@ make install
 kubiya version
 ```
 
+### Binary Downloads
+
+You can download pre-compiled binaries for your platform from the [GitHub Releases page](https://github.com/kubiyabot/cli/releases/latest).
+
+```bash
+# Linux (x86_64)
+curl -LO https://github.com/kubiyabot/cli/releases/latest/download/kubiya_Linux_x86_64.tar.gz
+tar xzf kubiya_Linux_x86_64.tar.gz
+
+# macOS (Apple Silicon)
+curl -LO https://github.com/kubiyabot/cli/releases/latest/download/kubiya_Darwin_arm64.tar.gz
+tar xzf kubiya_Darwin_arm64.tar.gz
+
+# Windows (x86_64)
+# Download kubiya_Windows_x86_64.zip from the releases page
+```
+
 ## Configuration 🔧
 
 ### Environment Variables
