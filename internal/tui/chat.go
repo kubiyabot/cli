@@ -418,7 +418,7 @@ type teammateItem struct {
 }
 
 func (t teammateItem) Title() string       { return t.teammate.Name }
-func (t teammateItem) Description() string { return t.teammate.Desc }
+func (t teammateItem) Description() string { return t.teammate.Description }
 func (t teammateItem) FilterValue() string { return t.teammate.Name }
 
 // Rendering the chat screen with enhanced UI and typing indicator

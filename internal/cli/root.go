@@ -16,9 +16,9 @@ A powerful tool for interacting with your Kubiya teammates and managing your aut
 Use 'kubiya --help' to see all available commands.
 
 Quick Start:
-  • List teammates:    kubiya list
   • Chat:             kubiya chat --interactive
   • Browse sources:    kubiya browse  # Interactive source browser
+  • Manage teammates: kubiya teammate list
   • List sources:     kubiya source list
   • Manage knowledge: kubiya knowledge list
   • Manage runners:   kubiya runner list
@@ -42,7 +42,7 @@ Need help? Visit: https://docs.kubiya.ai`,
 	// Add other subcommands
 	rootCmd.AddCommand(
 		newChatCommand(cfg),
-		newListCommand(cfg),
+		newTeammateCommand(cfg),
 		newSourcesCommand(cfg),
 		newToolsCommand(cfg),
 		newKnowledgeCommand(cfg),

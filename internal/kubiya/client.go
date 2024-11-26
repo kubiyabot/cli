@@ -139,7 +139,7 @@ func (c *Client) GetTeammates(ctx context.Context) ([]Teammate, error) {
 			teammates = append(teammates, Teammate{
 				UUID:        agent.UUID,
 				Name:        agent.Name,
-				Desc:        agent.Description,
+				Description: agent.Description,
 				Environment: agent.Environment,
 			})
 		}
@@ -435,4 +435,41 @@ func (c *Client) DownloadManifest(ctx context.Context, url string) ([]byte, erro
 	}
 
 	return content, nil
+}
+
+func (c *Client) CreateTeammate(ctx context.Context, teammate Teammate) (*Teammate, error) {
+	resp, err := c.post(ctx, "/agents", teammate)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var created Teammate
+	if err := json.NewDecoder(resp.Body).Decode(&created); err != nil {
+		return nil, err
+	}
+	return &created, nil
+}
+
+func (c *Client) UpdateTeammate(ctx context.Context, uuid string, teammate Teammate) (*Teammate, error) {
+	resp, err := c.put(ctx, fmt.Sprintf("/agents/%s", uuid), teammate)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var updated Teammate
+	if err := json.NewDecoder(resp.Body).Decode(&updated); err != nil {
+		return nil, err
+	}
+	return &updated, nil
+}
+
+func (c *Client) DeleteTeammate(ctx context.Context, uuid string) error {
+	resp, err := c.delete(ctx, fmt.Sprintf("/agents/%s", uuid))
+	if err != nil {
+		return err
+	}
+	resp.Body.Close()
+	return nil
 }

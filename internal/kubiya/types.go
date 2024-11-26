@@ -141,9 +141,6 @@ type ChatResponse struct {
 	Content string `json:"content"`
 }
 
-// Teammate is an alias for Agent for backward compatibility
-type Teammate = Agent
-
 // Add these new types to support Tool
 type ToolParameter struct {
 	Name         string   `json:"name"`
@@ -253,4 +250,34 @@ type EnvVarSource struct {
 type EnvVarStatus struct {
 	Value string
 	// ... other fields if needed
+}
+
+// Add these types to your existing types.go file
+
+type Teammate struct {
+	UUID            string            `json:"uuid"`
+	Name            string            `json:"name"`
+	Description     string            `json:"description"`
+	InstructionType string            `json:"instruction_type"`
+	LLMModel        string            `json:"llm_model"`
+	Sources         []string          `json:"sources"`
+	Environment     map[string]string `json:"environment_variables"`
+	Secrets         []string          `json:"secrets"`
+	AllowedGroups   []string          `json:"allowed_groups"`
+	AllowedUsers    []string          `json:"allowed_users"`
+	Owners          []string          `json:"owners"`
+	Runners         []string          `json:"runners"`
+	IsDebugMode     bool              `json:"is_debug_mode"`
+	AIInstructions  string            `json:"ai_instructions"`
+	Image           string            `json:"image"`
+	ManagedBy       string            `json:"managed_by"`
+	Integrations    []string          `json:"integrations"`
+	Links           []string          `json:"links"`
+	Tools           []string          `json:"tools"`
+	Tasks           []string          `json:"tasks"`
+	Starters        []string          `json:"starters"`
+	Metadata        struct {
+		CreatedAt   string `json:"created_at"`
+		LastUpdated string `json:"last_updated"`
+	} `json:"metadata"`
 }
