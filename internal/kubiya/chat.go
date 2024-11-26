@@ -249,3 +249,19 @@ func (c *Client) ReceiveMessages(ctx context.Context, teammateID string) (<-chan
 
 	return messagesChan, nil
 }
+
+func (c *Client) SendMessageWithContext(ctx context.Context, teammateID, message, sessionID string, context map[string]string) (<-chan ChatMessage, error) {
+	var contextMsg strings.Builder
+	contextMsg.WriteString(message)
+	contextMsg.WriteString("\n\nHere's some reference files for context:\n")
+
+	for filename, content := range context {
+		contextMsg.WriteString("\n")
+		contextMsg.WriteString(filename)
+		contextMsg.WriteString(":\n")
+		contextMsg.WriteString(content)
+		contextMsg.WriteString("\n")
+	}
+
+	return c.SendMessage(ctx, teammateID, contextMsg.String(), sessionID)
+}

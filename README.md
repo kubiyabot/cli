@@ -8,10 +8,12 @@ Welcome to Kubiya CLI! 👋 A powerful command-line interface for interacting wi
 ## Features ✨
 
 - **Interactive Chat** 💬
-  - Chat with AI teammates directly from your terminal.
-  - Real-time responses with typing indicators.
-  - Session management for ongoing conversations.
-  - Stream assistant's responses as they are generated.
+  - Chat with AI teammates directly from your terminal
+  - Real-time responses with typing indicators
+  - Session management for ongoing conversations
+  - Stream assistant's responses as they are generated
+  - Context-aware conversations with file support
+  - Stdin support for piping data
 
 ## Installation 📥
 
@@ -31,6 +33,25 @@ git clone https://github.com/kubiyabot/cli.git
 cd cli
 make install
 ```
+
+### Quick Install Script
+
+Install the latest version with our installation script:
+
+```bash
+# Using curl
+curl -sSL https://raw.githubusercontent.com/kubiyabot/cli/main/install.sh | bash
+
+# Using wget
+wget -qO- https://raw.githubusercontent.com/kubiyabot/cli/main/install.sh | bash
+```
+
+This script will:
+- Detect your OS and architecture
+- Download the appropriate binary
+- Install it to /usr/local/bin (or %USERPROFILE%/bin on Windows)
+- Make it executable
+- Verify the installation
 
 ### Verify Installation
 
@@ -213,3 +234,116 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ---
 
 Built with ❤️ by the Kubiya team
+
+## Chat Features Guide 💬
+
+### Interactive Mode
+
+Start an interactive chat session with full TUI support:
+
+```bash
+# Basic interactive mode
+kubiya chat -i
+
+# Interactive mode with specific teammate
+kubiya chat -i -n "DevOps Bot"
+```
+
+### Non-Interactive Mode
+
+Send messages directly from the command line:
+
+```bash
+# Simple message
+kubiya chat -n "DevOps Bot" -m "How do I deploy to staging?"
+
+# Stream the response in real-time
+kubiya chat -n "DevOps Bot" -m "Explain the deployment process" --stream
+
+# Continue a previous conversation
+kubiya chat -n "DevOps Bot" -m "What about production?" --session-id abc-123
+```
+
+### Context-Aware Conversations
+
+Include files, URLs, and patterns for context:
+
+```bash
+# Single file context
+kubiya chat -n "code-review" -m "Review this code" --context main.go
+
+# Multiple context files (separate flags)
+kubiya chat -n "security" \
+  --context "Dockerfile" \
+  --context "k8s/*.yaml" \
+  --context "src/main.go"
+
+# Using wildcards
+kubiya chat -n "review" \
+  --context "src/**/*.go" \
+  --context "tests/**/*_test.go"
+
+# URL context
+kubiya chat -n "security" \
+  --context "https://raw.githubusercontent.com/org/repo/main/config.yaml"
+
+# Mix local files and URLs
+kubiya chat -n "devops" \
+  --context "k8s/*.yaml" \
+  --context "https://example.com/deployment.yaml" \
+  --context "Dockerfile"
+```
+Use stdin for input and process outputs:
+
+```bash
+# Analyze logs
+tail -f app.log | kubiya chat -n "debug" --stdin
+
+# Review error output
+kubectl logs pod-name | kubiya chat -n "DevOps Bot" --stdin
+
+# Save conversation to file
+kubiya chat -n "DevOps Bot" -m "Document our API" > api-docs.md
+```
+
+### Session Management
+
+Maintain conversation context across interactions:
+
+```bash
+# Start a new session (automatically saves session ID)
+kubiya chat -n "DevOps Bot" -m "Let's plan the deployment"
+
+# Continue the conversation
+kubiya chat -n "DevOps Bot" -m "What's the next step?"
+
+# Explicitly use a session
+kubiya chat -n "DevOps Bot" -m "Continue from before" -s "session-123"
+
+# Clear saved session
+kubiya chat --clear-session
+```
+
+### Advanced Usage
+
+Combine multiple features for complex interactions:
+
+```bash
+# Code review with multiple files and custom message
+kubiya chat -n "code-review" \
+  --context "src/*.go,tests/*.go" \
+  -m "Review these changes for security issues" \
+  --stream
+
+# Process logs with context
+tail -100 error.log | kubiya chat -n "debug" \
+  --stdin \
+  --context "config.yaml,deployment.yaml" \
+  -m "What's causing these errors?"
+
+# Generate documentation
+kubiya chat -n "docs" \
+  --context "**/*.go" \
+  -m "Generate API documentation" \
+  --stream > docs/api.md
+```

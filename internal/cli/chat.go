@@ -1,7 +1,10 @@
 package cli
 
 import (
+	"bufio"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -22,28 +25,98 @@ func newChatCommand(cfg *config.Config) *cobra.Command {
 		stream       bool
 		clearSession bool
 		sessionID    string
+		contextFiles []string
+		stdinInput   bool
 	)
+
+	// Helper function to fetch content from URL
+	fetchURL := func(url string) (string, error) {
+		resp, err := http.Get(url)
+		if err != nil {
+			return "", err
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			return "", fmt.Errorf("failed to fetch URL %s: status %d", url, resp.StatusCode)
+		}
+
+		content, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return "", err
+		}
+		return string(content), nil
+	}
+
+	// Helper function to expand wildcards and read files
+	expandAndReadFiles := func(patterns []string) (map[string]string, error) {
+		context := make(map[string]string)
+		for _, pattern := range patterns {
+			// Handle URLs
+			if strings.HasPrefix(pattern, "http://") || strings.HasPrefix(pattern, "https://") {
+				content, err := fetchURL(pattern)
+				if err != nil {
+					return nil, fmt.Errorf("failed to fetch URL %s: %w", pattern, err)
+				}
+				context[pattern] = content
+				continue
+			}
+
+			// Handle file patterns
+			matches, err := filepath.Glob(pattern)
+			if err != nil {
+				return nil, fmt.Errorf("invalid pattern %s: %w", pattern, err)
+			}
+
+			if len(matches) == 0 {
+				return nil, fmt.Errorf("no files match pattern: %s", pattern)
+			}
+
+			for _, match := range matches {
+				info, err := os.Stat(match)
+				if err != nil {
+					return nil, fmt.Errorf("failed to stat file %s: %w", match, err)
+				}
+
+				// Skip directories
+				if info.IsDir() {
+					continue
+				}
+
+				content, err := os.ReadFile(match)
+				if err != nil {
+					return nil, fmt.Errorf("failed to read file %s: %w", match, err)
+				}
+				context[match] = string(content)
+			}
+		}
+		return context, nil
+	}
 
 	cmd := &cobra.Command{
 		Use:   "chat",
 		Short: "💬 Chat with a teammate",
 		Long: `Start a chat session with a Kubiya teammate.
-You can either use interactive mode or specify a teammate and message directly.`,
-		Example: `  # Interactive chat mode (recommended)
+You can either use interactive mode, specify a message directly, or pipe input from stdin.
+Use --context to include additional files for context (supports wildcards and URLs).`,
+		Example: `  # Interactive chat mode
   kubiya chat --interactive
-  kubiya chat -i
 
-  # Non-interactive mode with session management
-  kubiya chat -n "security" -m "Review permissions"
+  # Using context files with wildcards
+  kubiya chat -n "security" -m "Review this code" --context "src/*.go" --context "tests/**/*_test.go"
 
-  # Continue a previous session
-  kubiya chat -n "security" -m "Continue our discussion"
+  # Using URLs as context
+  kubiya chat -n "security" -m "Check this" --context https://raw.githubusercontent.com/org/repo/main/config.yaml
 
-  # Stream assistant's response
-  kubiya chat -n "security" -m "Review permissions" --stream
+  # Multiple context sources
+  kubiya chat -n "devops" \
+    --context "k8s/*.yaml" \
+    --context "https://example.com/deployment.yaml" \
+    --context "Dockerfile" \
+    -m "Review deployment"
 
-  # Clear stored session
-  kubiya chat --clear-session`,
+  # Pipe from stdin with context
+  cat error.log | kubiya chat -n "debug" --stdin --context "config/*.yaml"`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg.Debug = cfg.Debug || debug
 
@@ -64,7 +137,7 @@ You can either use interactive mode or specify a teammate and message directly.`
 				return nil
 			}
 
-			// Load last session ID if autoSession is enabled and sessionID is not provided
+			// Load last session ID if autoSession is enabled
 			if sessionID == "" && cfg.AutoSession {
 				if data, err := os.ReadFile(sessionFile); err == nil {
 					sessionID = string(data)
@@ -72,9 +145,37 @@ You can either use interactive mode or specify a teammate and message directly.`
 				}
 			}
 
-			// Non-interactive mode
-			if message == "" {
-				return fmt.Errorf("message is required in non-interactive mode")
+			// Handle stdin input
+			if stdinInput {
+				stat, _ := os.Stdin.Stat()
+				if (stat.Mode() & os.ModeCharDevice) != 0 {
+					return fmt.Errorf("no stdin data provided")
+				}
+
+				reader := bufio.NewReader(os.Stdin)
+				var sb strings.Builder
+				for {
+					line, err := reader.ReadString('\n')
+					if err != nil && err != io.EOF {
+						return fmt.Errorf("error reading stdin: %w", err)
+					}
+					sb.WriteString(line)
+					if err == io.EOF {
+						break
+					}
+				}
+				message = sb.String()
+			}
+
+			// Validate input
+			if message == "" && !stdinInput {
+				return fmt.Errorf("message is required (use -m, --stdin, or pipe input)")
+			}
+
+			// Load context from all sources
+			context, err := expandAndReadFiles(contextFiles)
+			if err != nil {
+				return fmt.Errorf("failed to load context: %w", err)
 			}
 
 			// If teammate name is provided, look up the ID
@@ -102,9 +203,9 @@ You can either use interactive mode or specify a teammate and message directly.`
 				return fmt.Errorf("teammate ID or name is required")
 			}
 
-			// Send message
+			// Send message with context
 			client := kubiya.NewClient(cfg)
-			msgChan, err := client.SendMessage(cmd.Context(), teammateID, message, sessionID)
+			msgChan, err := client.SendMessageWithContext(cmd.Context(), teammateID, message, sessionID, context)
 			if err != nil {
 				return err
 			}
@@ -152,6 +253,8 @@ You can either use interactive mode or specify a teammate and message directly.`
 	cmd.Flags().BoolVar(&stream, "stream", false, "Stream assistant's response as it is received")
 	cmd.Flags().BoolVar(&clearSession, "clear-session", false, "Clear stored session ID")
 	cmd.Flags().StringVarP(&sessionID, "session-id", "s", "", "Session ID to continue conversation")
+	cmd.Flags().StringArrayVar(&contextFiles, "context", []string{}, "Files, wildcards, or URLs to include as context (can be specified multiple times)")
+	cmd.Flags().BoolVar(&stdinInput, "stdin", false, "Read message from stdin")
 
 	return cmd
 }
