@@ -3,7 +3,7 @@
 [![Go Report Card](https://goreportcard.com/badge/github.com/kubiyabot/cli)](https://goreportcard.com/report/github.com/kubiyabot/cli)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-Welcome to Kubiya CLI! 👋 A powerful command-line interface for interacting with your Kubiya AI teammates and automating your workflows directly from the terminal.
+Welcome to **Kubiya CLI**! 👋 A powerful command-line interface for interacting with your **Kubiya AI teammates** and automating your workflows directly from the terminal.
 
 ## Features ✨
 
@@ -15,26 +15,46 @@ Welcome to Kubiya CLI! 👋 A powerful command-line interface for interacting wi
   - Context-aware conversations with file support
   - Stdin support for piping data
 
+- **Source Management** 📂
+  - Add, list, and sync sources from repositories
+  - Manage your code and resources efficiently
+
+- **Tool Execution** 🛠️
+  - Browse and execute tools interactively
+  - Execute specific tools with arguments
+
+- **Knowledge Management** 📖
+  - Create and list knowledge items
+  - Manage your team's knowledge base
+
+- **Runner Management** 🚀
+  - List runners and manage runner manifests
+  - Streamline your automation processes
+
 ## Installation 📥
 
 ### Prerequisites
 
-- **Go 1.18** or higher.
-- **Kubiya account and API key**.
+- **Go 1.18** or higher
+- **Kubiya account and API key**
 
 ### Quick Install
 
-```bash
-# Using go install
-go install github.com/kubiyabot/cli/cmd/kubiya@latest
+Install using `go install`:
 
-# Or build from source
+```bash
+go install github.com/kubiyabot/cli/cmd/kubiya@latest
+```
+
+Or build from source:
+
+```bash
 git clone https://github.com/kubiyabot/cli.git
 cd cli
 make install
 ```
 
-### Quick Install Script
+### Install Script
 
 Install the latest version with our installation script:
 
@@ -47,9 +67,10 @@ wget -qO- https://raw.githubusercontent.com/kubiyabot/cli/main/install.sh | bash
 ```
 
 This script will:
+
 - Detect your OS and architecture
 - Download the appropriate binary
-- Install it to /usr/local/bin (or %USERPROFILE%/bin on Windows)
+- Install it to `/usr/local/bin` (or `%USERPROFILE%/bin` on Windows)
 - Make it executable
 - Verify the installation
 
@@ -61,7 +82,7 @@ kubiya version
 
 ### Binary Downloads
 
-You can download pre-compiled binaries for your platform from the [GitHub Releases page](https://github.com/kubiyabot/cli/releases/latest).
+Download pre-compiled binaries for your platform from the [GitHub Releases](https://github.com/kubiyabot/cli/releases/latest) page.
 
 ```bash
 # Linux (x86_64)
@@ -78,7 +99,11 @@ tar xzf kubiya_Darwin_arm64.tar.gz
 
 ## Configuration 🔧
 
+You can configure Kubiya CLI using environment variables or a configuration file.
+
 ### Environment Variables
+
+Set the following environment variables:
 
 ```bash
 # Required
@@ -91,7 +116,7 @@ export KUBIYA_DEBUG=true                               # Enable debug mode
 
 ### Configuration File
 
-Create `~/.kubiya/config.yaml`:
+Create a configuration file at `~/.kubiya/config.yaml`:
 
 ```yaml
 api_key: your-api-key
@@ -99,145 +124,9 @@ base_url: https://api.kubiya.ai/api/v1
 debug: false
 ```
 
-## Quick Start 🚀
+## Getting Started 🚀
 
 ### Interactive Chat
-
-```bash
-# Start interactive chat
-kubiya chat -i
-
-# Chat with specific teammate
-kubiya chat -n "DevOps Bot" -m "Deploy to staging"
-```
-
-### Source Management
-
-```bash
-# List sources
-kubiya source list
-
-# Add source from GitHub
-kubiya source add --url https://github.com/org/repo
-
-# Sync source
-kubiya source sync abc-123
-```
-
-### Tool Execution
-
-```bash
-# Browse and execute tools interactively
-kubiya browse
-
-# Execute specific tool
-kubiya tool execute deploy-app --arg key=value
-```
-
-### Knowledge Management
-
-```bash
-# List knowledge items
-kubiya knowledge list
-
-# Create knowledge item
-kubiya knowledge create -n "AWS Setup" -f content.md
-```
-
-### Runner Management
-
-```bash
-# List runners
-kubiya runner list
-
-# Get runner manifest
-kubiya runner manifest my-runner -o manifest.yaml
-```
-
-## Command Reference 📖
-
-### Global Flags
-
-- `--debug`: Enable debug output
-- `--output`: Output format (text|json)
-- `--help`: Show help for any command
-
-### Main Commands
-
-| Command | Description | Example |
-|---------|-------------|---------|
-| `chat` | Chat with teammates | `kubiya chat -i` |
-| `source` | Manage sources | `kubiya source list` |
-| `tool` | Execute tools | `kubiya tool execute deploy` |
-| `knowledge` | Manage knowledge base | `kubiya knowledge list` |
-| `runner` | Manage runners | `kubiya runner list` |
-| `webhook` | Manage webhooks | `kubiya webhook list` |
-
-## Development 👩‍💻
-
-### Building from Source
-
-```bash
-# Clone repository
-git clone https://github.com/kubiyabot/cli.git
-cd cli
-
-# Install dependencies
-go mod download
-
-# Run tests
-make test
-
-# Build binary
-make build
-```
-
-### Project Structure
-
-```
-.
-├── cmd/            # Command line interface
-├── internal/       # Internal packages
-│   ├── cli/       # CLI implementation
-│   ├── config/    # Configuration handling
-│   ├── kubiya/    # API client
-│   └── tui/       # Terminal UI components
-├── docs/          # Documentation
-└── test/          # Test files
-```
-
-## Contributing 🤝
-
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
-## Support 💬
-
-- Documentation: [docs.kubiya.ai](https://docs.kubiya.ai)
-- Issues: [GitHub Issues](https://github.com/kubiyabot/cli/issues)
-- Email: [support@kubiya.ai](mailto:support@kubiya.ai)
-- Discord: [Join our community](https://discord.gg/kubiya)
-
-## License 📄
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## Acknowledgments 🙏
-
-- [Charm](https://charm.sh) for the amazing TUI libraries
-- The Go community for inspiration and support
-- All our contributors and users
-
----
-
-Built with ❤️ by the Kubiya team
-
-## Chat Features Guide 💬
-
-### Interactive Mode
 
 Start an interactive chat session with full TUI support:
 
@@ -245,11 +134,11 @@ Start an interactive chat session with full TUI support:
 # Basic interactive mode
 kubiya chat -i
 
-# Interactive mode with specific teammate
+# Interactive mode with a specific teammate
 kubiya chat -i -n "DevOps Bot"
 ```
 
-### Non-Interactive Mode
+### Non-Interactive Chat
 
 Send messages directly from the command line:
 
@@ -272,27 +161,15 @@ Include files, URLs, and patterns for context:
 # Single file context
 kubiya chat -n "code-review" -m "Review this code" --context main.go
 
-# Multiple context files (separate flags)
+# Multiple context files
 kubiya chat -n "security" \
   --context "Dockerfile" \
   --context "k8s/*.yaml" \
   --context "src/main.go"
-
-# Using wildcards
-kubiya chat -n "review" \
-  --context "src/**/*.go" \
-  --context "tests/**/*_test.go"
-
-# URL context
-kubiya chat -n "security" \
-  --context "https://raw.githubusercontent.com/org/repo/main/config.yaml"
-
-# Mix local files and URLs
-kubiya chat -n "devops" \
-  --context "k8s/*.yaml" \
-  --context "https://example.com/deployment.yaml" \
-  --context "Dockerfile"
 ```
+
+### Using Stdin
+
 Use stdin for input and process outputs:
 
 ```bash
@@ -311,7 +188,7 @@ kubiya chat -n "DevOps Bot" -m "Document our API" > api-docs.md
 Maintain conversation context across interactions:
 
 ```bash
-# Start a new session (automatically saves session ID)
+# Start a new session
 kubiya chat -n "DevOps Bot" -m "Let's plan the deployment"
 
 # Continue the conversation
@@ -347,3 +224,87 @@ kubiya chat -n "docs" \
   -m "Generate API documentation" \
   --stream > docs/api.md
 ```
+
+## Command Reference 📖
+
+### Global Flags
+
+- `--debug`: Enable debug output
+- `--output`: Output format (`text`|`json`)
+- `--help`: Show help for any command
+
+### Main Commands
+
+| Command     | Description              | Example                          |
+|-------------|--------------------------|----------------------------------|
+| `chat`      | Chat with teammates      | `kubiya chat -i`                 |
+| `source`    | Manage sources           | `kubiya source list`             |
+| `tool`      | Execute tools            | `kubiya tool execute deploy`     |
+| `knowledge` | Manage knowledge base    | `kubiya knowledge list`          |
+| `runner`    | Manage runners           | `kubiya runner list`             |
+| `webhook`   | Manage webhooks          | `kubiya webhook list`            |
+
+## Development 👩‍💻
+
+### Building from Source
+
+```bash
+# Clone the repository
+git clone https://github.com/kubiyabot/cli.git
+cd cli
+
+# Install dependencies
+go mod download
+
+# Run tests
+make test
+
+# Build the binary
+make build
+```
+
+### Project Structure
+
+```
+.
+├── cmd/             # Command-line interface
+├── internal/        # Internal packages
+│   ├── cli/         # CLI implementation
+│   ├── config/      # Configuration handling
+│   ├── kubiya/      # API client
+│   └── tui/         # Terminal UI components
+├── docs/            # Documentation
+└── test/            # Test files
+```
+
+## Contributing 🤝
+
+We welcome contributions! Please follow these steps:
+
+1. **Fork** the repository
+2. **Create a feature branch** (`git checkout -b feature/amazing-feature`)
+3. **Commit your changes** (`git commit -m 'Add amazing feature'`)
+4. **Push to the branch** (`git push origin feature/amazing-feature`)
+5. **Open a Pull Request**
+
+## Support 💬
+
+For any questions or concerns:
+
+- **Documentation**: [docs.kubiya.ai](https://docs.kubiya.ai)
+- **Issues**: [GitHub Issues](https://github.com/kubiyabot/cli/issues)
+- **Email**: [support@kubiya.ai](mailto:support@kubiya.ai)
+
+## License 📄
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## Acknowledgments 🙏
+
+- [Charm](https://charm.sh) for the amazing TUI libraries
+- The Go community for inspiration and support
+- All our contributors and users
+
+---
+
+Built with ❤️ by the Kubiya team
