@@ -8,7 +8,7 @@ import (
 )
 
 // ListAgents retrieves all available agents
-func (c *Client) ListAgents(ctx context.Context) ([]Agent, error) {
+func (c *Client) ListAgents(ctx context.Context) ([]Teammate, error) {
 	req, err := http.NewRequestWithContext(ctx, "GET",
 		fmt.Sprintf("%s/agents?mode=all", c.cfg.BaseURL), nil)
 	if err != nil {
@@ -34,7 +34,16 @@ func (c *Client) ListAgents(ctx context.Context) ([]Agent, error) {
 		return nil, err
 	}
 
-	return agents, nil
+	// Convert agents to teammates
+	teammates := make([]Teammate, 0, len(agents))
+	for _, agent := range agents {
+		teammates = append(teammates, Teammate{
+			UUID:        agent.UUID,
+			Name:        agent.Name,
+			Description: agent.Desc,
+		})
+	}
+	return teammates, nil
 }
 
 // ListTeammates is an alias for ListAgents for backward compatibility

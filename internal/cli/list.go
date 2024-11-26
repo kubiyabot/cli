@@ -41,7 +41,7 @@ func newListCommand(cfg *config.Config) *cobra.Command {
 						t.UUID,
 						t.Name,
 						status,
-						t.Desc,
+						t.Description,
 					)
 				}
 				return w.Flush()

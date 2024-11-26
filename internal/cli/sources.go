@@ -26,6 +26,7 @@ Sources contain the tools and capabilities that your teammates can use.`,
 	}
 
 	cmd.AddCommand(
+		newTeammateCommand(cfg),
 		newListSourcesCommand(cfg),
 		newDescribeSourceCommand(cfg),
 		newDeleteSourceCommand(cfg),
