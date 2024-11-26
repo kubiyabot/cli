@@ -38,6 +38,9 @@ type ChatUI struct {
 	ready       bool
 	cancelFuncs []context.CancelFunc
 	P           *tea.Program
+	isBotTyping bool   // Indicates if the bot is currently typing/responding
+	toolOutput  string // Stores the output from the tool execution
+	toolRunning bool   // Indicates if a tool execution is in progress
 }
 
 func NewChatUI(cfg *config.Config) *ChatUI {
@@ -89,10 +92,19 @@ func (ui *ChatUI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case kubiya.ChatMessage:
 		ui.handleChatMessage(msg)
+		// If the bot has started responding, set isBotTyping to true
+		if msg.SenderName == ui.selected.Name && !msg.Final {
+			ui.isBotTyping = true
+		}
+		// When the bot message is finalized, set isBotTyping to false
+		if msg.Final {
+			ui.isBotTyping = false
+		}
 		return ui, nil
 
 	case finalizeMessage:
 		ui.finalizeBotMessage()
+		ui.isBotTyping = false // Bot has finished typing
 		return ui, nil
 
 	case error:
@@ -120,6 +132,10 @@ func (ui *ChatUI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case chatScreen:
+			// Prevent user input when the bot is typing
+			if ui.isBotTyping {
+				return ui, nil
+			}
 			switch msg.String() {
 			case "ctrl+c", "q":
 				ui.cancelContexts()
@@ -214,24 +230,30 @@ func (ui *ChatUI) sendMessage(message string) tea.Cmd {
 }
 
 func (ui *ChatUI) handleChatMessage(msg kubiya.ChatMessage) {
+	// Handle tool execution messages
+	if msg.Type == "tool" || msg.Type == "tool_output" {
+		ui.toolRunning = !msg.Final // Update toolRunning status based on message finality
+	}
+
 	if msg.SenderName == ui.selected.Name {
-		// Update the last message from the teammate
+		// Update the last message from the teammate if it's not final
 		if len(ui.messages) > 0 {
 			lastMsg := &ui.messages[len(ui.messages)-1]
-			if lastMsg.SenderName == ui.selected.Name {
-				// Only update if the content or finality has changed
-				if msg.Content != lastMsg.Content || msg.Final != lastMsg.Final {
-					lastMsg.Content = msg.Content
-					lastMsg.Final = msg.Final
-					lastMsg.Timestamp = msg.Timestamp
-				}
+			if lastMsg.SenderName == ui.selected.Name && !lastMsg.Final {
+				// Update the content, finality, and timestamp
+				lastMsg.Content = msg.Content
+				lastMsg.Final = msg.Final
+				lastMsg.Timestamp = msg.Timestamp
 			} else {
+				// Append a new message if the last one is final
 				ui.messages = append(ui.messages, msg)
 			}
 		} else {
+			// No previous messages; append the new message
 			ui.messages = append(ui.messages, msg)
 		}
 	} else {
+		// Message from the user or other sources; append it
 		ui.messages = append(ui.messages, msg)
 	}
 }
@@ -290,7 +312,7 @@ func (ui *ChatUI) renderChatScreen() string {
 	b.WriteString(headerStyle.Render(fmt.Sprintf("Chatting with %s", ui.selected.Name)))
 	b.WriteString("\n\n")
 
-	// Messages
+	// Messages rendering
 	for _, msg := range ui.messages {
 		timestamp := formatTimestamp(msg.Timestamp)
 		var senderStyle, messageStyle lipgloss.Style
@@ -306,16 +328,35 @@ func (ui *ChatUI) renderChatScreen() string {
 		sender := senderStyle.Render(msg.SenderName)
 		content := messageStyle.Render(msg.Content)
 
+		// Check if the message is tool output and format accordingly
+		if msg.Type == "tool_output" {
+			toolStyle := lipgloss.NewStyle().
+				Foreground(lipgloss.Color("244")).
+				Italic(true)
+			content = toolStyle.Render(msg.Content)
+		}
+
 		b.WriteString(fmt.Sprintf("[%s] %s: %s\n", timestamp, sender, content))
 	}
 
-	// Input prompt
-	inputStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("244")).
-		Bold(true)
+	// Show "Bot is typing..." when bot is responding
+	if ui.isBotTyping {
+		typingStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("33")).
+			Italic(true)
+		// show team mate name and "is typing..."
+		b.WriteString(typingStyle.Render(fmt.Sprintf("%s is typing...", ui.selected.Name)))
+	}
 
-	prompt := inputStyle.Render("\n> ") + ui.inputBuffer
-	b.WriteString(prompt)
+	// Input prompt
+	// Disable input when bot is typing
+	if !ui.isBotTyping {
+		inputStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("244")).
+			Bold(true)
+		prompt := inputStyle.Render("\n> ") + ui.inputBuffer
+		b.WriteString(prompt)
+	}
 
 	// Footer
 	footerStyle := lipgloss.NewStyle().
