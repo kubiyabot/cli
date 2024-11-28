@@ -62,6 +62,10 @@ func newChatCommand(cfg *config.Config) *cobra.Command {
 		sessionID    string
 		contextFiles []string
 		stdinInput   bool
+		sourceTest   bool
+		sourceUUID   string
+		sourceName   string
+		suggestTool  string
 	)
 
 	// Helper function to fetch content from URL
@@ -550,6 +554,10 @@ Use --context to include additional files for context (supports wildcards and UR
 	cmd.Flags().StringVarP(&sessionID, "session-id", "s", "", "Session ID to continue conversation")
 	cmd.Flags().StringArrayVar(&contextFiles, "context", []string{}, "Files, wildcards, or URLs to include as context (can be specified multiple times)")
 	cmd.Flags().BoolVar(&stdinInput, "stdin", false, "Read message from stdin")
+	cmd.Flags().BoolVar(&sourceTest, "source-test", false, "Testing mode for new source")
+	cmd.Flags().StringVar(&sourceUUID, "source-uuid", "", "UUID of source being tested")
+	cmd.Flags().StringVar(&sourceName, "source-name", "", "Name of source being tested")
+	cmd.Flags().StringVar(&suggestTool, "suggest-tool", "", "Suggested tool command to try")
 
 	return cmd
 }
