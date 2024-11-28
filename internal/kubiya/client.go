@@ -99,12 +99,12 @@ func (c *Client) GetSourceMetadataCached(ctx context.Context, sourceUUID string)
 
 // GetTeammates retrieves the list of teammates from the API
 func (c *Client) GetTeammates(ctx context.Context) ([]Teammate, error) {
-	resp, err := c.get(ctx, "/api/v1/agents")
+	resp, err := c.get(ctx, "/agents")
 	if err != nil {
 		if c.debug {
 			fmt.Printf("Error getting teammates: %v\n", err)
 			fmt.Printf("BaseURL: %s\n", c.baseURL)
-			fmt.Printf("Full URL: %s/api/v1/agents\n", c.baseURL)
+			fmt.Printf("Full URL: %s/agents\n", c.baseURL)
 			fmt.Printf("API Key present: %v\n", c.cfg.APIKey != "")
 		}
 		return nil, fmt.Errorf("failed to get teammates: %w", err)
@@ -119,33 +119,23 @@ func (c *Client) GetTeammates(ctx context.Context) ([]Teammate, error) {
 		resp.Body = io.NopCloser(bytes.NewBuffer(body))
 	}
 
-	var agents []struct {
-		UUID        string            `json:"uuid"`
-		Name        string            `json:"name"`
-		Description string            `json:"description"`
-		Environment map[string]string `json:"environment_variables"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&agents); err != nil {
+	var teammates []Teammate
+	if err := json.NewDecoder(resp.Body).Decode(&teammates); err != nil {
 		if c.debug {
 			fmt.Printf("Error decoding response: %v\n", err)
 		}
 		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}
 
-	// Convert agents to teammates
-	teammates := make([]Teammate, 0, len(agents))
-	for _, agent := range agents {
-		if agent.UUID != "" && agent.Name != "" { // Filter out empty entries
-			teammates = append(teammates, Teammate{
-				UUID:        agent.UUID,
-				Name:        agent.Name,
-				Description: agent.Description,
-				Environment: agent.Environment,
-			})
+	// Filter out empty entries
+	var validTeammates []Teammate
+	for _, t := range teammates {
+		if t.UUID != "" && t.Name != "" {
+			validTeammates = append(validTeammates, t)
 		}
 	}
 
-	return teammates, nil
+	return validTeammates, nil
 }
 
 // GetTeammateEnvVar retrieves the value of an environment variable for a teammate from the API
@@ -472,4 +462,76 @@ func (c *Client) DeleteTeammate(ctx context.Context, uuid string) error {
 	}
 	resp.Body.Close()
 	return nil
+}
+
+func (c *Client) BindSourceToTeammate(ctx context.Context, sourceUUID, teammateUUID string) error {
+	path := fmt.Sprintf("sources/%s/teammates/%s", sourceUUID, teammateUUID)
+	resp, err := c.post(ctx, path, nil)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("failed to bind source to teammate: %s", resp.Status)
+	}
+
+	return nil
+}
+
+func (c *Client) GetSourceTeammates(ctx context.Context, sourceUUID string) ([]Teammate, error) {
+	// Get all teammates first
+	teammates, err := c.GetTeammates(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list teammates: %w", err)
+	}
+
+	// Get source details for better error handling
+	source, err := c.GetSourceMetadata(ctx, sourceUUID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get source details: %w", err)
+	}
+
+	// Filter teammates that have this source
+	var connectedTeammates []Teammate
+	for _, teammate := range teammates {
+		// Check if teammate has access to this source
+		hasSource := false
+		for _, teammateSrc := range teammate.Sources {
+			if teammateSrc == sourceUUID {
+				hasSource = true
+				break
+			}
+		}
+		if hasSource {
+			// Add source details to teammate for context
+			teammate.Sources = append(teammate.Sources, *&source.UUID)
+			connectedTeammates = append(connectedTeammates, teammate)
+		}
+	}
+
+	if c.debug {
+		fmt.Printf("Found %d teammates connected to source %s\n", len(connectedTeammates), sourceUUID)
+		for _, t := range connectedTeammates {
+			fmt.Printf("- %s (UUID: %s)\n", t.Name, t.UUID)
+		}
+	}
+
+	return connectedTeammates, nil
+}
+
+// Add a helper method to check if a teammate exists
+func (c *Client) TeammateExists(ctx context.Context, nameOrID string) (*Teammate, error) {
+	teammates, err := c.GetTeammates(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, t := range teammates {
+		if t.UUID == nameOrID || t.Name == nameOrID {
+			return &t, nil
+		}
+	}
+
+	return nil, fmt.Errorf("teammate not found: %s", nameOrID)
 }

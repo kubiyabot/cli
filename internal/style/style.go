@@ -102,6 +102,11 @@ var (
 
 	ToolOutputPrefixStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("#64748B"))
+
+	CommandStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#00FFFF")).
+			Background(lipgloss.Color("#2E3440")).
+			Padding(0, 1)
 )
 
 // DisableColors disables all color styling for non-TTY environments
@@ -132,6 +137,7 @@ func DisableColors() {
 	ToolHeaderStyle = noStyle
 	ToolStatusStyle = noStyle
 	ToolOutputPrefixStyle = noStyle
+	CommandStyle = noStyle
 }
 
 // Add this function to check if colors should be enabled
