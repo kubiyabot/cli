@@ -117,30 +117,6 @@ func (c *Client) delete(ctx context.Context, path string) (*http.Response, error
 	return resp, nil
 }
 
-// SyncSource triggers a sync for a specific source
-func (c *Client) SyncSource(ctx context.Context, sourceUUID string) (*Source, error) {
-	req, err := http.NewRequestWithContext(ctx, "PUT",
-		fmt.Sprintf("%s/sources/%s/sync", c.baseURL, sourceUUID), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	if c.debug {
-		fmt.Printf("Syncing source: %s\n", sourceUUID)
-	}
-
-	var source Source
-	if err := c.do(req, &source); err != nil {
-		if c.debug {
-			fmt.Printf("Error syncing source: %v\n", err)
-		}
-		return nil, fmt.Errorf("failed to sync source: %w", err)
-	}
-
-	// After sync, get the metadata to ensure we have the latest tools
-	return c.GetSourceMetadata(ctx, sourceUUID)
-}
-
 // LoadSource loads a source from a URL or local path
 func (c *Client) LoadSource(ctx context.Context, path string) (*Source, error) {
 	if c.debug {

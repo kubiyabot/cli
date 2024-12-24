@@ -581,3 +581,45 @@ func (c *Client) DiscoverSource(ctx context.Context, sourceURL string, config ma
 
 	return &discovery, nil
 }
+
+// SyncSource syncs a source with the given options
+func (c *Client) SyncSource(ctx context.Context, sourceID string, opts SyncOptions) (*Source, error) {
+	// Build request body with sync options
+	body := struct {
+		Mode       string `json:"mode,omitempty"`
+		Branch     string `json:"branch,omitempty"`
+		Force      bool   `json:"force,omitempty"`
+		AutoCommit bool   `json:"auto_commit,omitempty"`
+		NoDiff     bool   `json:"no_diff,omitempty"`
+	}{
+		Mode:       opts.Mode,
+		Branch:     opts.Branch,
+		Force:      opts.Force,
+		AutoCommit: opts.AutoCommit,
+		NoDiff:     opts.NoDiff,
+	}
+
+	// Make request to sync endpoint
+	resp, err := c.post(ctx, fmt.Sprintf("/sources/%s/sync", sourceID), body)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	// Handle non-200 responses
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, fmt.Errorf("source not found: %s", sourceID)
+	}
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("sync failed: %s", string(body))
+	}
+
+	// Parse response
+	var source Source
+	if err := json.NewDecoder(resp.Body).Decode(&source); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &source, nil
+}

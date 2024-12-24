@@ -22,19 +22,7 @@ const (
 	SyncModeCI             = "ci"
 )
 
-// Add this type to hold sync options
-type SyncOptions struct {
-	Mode       string
-	Branch     string
-	Path       string
-	Name       string
-	Force      bool
-	AutoCommit bool
-	NoDiff     bool
-	RepoURL    string
-}
-
-// Add this type to track sync context
+// Keep the sync context type
 type SyncContext struct {
 	RequiresBranchSwitch  bool
 	CurrentBranch         string
@@ -593,11 +581,13 @@ func newSyncSourceCommand(cfg *config.Config) *cobra.Command {
 			// Get source details first
 			source, err := client.GetSource(cmd.Context(), args[0])
 			if err != nil {
-				return err
+				fmt.Printf("\n%s\n", style.ErrorStyle.Render("❌ Failed to get source:"))
+				fmt.Printf("%s\n", style.ErrorStyle.Render(err.Error()))
+				return nil // Don't propagate error to avoid duplicate messages
 			}
 
 			// Store options for future use when client supports them
-			_ = SyncOptions{
+			opts := kubiya.SyncOptions{
 				Mode:       mode,
 				Branch:     branch,
 				Force:      force,
@@ -609,12 +599,20 @@ func newSyncSourceCommand(cfg *config.Config) *cobra.Command {
 			fmt.Printf("Name: %s\n", style.HighlightStyle.Render(source.Name))
 			fmt.Printf("URL: %s\n", source.URL)
 
-			// Call sync endpoint (without options for now)
-			synced, err := client.SyncSource(cmd.Context(), args[0])
+			// Call sync endpoint with options
+			synced, err := client.SyncSource(cmd.Context(), args[0], opts)
 			if err != nil {
-				fmt.Printf("\n%s\n", style.ErrorStyle.Render("❌ Sync failed:"))
-				fmt.Printf("%s\n", style.ErrorStyle.Render(err.Error()))
-				return err
+				if strings.Contains(err.Error(), "404") {
+					fmt.Printf("\n%s\n", style.ErrorStyle.Render("❌ Source not found"))
+					fmt.Printf("\n%s\n", style.SubtitleStyle.Render("Common Solutions:"))
+					fmt.Println("• Verify the source UUID is correct")
+					fmt.Println("• Check if the source still exists")
+					fmt.Println("• Try listing sources with: kubiya source list")
+				} else {
+					fmt.Printf("\n%s\n", style.ErrorStyle.Render("❌ Sync failed:"))
+					fmt.Printf("%s\n", style.ErrorStyle.Render(err.Error()))
+				}
+				return nil // Don't propagate error to avoid duplicate messages
 			}
 
 			fmt.Printf("\n%s\n", style.SuccessStyle.Render("✅ Source synced successfully!"))

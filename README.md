@@ -1,109 +1,68 @@
 # Kubiya CLI - Your DevOps Automation Companion 🤖
 
-[![Go Report Card](https://goreportcard.com/badge/github.com/kubiyabot/cli)](https://goreportcard.com/report/github.com/kubiyabot/cli)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-
-Welcome to **Kubiya CLI**! 👋 A powerful command-line interface for interacting with your **Kubiya AI teammates** and automating your workflows directly from the terminal.
+A command-line interface for managing Kubiya sources, teammates, and tools on the Kubiya platform.
 
 ## Features ✨
 
-- **Interactive Chat** 💬
-  - Chat with AI teammates directly from your terminal
-  - Real-time responses with typing indicators
-  - Session management for ongoing conversations
-  - Stream assistant's responses as they are generated
-  - Context-aware conversations with file support
-  - Stdin support for piping data
-
 - **Source Management** 📂
-  - Add, list, and sync sources from repositories
-  - Manage your code and resources efficiently
+  - Scan repositories for tools and capabilities
+  - Add and sync sources from Git repositories
+  - List and manage your sources
+  - Support for local directory scanning
+  - Interactive source browsing
 
-- **Tool Execution** 🛠️
-  - Browse and execute tools interactively
-  - Execute specific tools with arguments
+- **Teammate Management** 👥
+  - List and manage AI teammates
+  - View teammate configurations
+  - Manage teammate environment variables
 
-- **Knowledge Management** 📖
-  - Create and list knowledge items
-  - Manage your team's knowledge base
+- **Tool Management** 🛠️
+  - List available tools
+  - Execute tools with arguments
+  - Interactive tool execution
+
+- **Secret Management** 🔒
+  - Create and manage secrets
+  - Update secret values
+  - List available secrets
 
 - **Runner Management** 🚀
-  - List runners and manage runner manifests
-  - Streamline your automation processes
+  - List available runners
+  - View runner configurations
+
+- **Webhook Management** 🔗
+  - List and manage webhooks
+  - View webhook configurations
+
+- **Interactive Mode** 💻
+  - TUI-based interface for source browsing
+  - Interactive tool execution
+  - Real-time updates and feedback
 
 ## Installation 📥
 
 ### Prerequisites
 
-- **Go 1.18** or higher
-- **Kubiya account and API key**
+- Go 1.22 or higher
+- [Kubiya API Key](https://docs.kubiya.ai/docs/org-management/api-keys)
 
-### Quick Install
-
-Install using `go install`:
+### Build from Source
 
 ```bash
-go install github.com/kubiyabot/cli/cmd/kubiya@latest
-```
-
-Or build from source:
-
-```bash
+# Clone the repository
 git clone https://github.com/kubiyabot/cli.git
 cd cli
+
+# Build
+make build
+
+# Install locally
 make install
-```
-
-### Install Script
-
-Install the latest version with our installation script:
-
-```bash
-# Using curl
-curl -sSL https://raw.githubusercontent.com/kubiyabot/cli/main/install.sh | bash
-
-# Using wget
-wget -qO- https://raw.githubusercontent.com/kubiyabot/cli/main/install.sh | bash
-```
-
-This script will:
-
-- Detect your OS and architecture
-- Download the appropriate binary
-- Install it to `/usr/local/bin` (or `%USERPROFILE%/bin` on Windows)
-- Make it executable
-- Verify the installation
-
-### Verify Installation
-
-```bash
-kubiya version
-```
-
-### Binary Downloads
-
-Download pre-compiled binaries for your platform from the [GitHub Releases](https://github.com/kubiyabot/cli/releases/latest) page.
-
-```bash
-# Linux (x86_64)
-curl -LO https://github.com/kubiyabot/cli/releases/latest/download/kubiya_Linux_x86_64.tar.gz
-tar xzf kubiya_Linux_x86_64.tar.gz
-
-# macOS (Apple Silicon)
-curl -LO https://github.com/kubiyabot/cli/releases/latest/download/kubiya_Darwin_arm64.tar.gz
-tar xzf kubiya_Darwin_arm64.tar.gz
-
-# Windows (x86_64)
-# Download kubiya_Windows_x86_64.zip from the releases page
 ```
 
 ## Configuration 🔧
 
-You can configure Kubiya CLI using environment variables or a configuration file.
-
-### Environment Variables
-
-Set the following environment variables:
+### Using Environment Variables
 
 ```bash
 # Required
@@ -114,196 +73,356 @@ export KUBIYA_BASE_URL="https://api.kubiya.ai/api/v1"  # Default API URL
 export KUBIYA_DEBUG=true                               # Enable debug mode
 ```
 
-### Configuration File
+## Usage 🚀
 
-Create a configuration file at `~/.kubiya/config.yaml`:
-
-```yaml
-api_key: your-api-key
-base_url: https://api.kubiya.ai/api/v1
-debug: false
-```
-
-## Getting Started 🚀
+The Kubiya CLI can be run from any directory - it uses your API key for authentication and doesn't require any specific working directory.
 
 ### Interactive Chat
 
-Start an interactive chat session with full TUI support:
+Chat with your AI teammates directly from the terminal:
 
 ```bash
-# Basic interactive mode
+# Start an interactive chat session
 kubiya chat -i
 
-# Interactive mode with a specific teammate
-kubiya chat -i -n "DevOps Bot"
+# Example output:
+🤖 Connected to DevOps Assistant
+Type your message or /help for commands...
+
+You: How do I deploy to staging?
+Assistant: Let me help you with the staging deployment...
 ```
 
-### Non-Interactive Chat
-
-Send messages directly from the command line:
-
+Chat with specific context:
 ```bash
-# Simple message
-kubiya chat -n "DevOps Bot" -m "How do I deploy to staging?"
+# Chat about specific files
+kubiya chat -m "Review this deployment" --context k8s/deployment.yaml
 
-# Stream the response in real-time
-kubiya chat -n "DevOps Bot" -m "Explain the deployment process" --stream
-
-# Continue a previous conversation
-kubiya chat -n "DevOps Bot" -m "What about production?" --session-id abc-123
+# Example output:
+🔍 Analyzing k8s/deployment.yaml...
+💡 I notice a few things in your deployment:
+1. Resource limits are not set
+2. Security context is missing
+...
 ```
 
-### Context-Aware Conversations
+### Source Management
 
-Include files, URLs, and patterns for context:
-
+List your sources with detailed information:
 ```bash
-# Single file context
-kubiya chat -n "code-review" -m "Review this code" --context main.go
+kubiya source list
 
-# Multiple context files
-kubiya chat -n "security" \
-  --context "Dockerfile" \
-  --context "k8s/*.yaml" \
-  --context "src/main.go"
+# Example output:
+📦 SOURCES
+UUID                                    NAME              TOOLS  STATUS
+f7d8e9c3-4b2a-4f1e-8d9c-1a2b3c4d5e6f  jenkins-tools     12     ✅
+a1b2c3d4-5e6f-7g8h-9i0j-k1l2m3n4o5p6  kubernetes-tools  8      ✅
 ```
 
-### Using Stdin
-
-Use stdin for input and process outputs:
-
+Scan a repository with detailed output:
 ```bash
-# Analyze logs
-tail -f app.log | kubiya chat -n "debug" --stdin
+kubiya source scan https://github.com/org/repo
 
-# Review error output
-kubectl logs pod-name | kubiya chat -n "DevOps Bot" --stdin
+# Example output:
+🔍 Scanning Source: https://github.com/org/repo
 
-# Save conversation to file
-kubiya chat -n "DevOps Bot" -m "Document our API" > api-docs.md
+✅ Scan completed
+URL: https://github.com/org/repo
+Name: deployment-tools
+
+📦 Found 3 tools
+
+Available Tools:
+• deploy-staging
+  Deploys application to staging environment
+  Arguments: 2 required, 1 optional
+
+• update-config
+  Updates application configuration
+  Arguments: 1 required, 2 optional
+
+• rollback
+  Rolls back deployment to previous version
+  Arguments: 1 required
 ```
 
-### Session Management
+### Teammate Management
 
-Maintain conversation context across interactions:
-
+View teammate details with their capabilities:
 ```bash
-# Start a new session
-kubiya chat -n "DevOps Bot" -m "Let's plan the deployment"
+kubiya teammate get "DevOps Bot"
 
-# Continue the conversation
-kubiya chat -n "DevOps Bot" -m "What's the next step?"
+# Example output:
+👤 TEAMMATE DETAILS
+Name: DevOps Bot
+Description: Specialized in DevOps automation
+Sources: 
+  • jenkins-tools
+  • kubernetes-tools
+Environment Variables: 3 configured
+Secrets: 2 configured
+```
 
-# Explicitly use a session
-kubiya chat -n "DevOps Bot" -m "Continue from before" -s "session-123"
+### Tool Execution
 
-# Clear saved session
-kubiya chat --clear-session
+Execute tools with arguments:
+```bash
+kubiya tool execute deploy-staging --app myapp --env staging
+
+# Example output:
+🚀 Executing: deploy-staging
+Parameters:
+  • app: myapp
+  • env: staging
+
+📋 Deployment Steps:
+1. Validating configuration...
+2. Building container...
+3. Pushing to registry...
+4. Updating deployment...
+
+✅ Deployment successful!
+```
+
+### Interactive Tool Browser
+
+The interactive tool browser provides a TUI for exploring and executing tools:
+```bash
+kubiya tool -i
+
+# Opens an interactive interface:
+┌─ Available Tools ───────────────┐
+│ > deploy-staging               │
+│   update-config               │
+│   rollback                    │
+│                              │
+│ [↑↓] Navigate [Enter] Select │
+└──────────────────────────────┘
+```
+
+### Secret Management
+
+Create and manage secrets securely:
+```bash
+# Create a new secret
+kubiya secret create DB_PASSWORD "mypassword" --description "Database password"
+
+# Example output:
+🔒 Creating secret: DB_PASSWORD
+✅ Secret created successfully
+
+# List secrets
+kubiya secret list
+
+# Example output:
+🔑 SECRETS
+NAME         CREATED BY  CREATED AT
+DB_PASSWORD  john.doe    2024-03-15 10:30:00
+API_KEY      jane.doe    2024-03-14 15:45:00
+```
+
+### Working with Local Repositories
+
+The CLI can detect Git information from your local directory:
+```bash
+# In your project directory
+cd my-project
+kubiya source scan .
+
+# Example output:
+📂 Local Directory Scan
+Found repository: https://github.com/org/my-project
+Branch: feature/new-tools
+
+🔍 Scanning Source...
+```
+
+### CI/CD Integration Examples
+
+#### GitHub Actions
+```yaml
+name: Kubiya Source Sync
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'tools/**'
+      - '.kubiya/**'
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Setup Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.22'
+
+      - name: Build Kubiya CLI
+        run: |
+          git clone https://github.com/kubiyabot/cli.git
+          cd cli
+          make build
+          sudo make install
+
+      - name: Configure Kubiya CLI
+        env:
+          KUBIYA_API_KEY: ${{ secrets.KUBIYA_API_KEY }}
+        run: |
+          kubiya source list  # Verify connection
+          SOURCE_ID=$(kubiya source list --output json | jq -r '.[] | select(.url | contains("${{ github.repository }}")) | .uuid')
+          kubiya source sync $SOURCE_ID --mode ci --auto-commit
+```
+
+#### GitLab CI
+```yaml
+kubiya-sync:
+  script:
+    - |
+      export KUBIYA_API_KEY=${KUBIYA_API_KEY}
+      kubiya source scan .
+      kubiya source sync ${SOURCE_ID} --mode ci
 ```
 
 ### Advanced Usage
 
-Combine multiple features for complex interactions:
-
+#### JSON Output for Scripting
 ```bash
-# Code review with multiple files and custom message
-kubiya chat -n "code-review" \
-  --context "src/*.go,tests/*.go" \
-  -m "Review these changes for security issues" \
-  --stream
+# Get source information in JSON format
+kubiya source list --output json | jq '.[] | select(.name=="jenkins-tools")'
 
-# Process logs with context
-tail -100 error.log | kubiya chat -n "debug" \
-  --stdin \
-  --context "config.yaml,deployment.yaml" \
-  -m "What's causing these errors?"
-
-# Generate documentation
-kubiya chat -n "docs" \
-  --context "**/*.go" \
-  -m "Generate API documentation" \
-  --stream > docs/api.md
+# Example output:
+{
+  "uuid": "f7d8e9c3-4b2a-4f1e-8d9c-1a2b3c4d5e6f",
+  "name": "jenkins-tools",
+  "url": "https://github.com/org/jenkins-tools",
+  "tools": [
+    {
+      "name": "deploy-staging",
+      "description": "Deploys application to staging"
+    }
+  ]
+}
 ```
 
 ## Command Reference 📖
 
 ### Global Flags
-
 - `--debug`: Enable debug output
-- `--output`: Output format (`text`|`json`)
-- `--help`: Show help for any command
+- `--output`: Output format (text|json)
 
-### Main Commands
+### Source Commands
+```bash
+# List sources
+kubiya source list [--output json]
 
-| Command     | Description              | Example                          |
-|-------------|--------------------------|----------------------------------|
-| `chat`      | Chat with teammates      | `kubiya chat -i`                 |
-| `source`    | Manage sources           | `kubiya source list`             |
-| `tool`      | Execute tools            | `kubiya tool execute deploy`     |
-| `knowledge` | Manage knowledge base    | `kubiya knowledge list`          |
-| `runner`    | Manage runners           | `kubiya runner list`             |
-| `webhook`   | Manage webhooks          | `kubiya webhook list`            |
+# Scan source
+kubiya source scan [url|path] [--local] [--config file.json]
+
+# Add source
+kubiya source add [url] [--name "Name"] [--config file.json]
+
+# Sync source
+kubiya source sync [uuid] [--mode ci] [--branch main] [--force]
+
+# Describe source
+kubiya source describe [uuid] [--output json]
+
+# Delete source
+kubiya source delete [uuid] [--force]
+```
+
+### Teammate Commands
+```bash
+# List teammates
+kubiya teammate list [--output json]
+
+# Get teammate details
+kubiya teammate get [uuid|name]
+
+# Get teammate environment variable
+kubiya teammate env get [teammate] [variable]
+```
+
+### Tool Commands
+```bash
+# List tools
+kubiya tool list [--output json]
+
+# Execute tool
+kubiya tool execute [name] [args...]
+
+# Interactive tool execution
+kubiya tool execute -i
+```
+
+### Secret Commands
+```bash
+# List secrets
+kubiya secret list
+
+# Get secret value
+kubiya secret get [name]
+
+# Create secret
+kubiya secret create [name] [value] [--description "desc"]
+
+# Update secret
+kubiya secret update [name] [value] [--description "desc"]
+```
+
+### Runner Commands
+```bash
+# List runners
+kubiya runner list [--output json]
+
+# Get runner details
+kubiya runner get [uuid]
+```
+
+### Webhook Commands
+```bash
+# List webhooks
+kubiya webhook list [--output json]
+
+# Get webhook details
+kubiya webhook get [id]
+```
+
+### Interactive Mode
+```bash
+# Interactive source browser
+kubiya source browse
+
+# Interactive tool execution
+kubiya tool -i
+```
 
 ## Development 👩‍💻
 
-### Building from Source
-
-```bash
-# Clone the repository
-git clone https://github.com/kubiyabot/cli.git
-cd cli
-
-# Install dependencies
-go mod download
-
-# Run tests
-make test
-
-# Build the binary
-make build
-```
-
 ### Project Structure
-
 ```
 .
-├── cmd/             # Command-line interface
 ├── internal/        # Internal packages
 │   ├── cli/         # CLI implementation
 │   ├── config/      # Configuration handling
 │   ├── kubiya/      # API client
+│   ├── style/       # Terminal styling
 │   └── tui/         # Terminal UI components
-├── docs/            # Documentation
-└── test/            # Test files
+└── main.go         # Entry point
 ```
-
-## Contributing 🤝
-
-We welcome contributions! Please follow these steps:
-
-1. **Fork** the repository
-2. **Create a feature branch** (`git checkout -b feature/amazing-feature`)
-3. **Commit your changes** (`git commit -m 'Add amazing feature'`)
-4. **Push to the branch** (`git push origin feature/amazing-feature`)
-5. **Open a Pull Request**
 
 ## Support 💬
 
-For any questions or concerns:
-
 - **Documentation**: [docs.kubiya.ai](https://docs.kubiya.ai)
 - **Issues**: [GitHub Issues](https://github.com/kubiyabot/cli/issues)
-- **Email**: [support@kubiya.ai](mailto:support@kubiya.ai)
 
 ## License 📄
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## Acknowledgments 🙏
-
-- [Charm](https://charm.sh) for the amazing TUI libraries
-- The Go community for inspiration and support
-- All our contributors and users
 
 ---
 
