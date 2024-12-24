@@ -6,7 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"net/url"
+	"os/exec"
+	"strings"
 )
 
 // Source-related client methods
@@ -26,38 +27,61 @@ func (c *Client) ListSources(ctx context.Context) ([]Source, error) {
 }
 
 func (c *Client) GetSourceMetadata(ctx context.Context, uuid string) (*Source, error) {
-	// First get the source to get its URL
-	req, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("%s/sources/%s", c.baseURL, uuid), nil)
+	// First get the source metadata
+	req, err := http.NewRequestWithContext(ctx, "GET",
+		fmt.Sprintf("%s/sources/%s/metadata", c.baseURL, uuid), nil)
 	if err != nil {
 		return nil, err
 	}
 
-	var source Source
-	if err := c.do(req, &source); err != nil {
-		return nil, err
+	var metadata struct {
+		UUID       string `json:"uuid"`
+		SourceUUID string `json:"source_uuid"`
+		Tools      []Tool `json:"tools"`
+		Errors     []struct {
+			File    string `json:"file"`
+			Type    string `json:"type"`
+			Error   string `json:"error"`
+			Details string `json:"details"`
+		} `json:"errors"`
+		CreatedAt string `json:"created_at"`
+		UpdatedAt string `json:"updated_at"`
 	}
 
-	// Now load the source to get tools
-	loadURL := fmt.Sprintf("%s/sources/load?url=%s", c.baseURL, url.QueryEscape(source.URL))
-	loadReq, err := http.NewRequestWithContext(ctx, "GET", loadURL, nil)
+	if err := c.do(req, &metadata); err != nil {
+		if c.debug {
+			fmt.Printf("Error fetching source metadata: %v\n", err)
+		}
+		return nil, fmt.Errorf("failed to fetch source metadata: %w", err)
+	}
+
+	// Get the original source to merge with metadata
+	source, err := c.GetSource(ctx, uuid)
 	if err != nil {
 		return nil, err
 	}
 
-	var loadedSource Source
-	if err := c.do(loadReq, &loadedSource); err != nil {
-		return nil, err
-	}
-
-	// Merge the loaded source data with the original source
-	source.Tools = loadedSource.Tools
+	// Merge tools from metadata into source
+	source.Tools = metadata.Tools
 
 	if c.debug {
-		fmt.Printf("Source URL: %s\n", source.URL)
-		fmt.Printf("Number of tools: %d\n", len(source.Tools))
+		fmt.Printf("Source UUID: %s\n", uuid)
+		fmt.Printf("Number of tools found: %d\n", len(source.Tools))
+		for i, tool := range source.Tools {
+			fmt.Printf("Tool %d: %s (%s)\n", i+1, tool.Name, tool.Description)
+			fmt.Printf("  Source: %s\n", tool.Source.URL)
+			fmt.Printf("  Args: %d, Env: %d, Secrets: %d\n",
+				len(tool.Args), len(tool.Env), len(tool.Secrets))
+		}
+		if len(metadata.Errors) > 0 {
+			fmt.Printf("\nErrors found:\n")
+			for _, err := range metadata.Errors {
+				fmt.Printf("- %s: %s (%s)\n", err.File, err.Error, err.Type)
+			}
+		}
 	}
 
-	return &source, nil
+	return source, nil
 }
 
 func (c *Client) DeleteSource(ctx context.Context, sourceUUID string) error {
@@ -95,69 +119,172 @@ func (c *Client) delete(ctx context.Context, path string) (*http.Response, error
 
 // SyncSource triggers a sync for a specific source
 func (c *Client) SyncSource(ctx context.Context, sourceUUID string) (*Source, error) {
-	// We use PUT to trigger a sync
 	req, err := http.NewRequestWithContext(ctx, "PUT",
-		fmt.Sprintf("%s/sources/%s", c.cfg.BaseURL, sourceUUID), nil)
+		fmt.Sprintf("%s/sources/%s/sync", c.baseURL, sourceUUID), nil)
 	if err != nil {
 		return nil, err
 	}
 
-	req.Header.Set("Authorization", "UserKey "+c.cfg.APIKey)
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
-	}
-
-	var source Source
-	if err := json.NewDecoder(resp.Body).Decode(&source); err != nil {
-		return nil, err
-	}
-
-	return &source, nil
-}
-
-// LoadSource loads a source from a URL or local path
-func (c *Client) LoadSource(ctx context.Context, url string) (*Source, error) {
-	reqURL := fmt.Sprintf("%s/sources/load?url=%s", c.baseURL, url)
-
-	req, err := http.NewRequestWithContext(ctx, "GET", reqURL, nil)
-	if err != nil {
-		return nil, err
+	if c.debug {
+		fmt.Printf("Syncing source: %s\n", sourceUUID)
 	}
 
 	var source Source
 	if err := c.do(req, &source); err != nil {
+		if c.debug {
+			fmt.Printf("Error syncing source: %v\n", err)
+		}
+		return nil, fmt.Errorf("failed to sync source: %w", err)
+	}
+
+	// After sync, get the metadata to ensure we have the latest tools
+	return c.GetSourceMetadata(ctx, sourceUUID)
+}
+
+// LoadSource loads a source from a URL or local path
+func (c *Client) LoadSource(ctx context.Context, path string) (*Source, error) {
+	if c.debug {
+		fmt.Printf("Loading source from path: %s\n", path)
+	}
+
+	// Handle local paths differently
+	if path == "." || !strings.Contains(path, "://") {
+		gitURL, branch, err := getGitInfo(path)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get git info: %w", err)
+		}
+
+		if c.debug {
+			fmt.Printf("Git URL: %s, Branch: %s\n", gitURL, branch)
+		}
+
+		// Convert git URL to HTTPS URL if needed
+		if strings.HasPrefix(gitURL, "git@") {
+			gitURL = convertGitToHTTPS(gitURL)
+		}
+
+		sources, err := c.ListSources(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("failed to list sources: %w", err)
+		}
+
+		// First try to find an exact match with branch and tools
+		exactBranchPath := fmt.Sprintf("%s/tree/%s", gitURL, branch)
+		var exactMatch *Source
+
+		for _, s := range sources {
+			if s.URL == exactBranchPath {
+				// Get metadata to check for tools
+				metadata, err := c.GetSourceMetadata(ctx, s.UUID)
+				if err != nil {
+					continue
+				}
+
+				if len(metadata.Tools) > 0 {
+					if c.debug {
+						fmt.Printf("Found exact branch match with tools: %s (%s)\n", s.UUID, s.URL)
+					}
+					return metadata, nil
+				}
+				exactMatch = metadata
+			}
+		}
+
+		// If we found an exact match but without tools, keep looking for sources with tools
+		var sourcesWithTools []*Source
+		for _, s := range sources {
+			if strings.Contains(s.URL, gitURL) {
+				metadata, err := c.GetSourceMetadata(ctx, s.UUID)
+				if err != nil {
+					continue
+				}
+				if len(metadata.Tools) > 0 {
+					sourcesWithTools = append(sourcesWithTools, metadata)
+				}
+			}
+		}
+
+		if len(sourcesWithTools) > 0 {
+			// Prefer sources with tools
+			if c.debug {
+				fmt.Printf("Found %d sources with tools for repository %s\n", len(sourcesWithTools), gitURL)
+				for _, s := range sourcesWithTools {
+					fmt.Printf("- %s (%s) with %d tools\n", s.UUID, s.URL, len(s.Tools))
+				}
+			}
+			return sourcesWithTools[0], nil
+		}
+
+		// If we found an exact match earlier, use it
+		if exactMatch != nil {
+			if c.debug {
+				fmt.Printf("Using exact branch match: %s (%s)\n", exactMatch.UUID, exactMatch.URL)
+			}
+			return exactMatch, nil
+		}
+
+		// Create new source with the specific branch
+		path = exactBranchPath
+	}
+
+	// Create new source if none found
+	source, err := c.CreateSource(ctx, path)
+	if err != nil {
 		return nil, err
 	}
 
-	// Add debug logging
-	if c.debug {
-		fmt.Printf("Load source response: %+v\n", source)
-		fmt.Printf("Number of tools: %d\n", len(source.Tools))
-	}
+	return c.GetSourceMetadata(ctx, source.UUID)
+}
 
-	return &source, nil
+// Helper function to get git remote URL and current branch
+func getGitInfo(path string) (string, string, error) {
+	// Get the git remote URL
+	cmd := exec.Command("git", "-C", path, "config", "--get", "remote.origin.url")
+	out, err := cmd.Output()
+	if err != nil {
+		return "", "", fmt.Errorf("failed to get git remote: %w", err)
+	}
+	gitURL := strings.TrimSpace(string(out))
+
+	// Get the current branch
+	cmd = exec.Command("git", "-C", path, "rev-parse", "--abbrev-ref", "HEAD")
+	out, err = cmd.Output()
+	if err != nil {
+		return "", "", fmt.Errorf("failed to get current branch: %w", err)
+	}
+	branch := strings.TrimSpace(string(out))
+
+	return gitURL, branch, nil
+}
+
+// Helper function to convert git@ URL to HTTPS URL
+func convertGitToHTTPS(gitURL string) string {
+	// Convert git@github.com:org/repo.git to https://github.com/org/repo
+	gitURL = strings.TrimPrefix(gitURL, "git@")
+	gitURL = strings.TrimSuffix(gitURL, ".git")
+	gitURL = strings.Replace(gitURL, ":", "/", 1)
+	return "https://" + gitURL
+}
+
+// Add this helper function to normalize GitHub URLs
+func normalizeGitHubURL(url string) string {
+	// Convert github.com URLs to raw.githubusercontent.com
+	if strings.Contains(url, "github.com") && !strings.Contains(url, "raw.githubusercontent.com") {
+		// Replace github.com with raw.githubusercontent.com
+		url = strings.Replace(url, "github.com", "raw.githubusercontent.com", 1)
+		// Remove "blob/" if present
+		url = strings.Replace(url, "/blob/", "/", 1)
+		// Remove "tree/" if present
+		url = strings.Replace(url, "/tree/", "/", 1)
+	}
+	return url
 }
 
 // CreateSource creates a new source from a URL
 func (c *Client) CreateSource(ctx context.Context, url string) (*Source, error) {
-	// First load the source to validate it
-	metadata, err := c.LoadSource(ctx, url)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load source: %w", err)
-	}
-
-	// Create the source
+	// Create the source directly without pre-loading
 	source := Source{
-		URL:  url,
-		Name: metadata.Name,
+		URL: url,
 	}
 
 	data, err := json.Marshal(source)
@@ -174,20 +301,58 @@ func (c *Client) CreateSource(ctx context.Context, url string) (*Source, error) 
 	req.Header.Set("Authorization", "UserKey "+c.cfg.APIKey)
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := c.client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
-	}
-
 	var created Source
-	if err := json.NewDecoder(resp.Body).Decode(&created); err != nil {
+	if err := c.do(req, &created); err != nil {
 		return nil, err
 	}
 
 	return &created, nil
+}
+
+func (c *Client) GetSource(ctx context.Context, uuid string) (*Source, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET",
+		fmt.Sprintf("%s/sources/%s", c.baseURL, uuid), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var source Source
+	if err := c.do(req, &source); err != nil {
+		if c.debug {
+			fmt.Printf("Error fetching source: %v\n", err)
+		}
+		return nil, fmt.Errorf("failed to fetch source: %w", err)
+	}
+
+	return &source, nil
+}
+
+// GetSourceByURL returns a source matching the given URL
+// If multiple sources match, returns an error with the list of matches
+func (c *Client) GetSourceByURL(ctx context.Context, url string) (*Source, error) {
+	sources, err := c.ListSources(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	var matches []*Source
+	for i, s := range sources {
+		if strings.Contains(s.URL, url) {
+			matches = append(matches, &sources[i])
+		}
+	}
+
+	switch len(matches) {
+	case 0:
+		return nil, fmt.Errorf("no sources found matching URL: %s", url)
+	case 1:
+		return matches[0], nil
+	default:
+		var details strings.Builder
+		details.WriteString(fmt.Sprintf("Multiple sources found matching %s:\n", url))
+		for _, s := range matches {
+			details.WriteString(fmt.Sprintf("- %s (%s)\n", s.UUID, s.URL))
+		}
+		return nil, fmt.Errorf(details.String())
+	}
 }
