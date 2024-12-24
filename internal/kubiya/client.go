@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/kubiyabot/cli/internal/config"
@@ -188,7 +189,12 @@ func (c *Client) get(ctx context.Context, path string) (*http.Response, error) {
 
 // Add this helper method for POST requests
 func (c *Client) post(ctx context.Context, path string, payload interface{}) (*http.Response, error) {
-	url := fmt.Sprintf("%s/%s", c.baseURL, path)
+	// Handle paths that already include query parameters
+	baseURL := c.baseURL
+	if !strings.HasSuffix(baseURL, "/") {
+		baseURL += "/"
+	}
+	url := baseURL + strings.TrimPrefix(path, "/")
 
 	var body bytes.Buffer
 	if payload != nil {
@@ -205,14 +211,21 @@ func (c *Client) post(ctx context.Context, path string, payload interface{}) (*h
 	req.Header.Set("Authorization", "UserKey "+c.cfg.APIKey)
 	req.Header.Set("Content-Type", "application/json")
 
+	if c.debug {
+		fmt.Printf("Making POST request to: %s\n", url)
+		fmt.Printf("Payload: %s\n", body.String())
+	}
+
 	resp, err := c.client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to execute request: %w", err)
 	}
 
-	if resp.StatusCode != http.StatusOK {
-		resp.Body.Close()
-		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+	if c.debug && resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body = io.NopCloser(bytes.NewBuffer(body))
+		fmt.Printf("Response Status: %d\n", resp.StatusCode)
+		fmt.Printf("Response Body: %s\n", string(body))
 	}
 
 	return resp, nil
@@ -534,4 +547,37 @@ func (c *Client) TeammateExists(ctx context.Context, nameOrID string) (*Teammate
 	}
 
 	return nil, fmt.Errorf("teammate not found: %s", nameOrID)
+}
+
+// Add the DiscoverSource method to the Client struct
+func (c *Client) DiscoverSource(ctx context.Context, sourceURL string, config map[string]interface{}) (*SourceDiscoveryResponse, error) {
+	// Prepare request body with dynamic config
+	body := struct {
+		DynamicConfig map[string]interface{} `json:"dynamic_config"`
+	}{
+		DynamicConfig: config,
+	}
+
+	// Build the URL with query parameter
+	endpoint := fmt.Sprintf("/sources/load?url=%s", url.QueryEscape(sourceURL))
+
+	// Make request to load endpoint
+	resp, err := c.post(ctx, endpoint, body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to discover source: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Parse response
+	var discovery SourceDiscoveryResponse
+	if err := json.NewDecoder(resp.Body).Decode(&discovery); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	// Check for discovery errors
+	if len(discovery.Errors) > 0 {
+		return &discovery, &discovery
+	}
+
+	return &discovery, nil
 }

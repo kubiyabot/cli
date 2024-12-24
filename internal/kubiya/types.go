@@ -1,6 +1,10 @@
 package kubiya
 
-import "time"
+import (
+	"fmt"
+	"strings"
+	"time"
+)
 
 // Agent represents a Kubiya teammate
 type Agent struct {
@@ -62,36 +66,38 @@ type KubiyaMetadata struct {
 	UserLastUpdated string `json:"user_last_updated"`
 }
 
-// Tool represents a tool within a source
-type Tool struct {
-	UUID        string      `json:"uuid"`
-	Name        string      `json:"name"`
-	Type        string      `json:"type"`
-	Description string      `json:"description"`
-	Content     string      `json:"content"`
-	Image       string      `json:"image"`
-	Env         []string    `json:"env"`
-	Alias       string      `json:"alias"`
-	Args        []ToolArg   `json:"args"`
-	LongRunning bool        `json:"long_running"`
-	Source      ToolSource  `json:"source"`
-	WithFiles   interface{} `json:"with_files"`
-	WithVolumes interface{} `json:"with_volumes"`
-	CreatedAt   string      `json:"created_at"`
-	UpdatedAt   string      `json:"updated_at"`
-	Workflows   interface{} `json:"workflows"`
-}
-
 // ToolArg represents an argument for a tool
 type ToolArg struct {
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	Required    bool   `json:"required"`
+	Name        string      `json:"name"`
+	Type        string      `json:"type"`
+	Required    bool        `json:"required"`
+	Description string      `json:"description"`
+	Default     interface{} `json:"default,omitempty"`
 }
 
-// ToolSource represents the source information for a tool
 type ToolSource struct {
-	ID string `json:"id"`
+	ID  string `json:"id"`
+	URL string `json:"url"`
+}
+
+// Tool represents a tool in a source
+type Tool struct {
+	Name        string     `json:"name"`
+	Source      ToolSource `json:"source"`
+	Alias       string     `json:"alias"`
+	Description string     `json:"description"`
+	Type        string     `json:"type"`
+	Content     string     `json:"content"`
+	Args        []ToolArg  `json:"args"`
+	Env         []string   `json:"env"`
+	WithFiles   []string   `json:"with_files"`
+	WithVolumes []string   `json:"with_volumes"`
+	IconURL     string     `json:"icon_url"`
+	Image       string     `json:"image"`
+	LongRunning bool       `json:"long_running"`
+	Metadata    []string   `json:"metadata"`
+	Secrets     []string   `json:"secrets"`
+	Mermaid     string     `json:"mermaid"`
 }
 
 // ToolMetadata represents metadata for a tool
@@ -280,4 +286,51 @@ type Teammate struct {
 		CreatedAt   string `json:"created_at"`
 		LastUpdated string `json:"last_updated"`
 	} `json:"metadata"`
+}
+
+// SourceError represents an error in source discovery
+type SourceError struct {
+	File    string `json:"file"`
+	Type    string `json:"type"`
+	Error   string `json:"error"`
+	Details string `json:"details"`
+}
+
+// SourceDiscoveryResponse represents the response from source discovery
+type SourceDiscoveryResponse struct {
+	Name   string `json:"name"`
+	Source struct {
+		ID        string `json:"id"`
+		URL       string `json:"url"`
+		Commit    string `json:"commit"`
+		Committer string `json:"committer"`
+		Branch    string `json:"branch"`
+	} `json:"source"`
+	Tools    []Tool        `json:"tools"`
+	Errors   []SourceError `json:"errors"`
+	errorMsg string        // private field to store error message
+}
+
+// Error implements the error interface
+func (s *SourceDiscoveryResponse) Error() string {
+	if s.errorMsg != "" {
+		return s.errorMsg
+	}
+	if len(s.Errors) > 0 {
+		var errMsgs []string
+		for _, e := range s.Errors {
+			msg := fmt.Sprintf("%s in %s: %s", e.Type, e.File, e.Error)
+			if e.Details != "" {
+				msg += "\nDetails: " + e.Details
+			}
+			errMsgs = append(errMsgs, msg)
+		}
+		return fmt.Sprintf("source discovery found errors:\n%s", strings.Join(errMsgs, "\n"))
+	}
+	return "unknown error in source discovery"
+}
+
+// SetError sets the error message
+func (s *SourceDiscoveryResponse) SetError(msg string) {
+	s.errorMsg = msg
 }

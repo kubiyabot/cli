@@ -524,7 +524,12 @@ func newDescribeToolCommand(cfg *config.Config) *cobra.Command {
 	return cmd
 }
 
-func countRequiredArgs(args []kubiya.ToolArg) int {
+func countRequiredArgs(args []struct {
+	Name        string `json:"name"`
+	Type        string `json:"type"`
+	Description string `json:"description"`
+	Required    bool   `json:"required"`
+}) int {
 	count := 0
 	for _, arg := range args {
 		if arg.Required {
@@ -532,4 +537,46 @@ func countRequiredArgs(args []kubiya.ToolArg) int {
 		}
 	}
 	return count
+}
+
+func renderToolArgs(args []struct {
+	Name        string `json:"name"`
+	Type        string `json:"type"`
+	Description string `json:"description"`
+	Required    bool   `json:"required"`
+}) string {
+	var b strings.Builder
+	b.WriteString("Arguments:\n")
+	for _, arg := range args {
+		required := ""
+		if arg.Required {
+			required = " (required)"
+		}
+		b.WriteString(fmt.Sprintf("  %s: %s%s\n", arg.Name, arg.Description, required))
+		if arg.Type != "" {
+			b.WriteString(fmt.Sprintf("    Type: %s\n", arg.Type))
+		}
+	}
+	return b.String()
+}
+
+func formatToolUsage(tool *kubiya.Tool) string {
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("Usage: %s", tool.Name))
+
+	// Add required args
+	for _, arg := range tool.Args {
+		if arg.Required {
+			b.WriteString(fmt.Sprintf(" <%s>", arg.Name))
+		}
+	}
+
+	// Add optional args
+	for _, arg := range tool.Args {
+		if !arg.Required {
+			b.WriteString(fmt.Sprintf(" [%s]", arg.Name))
+		}
+	}
+
+	return b.String()
 }
