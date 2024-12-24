@@ -334,3 +334,12 @@ func (s *SourceDiscoveryResponse) Error() string {
 func (s *SourceDiscoveryResponse) SetError(msg string) {
 	s.errorMsg = msg
 }
+
+// SyncOptions represents options for syncing a source
+type SyncOptions struct {
+	Mode       string `json:"mode,omitempty"`
+	Branch     string `json:"branch,omitempty"`
+	Force      bool   `json:"force,omitempty"`
+	AutoCommit bool   `json:"auto_commit,omitempty"`
+	NoDiff     bool   `json:"no_diff,omitempty"`
+}

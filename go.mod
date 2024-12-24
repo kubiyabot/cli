@@ -9,7 +9,7 @@ require (
 	github.com/charmbracelet/bubbletea v1.1.0
 	github.com/charmbracelet/lipgloss v0.13.0
 	github.com/mattn/go-isatty v0.0.20
-	github.com/spf13/cobra v1.8.1
+	github.com/spf13/cobra v1.8.0
 	k8s.io/api v0.31.3
 	k8s.io/apimachinery v0.31.3
 	k8s.io/client-go v0.31.3
