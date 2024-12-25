@@ -550,7 +550,7 @@ func (c *Client) TeammateExists(ctx context.Context, nameOrID string) (*Teammate
 }
 
 // Add the DiscoverSource method to the Client struct
-func (c *Client) DiscoverSource(ctx context.Context, sourceURL string, config map[string]interface{}) (*SourceDiscoveryResponse, error) {
+func (c *Client) DiscoverSource(ctx context.Context, sourceURL string, config map[string]interface{}, runnerName string) (*SourceDiscoveryResponse, error) {
 	// Prepare request body with dynamic config
 	body := struct {
 		DynamicConfig map[string]interface{} `json:"dynamic_config"`
@@ -560,6 +560,9 @@ func (c *Client) DiscoverSource(ctx context.Context, sourceURL string, config ma
 
 	// Build the URL with query parameter
 	endpoint := fmt.Sprintf("/sources/load?url=%s", url.QueryEscape(sourceURL))
+	if runnerName != "" {
+		endpoint += fmt.Sprintf("&runner=%s", runnerName)
+	}
 
 	// Make request to load endpoint
 	resp, err := c.post(ctx, endpoint, body)
@@ -583,7 +586,7 @@ func (c *Client) DiscoverSource(ctx context.Context, sourceURL string, config ma
 }
 
 // SyncSource syncs a source with the given options
-func (c *Client) SyncSource(ctx context.Context, sourceID string, opts SyncOptions) (*Source, error) {
+func (c *Client) SyncSource(ctx context.Context, sourceID string, opts SyncOptions, runnerName string) (*Source, error) {
 	// Build request body with sync options
 	body := struct {
 		Mode       string `json:"mode,omitempty"`
@@ -599,8 +602,12 @@ func (c *Client) SyncSource(ctx context.Context, sourceID string, opts SyncOptio
 		NoDiff:     opts.NoDiff,
 	}
 
+	url := fmt.Sprintf("/sources/%s/sync", sourceID)
+	if runnerName != "" {
+		url += fmt.Sprintf("?runner=%s", runnerName)
+	}
 	// Make request to sync endpoint
-	resp, err := c.post(ctx, fmt.Sprintf("/sources/%s/sync", sourceID), body)
+	resp, err := c.post(ctx, url, body)
 	if err != nil {
 		return nil, err
 	}
