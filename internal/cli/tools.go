@@ -524,21 +524,6 @@ func newDescribeToolCommand(cfg *config.Config) *cobra.Command {
 	return cmd
 }
 
-func countRequiredArgs(args []struct {
-	Name        string `json:"name"`
-	Type        string `json:"type"`
-	Description string `json:"description"`
-	Required    bool   `json:"required"`
-}) int {
-	count := 0
-	for _, arg := range args {
-		if arg.Required {
-			count++
-		}
-	}
-	return count
-}
-
 func renderToolArgs(args []struct {
 	Name        string `json:"name"`
 	Type        string `json:"type"`
