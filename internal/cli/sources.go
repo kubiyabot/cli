@@ -12,6 +12,7 @@ import (
 	"github.com/kubiyabot/cli/internal/config"
 	"github.com/kubiyabot/cli/internal/kubiya"
 	"github.com/kubiyabot/cli/internal/style"
+	"github.com/kubiyabot/cli/internal/util"
 	"github.com/spf13/cobra"
 )
 
@@ -105,54 +106,50 @@ func newScanSourceCommand(cfg *config.Config) *cobra.Command {
 		outputFormat  string
 		dynamicConfig string
 		local         bool
+		repo          string
+		branch        string
+		path          string
+		remote        string
+		force         bool
+		push          bool
+		commitMsg     string
+		addAll        bool
+		runnerName    string
 	)
-
-	// Helper function to count required arguments
-	countRequiredArgs := func(args []kubiya.ToolArg) int {
-		count := 0
-		for _, arg := range args {
-			if arg.Required {
-				count++
-			}
-		}
-		return count
-	}
 
 	cmd := &cobra.Command{
 		Use:   "scan [url|path]",
 		Short: "🔍 Scan a source URL or local directory for available tools",
-		Example: `  # Scan a source URL
-  kubiya source scan https://github.com/org/repo
+		Example: `  # Scan current directory (uses current branch)
+  kubiya source scan .
 
-  # Scan current directory
-  kubiya source scan . --local
+  # Scan with specific runner
+  kubiya source scan . --runner enforcer
 
-  # Scan with dynamic configuration
-  kubiya source scan https://github.com/org/repo --config config.json
+  # Scan and automatically stage, commit and push changes
+  kubiya source scan . --add --push --commit-msg "feat: update tools"
 
-  # Interactive scan
-  kubiya source scan --interactive`,
+  # Stage specific files and push
+  kubiya source scan . --add "tools/*,README.md" --push`,
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			client := kubiya.NewClient(cfg)
+			sourceURL := ""
 
-			if interactive {
-				fmt.Printf("\n%s\n", style.TitleStyle.Render("🔍 Interactive Source Scan"))
-				fmt.Printf("\nEnter source URL or path (. for current directory): ")
-				var input string
-				if _, err := fmt.Scanln(&input); err != nil {
-					return fmt.Errorf("failed to read input: %w", err)
+			// Handle different input methods
+			if len(args) > 0 {
+				sourceURL = args[0]
+			} else if repo != "" {
+				sourceURL = fmt.Sprintf("https://github.com/%s", repo)
+				if branch != "" {
+					sourceURL = fmt.Sprintf("%s/tree/%s", sourceURL, branch)
 				}
-				args = []string{strings.TrimSpace(input)}
+				if path != "" {
+					sourceURL = fmt.Sprintf("%s/%s", sourceURL, path)
+				}
 			}
 
-			if len(args) == 0 {
-				return fmt.Errorf("source URL or path is required")
-			}
-
-			sourceURL := args[0]
-
-			// Handle local paths
+			// Handle local directory scanning
 			if sourceURL == "." || strings.HasPrefix(sourceURL, "./") || strings.HasPrefix(sourceURL, "/") {
 				local = true
 			}
@@ -160,9 +157,43 @@ func newScanSourceCommand(cfg *config.Config) *cobra.Command {
 			if local {
 				fmt.Printf("\n%s\n", style.SubtitleStyle.Render("📂 Local Directory Scan"))
 
-				// Get git remote URL
-				var err error
-				sourceURL, err = getGitRemoteURL(sourceURL)
+				// Check Git status before proceeding
+				status, err := getGitStatus(sourceURL)
+				if err != nil {
+					return err
+				}
+
+				if status.HasChanges() {
+					fmt.Printf("\n%s\n", style.WarningStyle.Render("⚠️ Uncommitted Changes"))
+					if len(status.Unstaged) > 0 {
+						fmt.Printf("\nUnstaged changes:\n")
+						for _, file := range status.Unstaged {
+							fmt.Printf("  • %s\n", file)
+						}
+					}
+					if len(status.Staged) > 0 {
+						fmt.Printf("\nStaged changes:\n")
+						for _, file := range status.Staged {
+							fmt.Printf("  • %s\n", file)
+						}
+					}
+
+					// Handle changes based on flags
+					if addAll || push {
+						if err := handleGitChanges(sourceURL, status, addAll, push, commitMsg); err != nil {
+							return err
+						}
+					} else {
+						fmt.Printf("\n%s\n", style.SubtitleStyle.Render("Available Actions:"))
+						fmt.Println("• Stage and commit changes: --add --commit-msg \"your message\"")
+						fmt.Println("• Push to remote: --push")
+						fmt.Println("• Continue without committing: --force")
+						return fmt.Errorf("uncommitted changes found")
+					}
+				}
+
+				// Get git info with enhanced options
+				gitInfo, err := getGitInfo(sourceURL, remote, branch, force)
 				if err != nil {
 					fmt.Printf("%s\n", style.ErrorStyle.Render(err.Error()))
 					fmt.Printf("\n%s\n", style.SubtitleStyle.Render("Common Solutions:"))
@@ -171,7 +202,23 @@ func newScanSourceCommand(cfg *config.Config) *cobra.Command {
 					fmt.Println("• Push your changes to the remote repository")
 					return nil
 				}
-				fmt.Printf("Found repository: %s\n\n", style.HighlightStyle.Render(sourceURL))
+
+				// Show git info
+				fmt.Printf("Repository: %s\n", style.HighlightStyle.Render(gitInfo.RepoURL))
+				if gitInfo.Remote != "origin" {
+					fmt.Printf("Remote: %s\n", gitInfo.Remote)
+				}
+				fmt.Printf("Branch: %s", gitInfo.Branch)
+				if gitInfo.IsCurrentBranch {
+					fmt.Printf(" (current)")
+				}
+				fmt.Println()
+				if gitInfo.RelativePath != "" {
+					fmt.Printf("Path: %s\n", gitInfo.RelativePath)
+				}
+				fmt.Println()
+
+				sourceURL = gitInfo.FullURL
 			}
 
 			// Handle dynamic configuration
@@ -190,8 +237,16 @@ func newScanSourceCommand(cfg *config.Config) *cobra.Command {
 				style.TitleStyle.Render("🔍 Scanning Source:"),
 				style.HighlightStyle.Render(sourceURL))
 
+			// Show runner info or warning
+			if runnerName != "" {
+				fmt.Printf("Runner: %s\n\n", style.HighlightStyle.Render(runnerName))
+			} else {
+				fmt.Printf("%s No runner specified - using default runner\n\n",
+					style.WarningStyle.Render("⚠️"))
+			}
+
 			// Use the discovery API endpoint instead of LoadSource
-			discovered, err := client.DiscoverSource(cmd.Context(), sourceURL, dynConfig)
+			discovered, err := client.DiscoverSource(cmd.Context(), sourceURL, dynConfig, runnerName)
 			if err != nil {
 				if discovery, ok := err.(*kubiya.SourceDiscoveryResponse); ok && len(discovery.Errors) > 0 {
 					// Show a clean error output with source context
@@ -246,8 +301,8 @@ func newScanSourceCommand(cfg *config.Config) *cobra.Command {
 						}
 						if len(tool.Args) > 0 {
 							fmt.Printf("  Arguments: %d required, %d optional\n",
-								countRequiredArgs(tool.Args),
-								len(tool.Args)-countRequiredArgs(tool.Args))
+								util.CountRequiredArgs(tool.Args),
+								len(tool.Args)-util.CountRequiredArgs(tool.Args))
 						}
 					}
 
@@ -257,6 +312,9 @@ func newScanSourceCommand(cfg *config.Config) *cobra.Command {
 					if dynamicConfig != "" {
 						addCmd += fmt.Sprintf(" --config %s", dynamicConfig)
 					}
+					if runnerName != "" {
+						addCmd += fmt.Sprintf(" --runner %s", runnerName)
+					}
 					fmt.Printf("%s\n", style.CommandStyle.Render(addCmd))
 				} else {
 					fmt.Printf("\n%s No tools found in source\n",
@@ -265,6 +323,7 @@ func newScanSourceCommand(cfg *config.Config) *cobra.Command {
 					fmt.Println("• The source doesn't contain any tool definitions")
 					fmt.Println("• Tools are in a different branch or directory")
 					fmt.Println("• Tool definitions might be invalid")
+					fmt.Println("• Runner might not support the tool format")
 
 					// Show directory contents if local
 					if local {
@@ -281,78 +340,115 @@ func newScanSourceCommand(cfg *config.Config) *cobra.Command {
 		},
 	}
 
-	cmd.Flags().BoolVarP(&interactive, "interactive", "i", false, "Interactive mode")
-	cmd.Flags().StringVarP(&outputFormat, "output", "o", "text", "Output format (text|json)")
+	// Add flags
+	cmd.Flags().StringVarP(&repo, "repo", "r", "", "Repository name (org/repo format)")
+	cmd.Flags().StringVarP(&branch, "branch", "b", "", "Branch name")
+	cmd.Flags().StringVarP(&path, "path", "p", "", "Path within repository")
+	cmd.Flags().StringVar(&remote, "remote", "origin", "Git remote to use")
+	cmd.Flags().BoolVarP(&force, "force", "f", false, "Force branch switch for local repositories")
 	cmd.Flags().StringVarP(&dynamicConfig, "config", "c", "", "Dynamic configuration file (JSON)")
-	cmd.Flags().BoolVarP(&local, "local", "l", false, "Scan local directory")
+	cmd.Flags().StringVarP(&outputFormat, "output", "o", "text", "Output format (text|json)")
+	cmd.Flags().BoolVarP(&interactive, "interactive", "i", false, "Interactive mode")
+	cmd.Flags().BoolVar(&push, "push", false, "Push changes to remote")
+	cmd.Flags().StringVar(&commitMsg, "commit-msg", "", "Commit message for local changes")
+	cmd.Flags().BoolVar(&addAll, "add", false, "Stage all changes")
+	cmd.Flags().StringVar(&runnerName, "runner", "", "Runner name to use for loading the source")
 
 	return cmd
 }
 
-// Enhanced getGitRemoteURL function
-func getGitRemoteURL(path string) (string, error) {
+// GitInfo holds information about a Git repository
+type GitInfo struct {
+	RepoURL         string
+	Branch          string
+	Remote          string
+	RelativePath    string
+	FullURL         string
+	IsCurrentBranch bool
+}
+
+// getGitInfo gets Git repository information with enhanced options
+func getGitInfo(path, remote, targetBranch string, force bool) (*GitInfo, error) {
 	// Convert to absolute path
 	absPath, err := filepath.Abs(path)
 	if err != nil {
-		return "", fmt.Errorf("failed to resolve path: %w", err)
+		return nil, fmt.Errorf("failed to resolve path: %w", err)
 	}
 
-	// Check if path exists
-	if _, err := os.Stat(absPath); os.IsNotExist(err) {
-		return "", fmt.Errorf("path does not exist: %s", absPath)
-	}
-
-	// Run git commands to verify repo and get remote URL
-	gitDir := absPath
-	if !isGitRepo(gitDir) {
-		// Try to find git root directory
-		gitDir, err = findGitRoot(absPath)
-		if err != nil {
-			return "", fmt.Errorf("not a git repository: %s", absPath)
-		}
+	// Find git root
+	gitRoot, err := findGitRoot(absPath)
+	if err != nil {
+		return nil, err
 	}
 
 	// Get remote URL
-	cmd := exec.Command("git", "-C", gitDir, "remote", "get-url", "origin")
-	out, err := cmd.Output()
+	remoteURL, err := getRemoteURL(gitRoot, remote)
 	if err != nil {
-		return "", fmt.Errorf("no remote URL found (try: git remote add origin <url>)")
+		return nil, err
+	}
+
+	// Get current branch
+	currentBranch, err := getCurrentBranch(gitRoot)
+	if err != nil {
+		return nil, err
+	}
+
+	// Determine branch to use
+	branch := currentBranch
+	isCurrentBranch := true
+	if targetBranch != "" {
+		if currentBranch != targetBranch {
+			if !force {
+				return nil, fmt.Errorf("current branch is '%s', use --force to switch to '%s'", currentBranch, targetBranch)
+			}
+			isCurrentBranch = false
+		}
+		branch = targetBranch
+	}
+
+	// Get relative path if we're in a subdirectory
+	var relativePath string
+	if gitRoot != absPath {
+		relativePath, err = filepath.Rel(gitRoot, absPath)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// Clean and format the URL
-	url := strings.TrimSpace(string(out))
-	url = strings.TrimSuffix(url, ".git")
-
-	// If path is different from git root, append the relative path
-	if gitDir != absPath {
-		relPath, err := filepath.Rel(gitDir, absPath)
-		if err == nil && relPath != "." {
-			url = fmt.Sprintf("%s/tree/master/%s", url, relPath)
-		}
+	repoURL := strings.TrimSuffix(remoteURL, ".git")
+	fullURL := fmt.Sprintf("%s/tree/%s", repoURL, branch)
+	if relativePath != "" {
+		fullURL = fmt.Sprintf("%s/%s", fullURL, relativePath)
 	}
 
-	return url, nil
+	return &GitInfo{
+		RepoURL:         repoURL,
+		Branch:          branch,
+		Remote:          remote,
+		RelativePath:    relativePath,
+		FullURL:         fullURL,
+		IsCurrentBranch: isCurrentBranch,
+	}, nil
 }
 
-// Helper function to check if directory is a git repo
-func isGitRepo(dir string) bool {
-	_, err := os.Stat(filepath.Join(dir, ".git"))
-	return err == nil
-}
-
-// Helper function to find git root directory
-func findGitRoot(start string) (string, error) {
-	dir := start
-	for {
-		if isGitRepo(dir) {
-			return dir, nil
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			return "", fmt.Errorf("no git repository found")
-		}
-		dir = parent
+// Helper functions for Git operations
+func getCurrentBranch(gitDir string) (string, error) {
+	cmd := exec.Command("git", "-C", gitDir, "rev-parse", "--abbrev-ref", "HEAD")
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("failed to get current branch: %w", err)
 	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+func getRemoteURL(gitDir, remote string) (string, error) {
+	cmd := exec.Command("git", "-C", gitDir, "remote", "get-url", remote)
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("remote '%s' not found (try: git remote add %s <url>)", remote, remote)
+	}
+	return strings.TrimSpace(string(out)), nil
 }
 
 func newAddSourceCommand(cfg *config.Config) *cobra.Command {
@@ -441,17 +537,6 @@ func newAddSourceCommand(cfg *config.Config) *cobra.Command {
 func newDescribeSourceCommand(cfg *config.Config) *cobra.Command {
 	var outputFormat string
 
-	// Helper function to count required arguments
-	countRequiredArgs := func(args []kubiya.ToolArg) int {
-		count := 0
-		for _, arg := range args {
-			if arg.Required {
-				count++
-			}
-		}
-		return count
-	}
-
 	cmd := &cobra.Command{
 		Use:   "describe [uuid]",
 		Short: "📖 Show detailed information about a source",
@@ -487,8 +572,8 @@ func newDescribeSourceCommand(cfg *config.Config) *cobra.Command {
 						}
 						if len(tool.Args) > 0 {
 							fmt.Printf("  Arguments: %d required, %d optional\n",
-								countRequiredArgs(tool.Args),
-								len(tool.Args)-countRequiredArgs(tool.Args))
+								util.CountRequiredArgs(tool.Args),
+								len(tool.Args)-util.CountRequiredArgs(tool.Args))
 						}
 					}
 				}
@@ -637,4 +722,120 @@ func newSyncSourceCommand(cfg *config.Config) *cobra.Command {
 	cmd.Flags().BoolVar(&noDiff, "no-diff", false, "Skip showing diffs")
 
 	return cmd
+}
+
+// Helper function to find git root directory
+func findGitRoot(start string) (string, error) {
+	dir := start
+	for {
+		if isGitRepo(dir) {
+			return dir, nil
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return "", fmt.Errorf("no git repository found")
+		}
+		dir = parent
+	}
+}
+
+// Helper function to check if directory is a git repo
+func isGitRepo(dir string) bool {
+	_, err := os.Stat(filepath.Join(dir, ".git"))
+	return err == nil
+}
+
+// GitStatus represents the state of the Git repository
+type GitStatus struct {
+	Unstaged []string
+	Staged   []string
+}
+
+func (s *GitStatus) HasChanges() bool {
+	return len(s.Unstaged) > 0 || len(s.Staged) > 0
+}
+
+// getGitStatus checks the Git status of the repository
+func getGitStatus(path string) (*GitStatus, error) {
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve path: %w", err)
+	}
+
+	gitRoot, err := findGitRoot(absPath)
+	if err != nil {
+		return nil, err
+	}
+
+	// Get unstaged changes
+	cmd := exec.Command("git", "-C", gitRoot, "diff", "--name-only")
+	unstaged, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get unstaged changes: %w", err)
+	}
+
+	// Get staged changes
+	cmd = exec.Command("git", "-C", gitRoot, "diff", "--cached", "--name-only")
+	staged, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get staged changes: %w", err)
+	}
+
+	status := &GitStatus{
+		Unstaged: parseGitFiles(string(unstaged)),
+		Staged:   parseGitFiles(string(staged)),
+	}
+
+	return status, nil
+}
+
+// handleGitChanges manages Git operations based on flags
+func handleGitChanges(path string, status *GitStatus, add, push bool, commitMsg string) error {
+	gitRoot, err := findGitRoot(path)
+	if err != nil {
+		return err
+	}
+
+	if add {
+		fmt.Printf("\n%s\n", style.SubtitleStyle.Render("📝 Staging Changes"))
+		cmd := exec.Command("git", "-C", gitRoot, "add", ".")
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("failed to stage changes: %w", err)
+		}
+		fmt.Printf("%s Changes staged\n", style.SuccessStyle.Render("✓"))
+	}
+
+	if commitMsg != "" {
+		fmt.Printf("\n%s\n", style.SubtitleStyle.Render("💾 Committing Changes"))
+		cmd := exec.Command("git", "-C", gitRoot, "commit", "-m", commitMsg)
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("failed to commit changes: %w", err)
+		}
+		fmt.Printf("%s Changes committed\n", style.SuccessStyle.Render("✓"))
+	}
+
+	if push {
+		if commitMsg == "" {
+			return fmt.Errorf("commit message required when pushing (use --commit-msg)")
+		}
+		fmt.Printf("\n%s\n", style.SubtitleStyle.Render("🚀 Pushing Changes"))
+		cmd := exec.Command("git", "-C", gitRoot, "push")
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("failed to push changes: %w", err)
+		}
+		fmt.Printf("%s Changes pushed to remote\n", style.SuccessStyle.Render("✓"))
+	}
+
+	return nil
+}
+
+// parseGitFiles converts Git command output to string slice
+func parseGitFiles(output string) []string {
+	var files []string
+	for _, file := range strings.Split(strings.TrimSpace(output), "\n") {
+		if file != "" {
+			files = append(files, file)
+		}
+	}
+	return files
 }

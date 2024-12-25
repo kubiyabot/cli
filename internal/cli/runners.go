@@ -15,7 +15,7 @@ import (
 func newRunnersCommand(cfg *config.Config) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "runner",
-		Aliases: []string{"runners"},
+		Aliases: []string{"runners", "r"},
 		Short:   "🏃 Manage runners",
 		Long:    `Work with Kubiya runners - list and manage your runners.`,
 	}
@@ -33,8 +33,9 @@ func newListRunnersCommand(cfg *config.Config) *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:     "list",
+		Aliases: []string{"ls", "l"},
 		Short:   "📋 List all runners",
-		Example: "  kubiya runner list\n  kubiya runner list --output json",
+		Example: "  kubiya runner list\n  kubiya runner ls --output json",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			client := kubiya.NewClient(cfg)
 			runners, err := client.ListRunners(cmd.Context())
@@ -68,13 +69,13 @@ func newListRunnersCommand(cfg *config.Config) *cobra.Command {
 			case "text":
 				w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 				fmt.Fprintln(w, "🏃 RUNNERS")
-				fmt.Fprintln(w, "NAME\tTYPE\tNAMESPACE\tSTATUS\tHEALTH")
-				for _, r := range runners {
-					fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
+				fmt.Fprintln(w, "NAME\tTYPE\tVERSION\tNAMESPACE\tSTATUS\tHEALTH")
+				for _, r := range validRunners {
+					fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n",
 						r.Name,
 						r.RunnerType,
 						r.Version,
-						r.Namespace,
+						r.KubernetesNamespace,
 						r.RunnerHealth.Status,
 						r.RunnerHealth.Health,
 					)
@@ -98,10 +99,14 @@ func newGetRunnerManifestCommand(cfg *config.Config) *cobra.Command {
 	)
 
 	cmd := &cobra.Command{
-		Use:   "manifest [runner-name]",
-		Short: "📜 Get runner's Kubernetes manifest",
+		Use:     "manifest [runner-name]",
+		Aliases: []string{"m", "man"},
+		Short:   "📜 Get runner's Kubernetes manifest",
 		Example: `  # Save manifest to file
   kubiya runner manifest my-runner -o manifest.yaml
+  
+  # Short form
+  kubiya r m my-runner -o manifest.yaml
 
   # Apply manifest directly to current kubectl context
   kubiya runner manifest my-runner --apply
