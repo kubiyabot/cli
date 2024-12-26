@@ -23,6 +23,8 @@ const (
 	SyncModeCI             = "ci"
 )
 
+var runnerName string
+
 // Keep the sync context type
 type SyncContext struct {
 	RequiresBranchSwitch  bool
@@ -53,6 +55,7 @@ Sources contain the tools and capabilities that your teammates can use.`,
 		newSyncSourceCommand(cfg),
 	)
 
+	cmd.PersistentFlags().StringVarP(&runnerName, "runner", "r", "", "Runner name")
 	return cmd
 }
 
@@ -623,7 +626,7 @@ func newDeleteSourceCommand(cfg *config.Config) *cobra.Command {
 				}
 			}
 
-			if err := client.DeleteSource(cmd.Context(), args[0]); err != nil {
+			if err := client.DeleteSource(cmd.Context(), args[0], runnerName); err != nil {
 				fmt.Printf("\n%s\n", style.ErrorStyle.Render("❌ Failed to delete source:"))
 				fmt.Printf("%s\n", style.ErrorStyle.Render(err.Error()))
 				return err
@@ -685,7 +688,7 @@ func newSyncSourceCommand(cfg *config.Config) *cobra.Command {
 			fmt.Printf("URL: %s\n", source.URL)
 
 			// Call sync endpoint with options
-			synced, err := client.SyncSource(cmd.Context(), args[0], opts)
+			synced, err := client.SyncSource(cmd.Context(), args[0], opts, runnerName)
 			if err != nil {
 				if strings.Contains(err.Error(), "404") {
 					fmt.Printf("\n%s\n", style.ErrorStyle.Render("❌ Source not found"))

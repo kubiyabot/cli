@@ -84,8 +84,12 @@ func (c *Client) GetSourceMetadata(ctx context.Context, uuid string) (*Source, e
 	return source, nil
 }
 
-func (c *Client) DeleteSource(ctx context.Context, sourceUUID string) error {
-	resp, err := c.delete(ctx, fmt.Sprintf("/sources/%s", sourceUUID))
+func (c *Client) DeleteSource(ctx context.Context, sourceUUID string, runnerName string) error {
+	url := fmt.Sprintf("/sources/%s", sourceUUID)
+	if runnerName != "" {
+		url = url + "?runner=" + runnerName
+	}
+	resp, err := c.delete(ctx, url)
 	if err != nil {
 		return err
 	}
@@ -96,6 +100,7 @@ func (c *Client) DeleteSource(ctx context.Context, sourceUUID string) error {
 // Helper method for DELETE requests
 func (c *Client) delete(ctx context.Context, path string) (*http.Response, error) {
 	url := fmt.Sprintf("%s%s", c.baseURL, path)
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)

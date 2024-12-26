@@ -574,7 +574,7 @@ func (c *Client) DiscoverSource(ctx context.Context, sourceURL string, config ma
 	// Build the URL with query parameters for both source URL and runner name
 	endpoint := fmt.Sprintf("/sources/load?url=%s", url.QueryEscape(sourceURL))
 	if runnerName != "" {
-		endpoint = fmt.Sprintf("%s&runner=%s", endpoint, url.QueryEscape(runnerName))
+		endpoint += fmt.Sprintf("&runner=%s", runnerName)
 	}
 
 	// Make request to load endpoint
@@ -599,7 +599,7 @@ func (c *Client) DiscoverSource(ctx context.Context, sourceURL string, config ma
 }
 
 // SyncSource syncs a source with the given options
-func (c *Client) SyncSource(ctx context.Context, sourceID string, opts SyncOptions) (*Source, error) {
+func (c *Client) SyncSource(ctx context.Context, sourceID string, opts SyncOptions, runnerName string) (*Source, error) {
 	// Build request body with sync options
 	body := struct {
 		Mode       string `json:"mode,omitempty"`
@@ -615,8 +615,12 @@ func (c *Client) SyncSource(ctx context.Context, sourceID string, opts SyncOptio
 		NoDiff:     opts.NoDiff,
 	}
 
+	url := fmt.Sprintf("/sources/%s/sync", sourceID)
+	if runnerName != "" {
+		url += fmt.Sprintf("?runner=%s", runnerName)
+	}
 	// Make request to sync endpoint
-	resp, err := c.post(ctx, fmt.Sprintf("/sources/%s/sync", sourceID), body)
+	resp, err := c.post(ctx, url, body)
 	if err != nil {
 		return nil, err
 	}
