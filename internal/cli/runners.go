@@ -15,7 +15,7 @@ import (
 func newRunnersCommand(cfg *config.Config) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "runner",
-		Aliases: []string{"runners"},
+		Aliases: []string{"runners", "r"},
 		Short:   "🏃 Manage runners",
 		Long:    `Work with Kubiya runners - list and manage your runners.`,
 	}
@@ -29,12 +29,16 @@ func newRunnersCommand(cfg *config.Config) *cobra.Command {
 }
 
 func newListRunnersCommand(cfg *config.Config) *cobra.Command {
-	var outputFormat string
+	var (
+		outputFormat string
+		debug        bool
+	)
 
 	cmd := &cobra.Command{
 		Use:     "list",
+		Aliases: []string{"ls", "l"},
 		Short:   "📋 List all runners",
-		Example: "  kubiya runner list\n  kubiya runner list --output json",
+		Example: "  kubiya runner list\n  kubiya runner ls --output json",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			client := kubiya.NewClient(cfg)
 			runners, err := client.ListRunners(cmd.Context())
@@ -42,41 +46,85 @@ func newListRunnersCommand(cfg *config.Config) *cobra.Command {
 				return err
 			}
 
-			// Filter out v1 runners and add warning
-			var v1Runners []string
-			validRunners := make([]kubiya.Runner, 0, len(runners))
-			for _, r := range runners {
-				if r.Version == "v1" {
-					v1Runners = append(v1Runners, r.Name)
-				} else {
-					validRunners = append(validRunners, r)
+			if debug {
+				fmt.Printf("Debug: Found %d runners\n", len(runners))
+				for i, r := range runners {
+					fmt.Printf("Runner %d:\n", i+1)
+					fmt.Printf("  Name: %q\n", r.Name)
+					fmt.Printf("  Type: %q\n", r.RunnerType)
+					fmt.Printf("  Version: %q\n", r.Version)
+					fmt.Printf("  Namespace: %q\n", r.Namespace)
+					fmt.Printf("  Health Status: %q\n", r.RunnerHealth.Status)
+					fmt.Printf("  Health: %q\n", r.RunnerHealth.Health)
+					fmt.Printf("  Error: %q\n", r.RunnerHealth.Error)
 				}
-			}
-
-			// Show warning for v1 runners if any found
-			if len(v1Runners) > 0 {
-				fmt.Fprintf(os.Stderr, "⚠️  Warning: The following runners are using deprecated v1 version:\n")
-				for _, name := range v1Runners {
-					fmt.Fprintf(os.Stderr, "   - %s\n", name)
-				}
-				fmt.Fprintf(os.Stderr, "Please upgrade these runners to the latest version.\n\n")
+				fmt.Println()
 			}
 
 			switch outputFormat {
 			case "json":
-				return json.NewEncoder(os.Stdout).Encode(validRunners)
+				return json.NewEncoder(os.Stdout).Encode(runners)
 			case "text":
 				w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 				fmt.Fprintln(w, "🏃 RUNNERS")
-				fmt.Fprintln(w, "NAME\tTYPE\tNAMESPACE\tSTATUS\tHEALTH")
+				fmt.Fprintln(w, "NAME\tTYPE\tVERSION\tNAMESPACE\tSTATUS\tHEALTH")
+
+				if len(runners) == 0 {
+					fmt.Fprintln(w, "No runners found")
+					return w.Flush()
+				}
+
 				for _, r := range runners {
-					fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
-						r.Name,
-						r.RunnerType,
-						r.Version,
-						r.Namespace,
-						r.RunnerHealth.Status,
-						r.RunnerHealth.Health,
+					// Handle empty fields with appropriate placeholders
+					name := r.Name
+					if name == "" {
+						name = "-"
+					}
+
+					runnerType := r.RunnerType
+					if runnerType == "" {
+						runnerType = "-"
+					}
+
+					version := "v2"
+					if r.Version == "0" || r.Version == "" {
+						version = "v1"
+					}
+
+					namespace := r.Namespace
+					if namespace == "" {
+						namespace = "-"
+					}
+
+					status := r.RunnerHealth.Status
+					if status == "" {
+						if r.RunnerHealth.Error != "" {
+							status = "error"
+						} else {
+							status = "unknown"
+						}
+					}
+
+					var health string
+					if r.RunnerHealth.Error != "" {
+						health = "❌ " + r.RunnerHealth.Error
+					} else if r.RunnerHealth.Health == "true" {
+						health = "✅ healthy"
+					} else if r.RunnerHealth.Health == "false" {
+						health = "❌ unhealthy"
+					} else if r.RunnerHealth.Status == "non-responsive" {
+						health = "❌ non-responsive"
+					} else {
+						health = "unknown"
+					}
+
+					fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n",
+						name,
+						runnerType,
+						version,
+						namespace,
+						status,
+						health,
 					)
 				}
 				return w.Flush()
@@ -87,6 +135,7 @@ func newListRunnersCommand(cfg *config.Config) *cobra.Command {
 	}
 
 	cmd.Flags().StringVarP(&outputFormat, "output", "o", "text", "Output format (text|json)")
+	cmd.Flags().BoolVarP(&debug, "debug", "d", false, "Show debug information")
 	return cmd
 }
 
@@ -98,10 +147,14 @@ func newGetRunnerManifestCommand(cfg *config.Config) *cobra.Command {
 	)
 
 	cmd := &cobra.Command{
-		Use:   "manifest [runner-name]",
-		Short: "📜 Get runner's Kubernetes manifest",
+		Use:     "manifest [runner-name]",
+		Aliases: []string{"m", "man"},
+		Short:   "📜 Get runner's Kubernetes manifest",
 		Example: `  # Save manifest to file
   kubiya runner manifest my-runner -o manifest.yaml
+  
+  # Short form
+  kubiya r m my-runner -o manifest.yaml
 
   # Apply manifest directly to current kubectl context
   kubiya runner manifest my-runner --apply
