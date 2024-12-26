@@ -382,9 +382,22 @@ func (c *Client) ListRunners(ctx context.Context) ([]Runner, error) {
 	}
 	defer resp.Body.Close()
 
+	// First try to decode as array
 	var runners []Runner
 	if err := json.NewDecoder(resp.Body).Decode(&runners); err != nil {
-		return nil, fmt.Errorf("failed to decode runners response: %w", err)
+		// If array decode fails, try decoding as single object
+		resp.Body.Close()
+		resp, err = c.get(ctx, "/runners")
+		if err != nil {
+			return nil, fmt.Errorf("failed to list runners: %w", err)
+		}
+		defer resp.Body.Close()
+
+		var runner Runner
+		if err := json.NewDecoder(resp.Body).Decode(&runner); err != nil {
+			return nil, fmt.Errorf("failed to decode runners response: %w", err)
+		}
+		runners = []Runner{runner}
 	}
 
 	// Convert version numbers to strings for consistency
@@ -551,14 +564,14 @@ func (c *Client) TeammateExists(ctx context.Context, nameOrID string) (*Teammate
 
 // Add the DiscoverSource method to the Client struct
 func (c *Client) DiscoverSource(ctx context.Context, sourceURL string, config map[string]interface{}, runnerName string) (*SourceDiscoveryResponse, error) {
-	// Prepare request body with dynamic config
+	// Prepare request body with dynamic config only
 	body := struct {
 		DynamicConfig map[string]interface{} `json:"dynamic_config"`
 	}{
 		DynamicConfig: config,
 	}
 
-	// Build the URL with query parameter
+	// Build the URL with query parameters for both source URL and runner name
 	endpoint := fmt.Sprintf("/sources/load?url=%s", url.QueryEscape(sourceURL))
 	if runnerName != "" {
 		endpoint += fmt.Sprintf("&runner=%s", runnerName)
