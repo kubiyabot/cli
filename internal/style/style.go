@@ -9,26 +9,28 @@ import (
 )
 
 var (
-	TitleStyle = lipgloss.NewStyle().
+	HeaderStyle = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(lipgloss.Color("#FAFAFA")).
-			Background(lipgloss.Color("#7D56F4")).
+			Foreground(lipgloss.Color("205")).
 			Padding(0, 1)
 
-	SubtitleStyle = lipgloss.NewStyle().
+	TitleStyle = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(lipgloss.Color("#7D56F4"))
+			Foreground(lipgloss.Color("205"))
+
+	SubtitleStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("39"))
 
 	HighlightStyle = lipgloss.NewStyle().
-			Bold(true).
-			Foreground(lipgloss.Color("#7D56F4"))
+			Foreground(lipgloss.Color("205")).
+			Bold(true)
 
 	DimStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#666666"))
+			Foreground(lipgloss.Color("241"))
 
 	ErrorStyle = lipgloss.NewStyle().
-			Bold(true).
-			Foreground(lipgloss.Color("#FF0000"))
+			Foreground(lipgloss.Color("196")).
+			Bold(true)
 
 	SuccessStyle = lipgloss.NewStyle().
 			Bold(true).
@@ -107,6 +109,10 @@ var (
 			Foreground(lipgloss.Color("#00FFFF")).
 			Background(lipgloss.Color("#2E3440")).
 			Padding(0, 1)
+
+	StatusStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("39")).
+			Bold(true)
 )
 
 // DisableColors disables all color styling for non-TTY environments
@@ -138,6 +144,7 @@ func DisableColors() {
 	ToolStatusStyle = noStyle
 	ToolOutputPrefixStyle = noStyle
 	CommandStyle = noStyle
+	StatusStyle = noStyle
 }
 
 // Add this function to check if colors should be enabled

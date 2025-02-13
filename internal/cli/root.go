@@ -49,6 +49,7 @@ Need help? Visit: https://docs.kubiya.ai`,
 		newRunnersCommand(cfg),
 		newWebhooksCommand(cfg),
 		newSecretsCommand(cfg),
+		newGenerateToolCommand(cfg),
 	)
 
 	return rootCmd.Execute()
