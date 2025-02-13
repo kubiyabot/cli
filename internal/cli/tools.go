@@ -61,6 +61,7 @@ func newToolsCommand(cfg *config.Config) *cobra.Command {
 		newSearchToolsCommand(cfg),
 		newDescribeToolCommand(cfg),
 		newExecuteCommand(cfg),
+		newGenerateToolCommand(cfg),
 	)
 
 	return cmd

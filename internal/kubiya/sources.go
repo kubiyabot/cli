@@ -11,6 +11,9 @@ import (
 )
 
 // Source-related client methods
+// All source-related operations should be defined here to maintain a single source of truth
+
+// ListSources retrieves all available sources
 func (c *Client) ListSources(ctx context.Context) ([]Source, error) {
 	resp, err := c.get(ctx, "/sources")
 	if err != nil {
@@ -26,6 +29,7 @@ func (c *Client) ListSources(ctx context.Context) ([]Source, error) {
 	return sources, nil
 }
 
+// GetSourceMetadata retrieves metadata for a specific source
 func (c *Client) GetSourceMetadata(ctx context.Context, uuid string) (*Source, error) {
 	// First get the source metadata
 	req, err := http.NewRequestWithContext(ctx, "GET",
@@ -84,6 +88,7 @@ func (c *Client) GetSourceMetadata(ctx context.Context, uuid string) (*Source, e
 	return source, nil
 }
 
+// DeleteSource removes a source by its UUID
 func (c *Client) DeleteSource(ctx context.Context, sourceUUID string, runnerName string) error {
 	url := fmt.Sprintf("/sources/%s", sourceUUID)
 	if runnerName != "" {
@@ -97,32 +102,7 @@ func (c *Client) DeleteSource(ctx context.Context, sourceUUID string, runnerName
 	return nil
 }
 
-// Helper method for DELETE requests
-func (c *Client) delete(ctx context.Context, path string) (*http.Response, error) {
-	url := fmt.Sprintf("%s%s", c.baseURL, path)
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, url, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	req.Header.Set("Authorization", "UserKey "+c.cfg.APIKey)
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to execute request: %w", err)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		resp.Body.Close()
-		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
-	}
-
-	return resp, nil
-}
-
-// LoadSource loads a source from a URL or local path
+// LoadSource loads a source from a local path
 func (c *Client) LoadSource(ctx context.Context, path string) (*Source, error) {
 	if c.debug {
 		fmt.Printf("Loading source from path: %s\n", path)
@@ -217,7 +197,7 @@ func (c *Client) LoadSource(ctx context.Context, path string) (*Source, error) {
 	return c.GetSourceMetadata(ctx, source.UUID)
 }
 
-// Helper function to get git remote URL and current branch
+// Internal helper functions
 func getGitInfo(path string) (string, string, error) {
 	// Get the git remote URL
 	cmd := exec.Command("git", "-C", path, "config", "--get", "remote.origin.url")
@@ -238,7 +218,6 @@ func getGitInfo(path string) (string, string, error) {
 	return gitURL, branch, nil
 }
 
-// Helper function to convert git@ URL to HTTPS URL
 func convertGitToHTTPS(gitURL string) string {
 	// Convert git@github.com:org/repo.git to https://github.com/org/repo
 	gitURL = strings.TrimPrefix(gitURL, "git@")
@@ -247,7 +226,6 @@ func convertGitToHTTPS(gitURL string) string {
 	return "https://" + gitURL
 }
 
-// Add this helper function to normalize GitHub URLs
 func normalizeGitHubURL(url string) string {
 	// Convert github.com URLs to raw.githubusercontent.com
 	if strings.Contains(url, "github.com") && !strings.Contains(url, "raw.githubusercontent.com") {
@@ -290,6 +268,7 @@ func (c *Client) CreateSource(ctx context.Context, url string) (*Source, error) 
 	return &created, nil
 }
 
+// GetSource retrieves a source by its UUID
 func (c *Client) GetSource(ctx context.Context, uuid string) (*Source, error) {
 	req, err := http.NewRequestWithContext(ctx, "GET",
 		fmt.Sprintf("%s/sources/%s", c.baseURL, uuid), nil)
@@ -308,8 +287,7 @@ func (c *Client) GetSource(ctx context.Context, uuid string) (*Source, error) {
 	return &source, nil
 }
 
-// GetSourceByURL returns a source matching the given URL
-// If multiple sources match, returns an error with the list of matches
+// GetSourceByURL retrieves a source by its URL
 func (c *Client) GetSourceByURL(ctx context.Context, url string) (*Source, error) {
 	sources, err := c.ListSources(ctx)
 	if err != nil {
@@ -336,4 +314,24 @@ func (c *Client) GetSourceByURL(ctx context.Context, url string) (*Source, error
 		}
 		return nil, fmt.Errorf(details.String())
 	}
+}
+
+// GetSourceMetadataCached retrieves source metadata with caching
+func (c *Client) GetSourceMetadataCached(ctx context.Context, sourceUUID string) (*Source, error) {
+	// Try to get from cache first
+	if cached, ok := c.cache.Get(sourceUUID); ok {
+		if source, ok := cached.(*Source); ok {
+			return source, nil
+		}
+	}
+
+	// If not in cache, fetch from API
+	source, err := c.GetSourceMetadata(ctx, sourceUUID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Store in cache
+	c.cache.Set(sourceUUID, source)
+	return source, nil
 }

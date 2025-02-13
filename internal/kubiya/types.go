@@ -68,11 +68,13 @@ type KubiyaMetadata struct {
 
 // ToolArg represents an argument for a tool
 type ToolArg struct {
-	Name        string      `json:"name"`
-	Type        string      `json:"type"`
-	Required    bool        `json:"required"`
-	Description string      `json:"description"`
-	Default     interface{} `json:"default,omitempty"`
+	Name        string       `yaml:"name" json:"name"`
+	Type        string       `yaml:"type,omitempty" json:"type,omitempty"`
+	Description string       `yaml:"description" json:"description"`
+	Required    bool         `yaml:"required,omitempty" json:"required,omitempty"`
+	Default     string       `yaml:"default,omitempty" json:"default,omitempty"`
+	Options     []string     `yaml:"options,omitempty" json:"options,omitempty"`
+	OptionsFrom *OptionsFrom `yaml:"options_from,omitempty" json:"options_from,omitempty"`
 }
 
 type ToolSource struct {
@@ -82,22 +84,22 @@ type ToolSource struct {
 
 // Tool represents a tool in a source
 type Tool struct {
-	Name        string     `json:"name"`
+	Name        string     `json:"name" yaml:"name"`
 	Source      ToolSource `json:"source"`
-	Alias       string     `json:"alias"`
-	Description string     `json:"description"`
-	Type        string     `json:"type"`
-	Content     string     `json:"content"`
-	Args        []ToolArg  `json:"args"`
-	Env         []string   `json:"env"`
-	WithFiles   []string   `json:"with_files"`
-	WithVolumes []string   `json:"with_volumes"`
-	IconURL     string     `json:"icon_url"`
-	Image       string     `json:"image"`
-	LongRunning bool       `json:"long_running"`
-	Metadata    []string   `json:"metadata"`
-	Secrets     []string   `json:"secrets"`
-	Mermaid     string     `json:"mermaid"`
+	Description string     `json:"description" yaml:"description"`
+	Args        []ToolArg  `json:"args" yaml:"args,omitempty"`
+	Env         []string   `json:"env" yaml:"env,omitempty"`
+	Content     string     `json:"content" yaml:"content,omitempty"`
+	FileName    string     `json:"file_name" yaml:"file_name,omitempty"`
+	Secrets     []string   `json:"secrets,omitempty"`
+	IconURL     string     `json:"icon_url,omitempty"`
+	Type        string     `json:"type,omitempty"`
+	Alias       string     `json:"alias,omitempty"`
+	WithFiles   []string   `json:"with_files,omitempty"`
+	WithVolumes []string   `json:"with_volumes,omitempty"`
+	LongRunning bool       `json:"long_running,omitempty"`
+	Metadata    []string   `json:"metadata,omitempty"`
+	Mermaid     string     `json:"mermaid,omitempty"`
 }
 
 // ToolMetadata represents metadata for a tool
@@ -145,6 +147,18 @@ type SourceStats struct {
 // ChatResponse represents a response from the chat API
 type ChatResponse struct {
 	Content string `json:"content"`
+}
+
+// ChatMessage represents a message in a chat session
+type ChatMessage struct {
+	Content    string `json:"content"`
+	Type       string `json:"type"`
+	MessageID  string `json:"message_id"`
+	Timestamp  string `json:"timestamp"`
+	SenderName string `json:"sender_name"`
+	Final      bool   `json:"final"`
+	SessionID  string `json:"session_id"`
+	Error      string `json:"error"`
 }
 
 // Add these new types to support Tool
@@ -342,4 +356,37 @@ type SyncOptions struct {
 	Force      bool   `json:"force,omitempty"`
 	AutoCommit bool   `json:"auto_commit,omitempty"`
 	NoDiff     bool   `json:"no_diff,omitempty"`
+}
+
+// Arg represents a tool argument
+type Arg struct {
+	Name        string       `yaml:"name" json:"name"`
+	Type        string       `yaml:"type,omitempty" json:"type,omitempty"`
+	Description string       `yaml:"description" json:"description"`
+	Required    bool         `yaml:"required,omitempty" json:"required,omitempty"`
+	Default     string       `yaml:"default,omitempty" json:"default,omitempty"`
+	Options     []string     `yaml:"options,omitempty" json:"options,omitempty"`
+	OptionsFrom *OptionsFrom `yaml:"options_from,omitempty" json:"options_from,omitempty"`
+}
+
+// OptionsFrom defines where to get argument options from
+type OptionsFrom struct {
+	Image  string `yaml:"image" json:"image"`
+	Script string `yaml:"script" json:"script"`
+}
+
+// GeneratedToolContent represents the structure of tool generation SSE events
+type GeneratedToolContent struct {
+	Content  string `json:"content"`
+	FileName string `json:"file_name"`
+}
+
+// GeneratedToolResponse represents the wrapper response for tool generation
+type GeneratedToolResponse struct {
+	GeneratedToolContent []GeneratedToolContent `json:"generated_tool_content"`
+}
+
+type ToolGenerationChatMessage struct {
+	Type                 string                 `json:"type"`
+	GeneratedToolContent []GeneratedToolContent `json:"generated_tool_content"`
 }
