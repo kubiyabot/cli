@@ -34,20 +34,6 @@ type ChatSession struct {
 	Messages []ChatMessage
 }
 
-// ChatMessage represents a message in the chat
-type ChatMessage struct {
-	Content    string `json:"content"`
-	Error      string `json:"error,omitempty"`
-	SessionID  string `json:"session_id,omitempty"`
-	Timestamp  string `json:"timestamp"`
-	SenderName string `json:"sender_name"`
-	Type       string `json:"type,omitempty"`
-	Message    string `json:"message,omitempty"`
-	MessageID  string `json:"message_id,omitempty"`
-	Final      bool   `json:"final,omitempty"`
-	Status     string `json:"status,omitempty"`
-}
-
 // Config holds the client configuration
 type Config struct {
 	APIKey string

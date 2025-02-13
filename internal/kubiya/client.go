@@ -1,6 +1,7 @@
 package kubiya
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -13,6 +14,12 @@ import (
 
 	"github.com/kubiyabot/cli/internal/config"
 )
+
+// fileState tracks the accumulation of one file's content during SSE streaming.
+type fileState struct {
+	buffer *strings.Builder
+	size   int
+}
 
 // Client represents a Kubiya API client
 type Client struct {
@@ -30,7 +37,7 @@ func NewClient(cfg *config.Config) *Client {
 		client:  &http.Client{Timeout: 30 * time.Second},
 		baseURL: cfg.BaseURL,
 		debug:   cfg.Debug,
-		cache:   NewCache(5 * time.Minute),
+		cache:   NewCache(5 * time.Minute), // If you have a cache defined elsewhere
 	}
 }
 
@@ -78,92 +85,7 @@ func (c *Client) newJSONRequest(ctx context.Context, method, url string, payload
 	return req, nil
 }
 
-// GetSourceMetadataCached retrieves the source metadata from the cache if available, otherwise fetches it from the API
-func (c *Client) GetSourceMetadataCached(ctx context.Context, sourceUUID string) (*Source, error) {
-	// Try to get from cache first
-	if cached, ok := c.cache.Get(sourceUUID); ok {
-		if source, ok := cached.(*Source); ok {
-			return source, nil
-		}
-	}
-
-	// If not in cache, fetch from API
-	source, err := c.GetSourceMetadata(ctx, sourceUUID)
-	if err != nil {
-		return nil, err
-	}
-
-	// Store in cache
-	c.cache.Set(sourceUUID, source)
-	return source, nil
-}
-
-// GetTeammates retrieves the list of teammates from the API
-func (c *Client) GetTeammates(ctx context.Context) ([]Teammate, error) {
-	resp, err := c.get(ctx, "/agents")
-	if err != nil {
-		if c.debug {
-			fmt.Printf("Error getting teammates: %v\n", err)
-			fmt.Printf("BaseURL: %s\n", c.baseURL)
-			fmt.Printf("Full URL: %s/agents\n", c.baseURL)
-			fmt.Printf("API Key present: %v\n", c.cfg.APIKey != "")
-		}
-		return nil, fmt.Errorf("failed to get teammates: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if c.debug {
-		body, _ := io.ReadAll(resp.Body)
-		fmt.Printf("Response Status: %d\n", resp.StatusCode)
-		fmt.Printf("Response Headers: %v\n", resp.Header)
-		fmt.Printf("Response Body: %s\n", string(body))
-		resp.Body = io.NopCloser(bytes.NewBuffer(body))
-	}
-
-	var teammates []Teammate
-	if err := json.NewDecoder(resp.Body).Decode(&teammates); err != nil {
-		if c.debug {
-			fmt.Printf("Error decoding response: %v\n", err)
-		}
-		return nil, fmt.Errorf("failed to decode response: %w", err)
-	}
-
-	// Filter out empty entries
-	var validTeammates []Teammate
-	for _, t := range teammates {
-		if t.UUID != "" && t.Name != "" {
-			validTeammates = append(validTeammates, t)
-		}
-	}
-
-	return validTeammates, nil
-}
-
-// GetTeammateEnvVar retrieves the value of an environment variable for a teammate from the API
-func (c *Client) GetTeammateEnvVar(ctx context.Context, teammateID, varName string) (string, error) {
-	// First get the full teammate details to access environment variables
-	resp, err := c.get(ctx, fmt.Sprintf("/agents/%s", teammateID))
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-
-	var agent struct {
-		Environment map[string]string `json:"environment_variables"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&agent); err != nil {
-		return "", err
-	}
-
-	// Look for the specific environment variable
-	if value, exists := agent.Environment[varName]; exists {
-		return value, nil
-	}
-	return "", fmt.Errorf("environment variable %s not found for teammate", varName)
-}
-
-// Add these methods to the Client struct
-
+// get is a helper for sending an HTTP GET request
 func (c *Client) get(ctx context.Context, path string) (*http.Response, error) {
 	url := fmt.Sprintf("%s%s", c.baseURL, path)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
@@ -187,9 +109,9 @@ func (c *Client) get(ctx context.Context, path string) (*http.Response, error) {
 	return resp, nil
 }
 
-// Add this helper method for POST requests
+// post is a helper for sending an HTTP POST request
 func (c *Client) post(ctx context.Context, path string, payload interface{}) (*http.Response, error) {
-	// Handle paths that already include query parameters
+	// Handle paths that may already include query parameters
 	baseURL := c.baseURL
 	if !strings.HasSuffix(baseURL, "/") {
 		baseURL += "/"
@@ -231,7 +153,123 @@ func (c *Client) post(ctx context.Context, path string, payload interface{}) (*h
 	return resp, nil
 }
 
-// Add these methods to handle secrets
+// put is a helper for sending an HTTP PUT request
+func (c *Client) put(ctx context.Context, path string, payload interface{}) (*http.Response, error) {
+	url := fmt.Sprintf("%s%s", c.baseURL, path)
+
+	var body bytes.Buffer
+	if payload != nil {
+		if err := json.NewEncoder(&body).Encode(payload); err != nil {
+			return nil, fmt.Errorf("failed to encode payload: %w", err)
+		}
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, url, &body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Authorization", "UserKey "+c.cfg.APIKey)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to execute request: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		resp.Body.Close()
+		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+	}
+
+	return resp, nil
+}
+
+// delete is not explicitly shown in your snippet but is referenced, so define it:
+func (c *Client) delete(ctx context.Context, path string) (*http.Response, error) {
+	url := fmt.Sprintf("%s%s", c.baseURL, path)
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Authorization", "UserKey "+c.cfg.APIKey)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to execute request: %w", err)
+	}
+
+	return resp, nil
+}
+
+// Source-related methods have been moved to sources.go for better organization
+// Please use the methods defined there instead of these deprecated ones.
+
+// Example method: retrieving teammates
+func (c *Client) GetTeammates(ctx context.Context) ([]Teammate, error) {
+	resp, err := c.get(ctx, "/agents")
+	if err != nil {
+		if c.debug {
+			fmt.Printf("Error getting teammates: %v\n", err)
+			fmt.Printf("BaseURL: %s\n", c.baseURL)
+			fmt.Printf("Full URL: %s/agents\n", c.baseURL)
+			fmt.Printf("API Key present: %v\n", c.cfg.APIKey != "")
+		}
+		return nil, fmt.Errorf("failed to get teammates: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if c.debug {
+		body, _ := io.ReadAll(resp.Body)
+		fmt.Printf("Response Status: %d\n", resp.StatusCode)
+		fmt.Printf("Response Headers: %v\n", resp.Header)
+		fmt.Printf("Response Body: %s\n", string(body))
+		resp.Body = io.NopCloser(bytes.NewBuffer(body))
+	}
+
+	var teammates []Teammate
+	if err := json.NewDecoder(resp.Body).Decode(&teammates); err != nil {
+		if c.debug {
+			fmt.Printf("Error decoding response: %v\n", err)
+		}
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	// Filter out empty entries
+	var validTeammates []Teammate
+	for _, t := range teammates {
+		if t.UUID != "" && t.Name != "" {
+			validTeammates = append(validTeammates, t)
+		}
+	}
+
+	return validTeammates, nil
+}
+
+// Example method: retrieving a teammate's environment variable
+func (c *Client) GetTeammateEnvVar(ctx context.Context, teammateID, varName string) (string, error) {
+	resp, err := c.get(ctx, fmt.Sprintf("/agents/%s", teammateID))
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	var agent struct {
+		Environment map[string]string `json:"environment_variables"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&agent); err != nil {
+		return "", err
+	}
+
+	// Look for the specific environment variable
+	if value, exists := agent.Environment[varName]; exists {
+		return value, nil
+	}
+	return "", fmt.Errorf("environment variable %s not found for teammate", varName)
+}
+
+// Example secrets methods
 func (c *Client) GetSecretValue(ctx context.Context, name string) (string, error) {
 	resp, err := c.get(ctx, fmt.Sprintf("/secrets/get_value/%s", name))
 	if err != nil {
@@ -265,37 +303,6 @@ func (c *Client) UpdateSecret(ctx context.Context, name, value, description stri
 	return nil
 }
 
-func (c *Client) put(ctx context.Context, path string, payload interface{}) (*http.Response, error) {
-	url := fmt.Sprintf("%s%s", c.baseURL, path)
-
-	var body bytes.Buffer
-	if payload != nil {
-		if err := json.NewEncoder(&body).Encode(payload); err != nil {
-			return nil, fmt.Errorf("failed to encode payload: %w", err)
-		}
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPut, url, &body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	req.Header.Set("Authorization", "UserKey "+c.cfg.APIKey)
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to execute request: %w", err)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		resp.Body.Close()
-		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
-	}
-
-	return resp, nil
-}
-
 func (c *Client) GetSecret(ctx context.Context, name string) (*Secret, error) {
 	resp, err := c.get(ctx, fmt.Sprintf("/secrets/%s", name))
 	if err != nil {
@@ -327,9 +334,8 @@ func (c *Client) CreateSecret(ctx context.Context, name, value, description stri
 	return nil
 }
 
-// Add this method to the Client type
+// Example method: listing tools from a source
 func (c *Client) ListTools(ctx context.Context, sourceURL string) ([]Tool, error) {
-	// First load the source to get its tools
 	loadURL := fmt.Sprintf("/sources/load?url=%s", url.QueryEscape(sourceURL))
 
 	resp, err := c.get(ctx, loadURL)
@@ -351,8 +357,8 @@ func (c *Client) ListTools(ctx context.Context, sourceURL string) ([]Tool, error
 	return source.Tools, nil
 }
 
+// Example method: describing a runner
 func (c *Client) GetRunner(ctx context.Context, name string) (Runner, error) {
-	// Call the runners describe endpoint directly
 	resp, err := c.get(ctx, fmt.Sprintf("/runners/%s/describe", name))
 	if err != nil {
 		return Runner{}, fmt.Errorf("failed to get runner details: %w", err)
@@ -374,7 +380,7 @@ func (c *Client) GetRunner(ctx context.Context, name string) (Runner, error) {
 	return runner, nil
 }
 
-// Add this method to list all runners
+// Example method: listing all runners
 func (c *Client) ListRunners(ctx context.Context) ([]Runner, error) {
 	resp, err := c.get(ctx, "/runners")
 	if err != nil {
@@ -382,10 +388,9 @@ func (c *Client) ListRunners(ctx context.Context) ([]Runner, error) {
 	}
 	defer resp.Body.Close()
 
-	// First try to decode as array
 	var runners []Runner
 	if err := json.NewDecoder(resp.Body).Decode(&runners); err != nil {
-		// If array decode fails, try decoding as single object
+		// If array decode fails, try single object
 		resp.Body.Close()
 		resp, err = c.get(ctx, "/runners")
 		if err != nil {
@@ -412,7 +417,7 @@ func (c *Client) ListRunners(ctx context.Context) ([]Runner, error) {
 	return runners, nil
 }
 
-// Add this method to get runner manifest
+// Example method: retrieve a runner's manifest
 func (c *Client) GetRunnerManifest(ctx context.Context, name string) (RunnerManifest, error) {
 	resp, err := c.get(ctx, fmt.Sprintf("/runners/%s/manifest", name))
 	if err != nil {
@@ -428,7 +433,7 @@ func (c *Client) GetRunnerManifest(ctx context.Context, name string) (RunnerMani
 	return manifest, nil
 }
 
-// Add this method to download manifest content
+// Example method: downloading a manifest from an external URL
 func (c *Client) DownloadManifest(ctx context.Context, url string) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
@@ -453,6 +458,7 @@ func (c *Client) DownloadManifest(ctx context.Context, url string) ([]byte, erro
 	return content, nil
 }
 
+// Example method: creating a teammate
 func (c *Client) CreateTeammate(ctx context.Context, teammate Teammate) (*Teammate, error) {
 	resp, err := c.post(ctx, "/agents", teammate)
 	if err != nil {
@@ -467,6 +473,7 @@ func (c *Client) CreateTeammate(ctx context.Context, teammate Teammate) (*Teamma
 	return &created, nil
 }
 
+// Example method: updating a teammate
 func (c *Client) UpdateTeammate(ctx context.Context, uuid string, teammate Teammate) (*Teammate, error) {
 	resp, err := c.put(ctx, fmt.Sprintf("/agents/%s", uuid), teammate)
 	if err != nil {
@@ -481,6 +488,7 @@ func (c *Client) UpdateTeammate(ctx context.Context, uuid string, teammate Teamm
 	return &updated, nil
 }
 
+// Example method: deleting a teammate
 func (c *Client) DeleteTeammate(ctx context.Context, uuid string) error {
 	resp, err := c.delete(ctx, fmt.Sprintf("/agents/%s", uuid))
 	if err != nil {
@@ -490,6 +498,7 @@ func (c *Client) DeleteTeammate(ctx context.Context, uuid string) error {
 	return nil
 }
 
+// Example method: binding a source to a teammate
 func (c *Client) BindSourceToTeammate(ctx context.Context, sourceUUID, teammateUUID string) error {
 	path := fmt.Sprintf("sources/%s/teammates/%s", sourceUUID, teammateUUID)
 	resp, err := c.post(ctx, path, nil)
@@ -501,10 +510,10 @@ func (c *Client) BindSourceToTeammate(ctx context.Context, sourceUUID, teammateU
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("failed to bind source to teammate: %s", resp.Status)
 	}
-
 	return nil
 }
 
+// Example method: listing teammates for a particular source
 func (c *Client) GetSourceTeammates(ctx context.Context, sourceUUID string) ([]Teammate, error) {
 	// Get all teammates first
 	teammates, err := c.GetTeammates(ctx)
@@ -512,7 +521,7 @@ func (c *Client) GetSourceTeammates(ctx context.Context, sourceUUID string) ([]T
 		return nil, fmt.Errorf("failed to list teammates: %w", err)
 	}
 
-	// Get source details for better error handling
+	// Get source details
 	source, err := c.GetSourceMetadata(ctx, sourceUUID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get source details: %w", err)
@@ -521,7 +530,6 @@ func (c *Client) GetSourceTeammates(ctx context.Context, sourceUUID string) ([]T
 	// Filter teammates that have this source
 	var connectedTeammates []Teammate
 	for _, teammate := range teammates {
-		// Check if teammate has access to this source
 		hasSource := false
 		for _, teammateSrc := range teammate.Sources {
 			if teammateSrc == sourceUUID {
@@ -531,7 +539,7 @@ func (c *Client) GetSourceTeammates(ctx context.Context, sourceUUID string) ([]T
 		}
 		if hasSource {
 			// Add source details to teammate for context
-			teammate.Sources = append(teammate.Sources, *&source.UUID)
+			teammate.Sources = append(teammate.Sources, source.UUID)
 			connectedTeammates = append(connectedTeammates, teammate)
 		}
 	}
@@ -546,51 +554,45 @@ func (c *Client) GetSourceTeammates(ctx context.Context, sourceUUID string) ([]T
 	return connectedTeammates, nil
 }
 
-// Add a helper method to check if a teammate exists
+// Example helper method to check if a teammate exists
 func (c *Client) TeammateExists(ctx context.Context, nameOrID string) (*Teammate, error) {
 	teammates, err := c.GetTeammates(ctx)
 	if err != nil {
 		return nil, err
 	}
-
 	for _, t := range teammates {
 		if t.UUID == nameOrID || t.Name == nameOrID {
 			return &t, nil
 		}
 	}
-
 	return nil, fmt.Errorf("teammate not found: %s", nameOrID)
 }
 
-// Add the DiscoverSource method to the Client struct
-func (c *Client) DiscoverSource(ctx context.Context, sourceURL string, config map[string]interface{}, runnerName string) (*SourceDiscoveryResponse, error) {
-	// Prepare request body with dynamic config only
+// Example method to discover a source
+func (c *Client) DiscoverSource(ctx context.Context, sourceURL string, cfg map[string]interface{}, runnerName string) (*SourceDiscoveryResponse, error) {
 	body := struct {
 		DynamicConfig map[string]interface{} `json:"dynamic_config"`
 	}{
-		DynamicConfig: config,
+		DynamicConfig: cfg,
 	}
 
-	// Build the URL with query parameters for both source URL and runner name
 	endpoint := fmt.Sprintf("/sources/load?url=%s", url.QueryEscape(sourceURL))
 	if runnerName != "" {
 		endpoint += fmt.Sprintf("&runner=%s", runnerName)
 	}
 
-	// Make request to load endpoint
 	resp, err := c.post(ctx, endpoint, body)
 	if err != nil {
 		return nil, fmt.Errorf("failed to discover source: %w", err)
 	}
 	defer resp.Body.Close()
 
-	// Parse response
 	var discovery SourceDiscoveryResponse
 	if err := json.NewDecoder(resp.Body).Decode(&discovery); err != nil {
 		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}
 
-	// Check for discovery errors
+	// If the backend returned errors in the response, we can return them
 	if len(discovery.Errors) > 0 {
 		return &discovery, &discovery
 	}
@@ -598,9 +600,8 @@ func (c *Client) DiscoverSource(ctx context.Context, sourceURL string, config ma
 	return &discovery, nil
 }
 
-// SyncSource syncs a source with the given options
+// Example method to sync a source
 func (c *Client) SyncSource(ctx context.Context, sourceID string, opts SyncOptions, runnerName string) (*Source, error) {
-	// Build request body with sync options
 	body := struct {
 		Mode       string `json:"mode,omitempty"`
 		Branch     string `json:"branch,omitempty"`
@@ -619,27 +620,115 @@ func (c *Client) SyncSource(ctx context.Context, sourceID string, opts SyncOptio
 	if runnerName != "" {
 		url += fmt.Sprintf("?runner=%s", runnerName)
 	}
-	// Make request to sync endpoint
+
 	resp, err := c.post(ctx, url, body)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
 
-	// Handle non-200 responses
 	if resp.StatusCode == http.StatusNotFound {
 		return nil, fmt.Errorf("source not found: %s", sourceID)
 	}
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("sync failed: %s", string(body))
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("sync failed: %s", string(bodyBytes))
 	}
 
-	// Parse response
 	var source Source
 	if err := json.NewDecoder(resp.Body).Decode(&source); err != nil {
 		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}
 
 	return &source, nil
+}
+
+// GetBaseURL returns the client's base URL
+func (c *Client) GetBaseURL() string {
+	return c.baseURL
+}
+
+// GenerateTool starts a tool generation process (SSE-based) and returns
+// a channel of ChatMessage items. This is the updated SSE logic that accumulates
+// partial code blocks by filename and emits them as "generated_tool".
+func (c *Client) GenerateTool(ctx context.Context, description, sessionID string) (<-chan ToolGenerationChatMessage, error) {
+	// Create a channel to receive chat messages
+	messages := make(chan ToolGenerationChatMessage)
+
+	// Start a goroutine to read SSE messages
+	go func() {
+		defer close(messages)
+
+		// Create the SSE request
+		reqURL := fmt.Sprintf("%s/http-bridge/v1/generate-tool", strings.TrimSuffix(c.baseURL, "/"))
+		jsonData, err := json.Marshal(struct {
+			Message   string `json:"message"`
+			SessionID string `json:"session_id"`
+		}{
+			Message:   description,
+			SessionID: sessionID,
+		})
+		if err != nil {
+			messages <- ToolGenerationChatMessage{Type: "error", GeneratedToolContent: []GeneratedToolContent{{Content: fmt.Sprintf("failed to marshal payload: %v", err)}}}
+			return
+		}
+
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, bytes.NewBuffer(jsonData))
+		if err != nil {
+			messages <- ToolGenerationChatMessage{Type: "error", GeneratedToolContent: []GeneratedToolContent{{Content: fmt.Sprintf("failed to create request: %v", err)}}}
+			return
+		}
+
+		// Set headers to request SSE
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept", "text/event-stream")
+		req.Header.Set("Authorization", "UserKey "+c.cfg.APIKey)
+		req.Header.Set("Cache-Control", "no-cache")
+		req.Header.Set("Connection", "keep-alive")
+
+		// We'll use a client with no (or very large) timeout for SSE
+		sseClient := &http.Client{Timeout: 0}
+
+		resp, err := sseClient.Do(req)
+		if err != nil {
+			messages <- ToolGenerationChatMessage{Type: "error", GeneratedToolContent: []GeneratedToolContent{{Content: fmt.Sprintf("failed to execute request: %v", err)}}}
+			return
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			messages <- ToolGenerationChatMessage{Type: "error", GeneratedToolContent: []GeneratedToolContent{{Content: fmt.Sprintf("unexpected status code: %d, body: %s", resp.StatusCode, string(body))}}}
+			return
+		}
+
+		// Create a new SSE reader
+		sseReader := bufio.NewReader(resp.Body)
+
+		// Read SSE messages
+		for {
+			line, err := sseReader.ReadString('\n')
+			if err != nil {
+				if err == io.EOF {
+					break
+				}
+				messages <- ToolGenerationChatMessage{Type: "error", GeneratedToolContent: []GeneratedToolContent{{Content: err.Error()}}}
+				return
+			}
+
+			content := strings.TrimSpace(line)
+
+			// Parse the JSON content into a ToolGenerationChatMessage struct
+			var msg ToolGenerationChatMessage
+			if err := json.Unmarshal([]byte(content), &msg); err != nil {
+				messages <- ToolGenerationChatMessage{Type: "error", GeneratedToolContent: []GeneratedToolContent{{Content: fmt.Sprintf("failed to parse message: %v", err)}}}
+				continue
+			}
+
+			// Send the parsed message to the channel
+			messages <- msg
+		}
+	}()
+
+	return messages, nil
 }
