@@ -1,8 +1,11 @@
 package cli
 
 import (
+	"fmt"
+
 	"github.com/kubiyabot/cli/internal/config"
 	"github.com/kubiyabot/cli/internal/tui"
+	"github.com/kubiyabot/cli/internal/version"
 	"github.com/spf13/cobra"
 )
 
@@ -23,8 +26,21 @@ Quick Start:
   • Manage knowledge: kubiya knowledge list
   • Manage runners:   kubiya runner list
   • Manage webhooks:  kubiya webhook list
+  • Update CLI:       kubiya update
 
 Need help? Visit: https://docs.kubiya.ai`,
+		Version: version.GetVersion(),
+		PersistentPreRun: func(cmd *cobra.Command, args []string) {
+			// Skip update check for version and update commands
+			if cmd.Name() == "version" || cmd.Name() == "update" {
+				return
+			}
+
+			// Check for updates
+			if msg := version.GetUpdateMessage(); msg != "" {
+				fmt.Fprint(cmd.ErrOrStderr(), msg)
+			}
+		},
 	}
 
 	// Add the browse command as a top-level alias for source interactive
@@ -50,6 +66,8 @@ Need help? Visit: https://docs.kubiya.ai`,
 		newWebhooksCommand(cfg),
 		newSecretsCommand(cfg),
 		newGenerateToolCommand(cfg),
+		newUpdateCommand(cfg),
+		newVersionCommand(cfg),
 	)
 
 	return rootCmd.Execute()
