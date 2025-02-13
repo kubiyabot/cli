@@ -18,6 +18,27 @@ import (
 	"github.com/spf13/cobra"
 )
 
+type OperationResponse struct {
+	Status      string `json:"status"`
+	Error       string `json:"error,omitempty"`
+	Output      string `json:"output,omitempty"`
+	ExecutionID string `json:"execution_id,omitempty"`
+	LongRunning bool   `json:"long_running"`
+}
+
+type ToolStatus struct {
+	ExecutionID string       `json:"execution_id"`
+	Status      string       `json:"status"`
+	StartTime   string       `json:"start_time"`
+	Tool        *kubiya.Tool `json:"tool_definition"`
+}
+
+type ToolStatusAndLogs struct {
+	Status ToolStatus `json:"status"`
+	Logs   []string   `json:"logs"`
+	Events []string   `json:"events"`
+}
+
 func newExecuteCommand(cfg *config.Config) *cobra.Command {
 	var (
 		sourceUUID string
@@ -254,25 +275,46 @@ func newExecuteCommand(cfg *config.Config) *cobra.Command {
 			// Execute the tool
 			fmt.Printf("🚀 Executing %s...\n", tool.Name)
 
-			jsonData, err := json.Marshal(execReq)
+			// Prepare the request payload
+			requestPayload := struct {
+				Action       string `json:"action"`
+				Namespace    string `json:"namespace"`
+				FunctionName string `json:"functionName"`
+				HTTPParams   struct {
+					Endpoint string      `json:"endpoint"`
+					Verb     string      `json:"verb"`
+					Payload  interface{} `json:"payload"`
+				} `json:"http_request_params"`
+			}{
+				Action:       "invoke",
+				Namespace:    "kubiya",
+				FunctionName: "tool-manager",
+				HTTPParams: struct {
+					Endpoint string      `json:"endpoint"`
+					Verb     string      `json:"verb"`
+					Payload  interface{} `json:"payload"`
+				}{
+					Endpoint: "/tool/execute",
+					Verb:     "POST",
+					Payload:  execReq,
+				},
+			}
+
+			jsonData, err := json.Marshal(requestPayload)
 			if err != nil {
 				return fmt.Errorf("failed to marshal request: %w", err)
 			}
 
+			// Update the URL to use the runners API endpoint
+			runnerURL := fmt.Sprintf("%s/runners/%s/ops", client.GetBaseURL(), runnerName)
 			httpClient := &http.Client{Timeout: timeout}
-			resp, err := httpClient.Post("http://localhost:80/tool/execute", "application/json", bytes.NewBuffer(jsonData))
+			resp, err := httpClient.Post(runnerURL, "application/json", bytes.NewBuffer(jsonData))
 			if err != nil {
 				return fmt.Errorf("failed to execute tool: %w", err)
 			}
 			defer resp.Body.Close()
 
-			var execResp struct {
-				Status      string `json:"status"`
-				ExecutionID string `json:"execution_id,omitempty"`
-				Output      string `json:"output,omitempty"`
-				Error       string `json:"error,omitempty"`
-			}
-
+			var execResp OperationResponse
 			if err := json.NewDecoder(resp.Body).Decode(&execResp); err != nil {
 				return fmt.Errorf("failed to decode response: %w", err)
 			}
@@ -281,15 +323,25 @@ func newExecuteCommand(cfg *config.Config) *cobra.Command {
 				return fmt.Errorf("execution failed: %s", execResp.Error)
 			}
 
-			if async {
-				fmt.Printf("✅ Execution started (ID: %s)\n", execResp.ExecutionID)
-				if follow {
-					fmt.Println("📝 Following output:")
-					if err := followExecution(httpClient, execResp.ExecutionID, rawOutput); err != nil {
+			// Always follow execution if we have an execution ID, unless explicitly asked not to
+			if execResp.ExecutionID != "" && !nonInteractive {
+				if execResp.LongRunning {
+					fmt.Printf("⏳ Long-running tool detected (ID: %s)\n", execResp.ExecutionID)
+				}
+				if follow || !nonInteractive {
+					fmt.Println("📝 Following execution:")
+					if err := followExecution(client, execResp.ExecutionID, rawOutput); err != nil {
 						return fmt.Errorf("failed to follow execution: %w", err)
 					}
+					return nil
+				} else {
+					fmt.Printf("Use 'kubiya tool status %s' to check status\n", execResp.ExecutionID)
+					return nil
 				}
-			} else {
+			}
+
+			// Handle immediate response
+			if execResp.Output != "" {
 				if rawOutput {
 					fmt.Print(execResp.Output)
 				} else {
@@ -321,51 +373,59 @@ func newExecuteCommand(cfg *config.Config) *cobra.Command {
 }
 
 // followExecution follows the output of an async execution
-func followExecution(httpClient *http.Client, executionID string, rawOutput bool) error {
+func followExecution(client *kubiya.Client, executionID string, rawOutput bool) error {
 	spinner := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
 	spinnerIdx := 0
-	lastOutput := ""
+	lastEventCount := 0
+	lastLogCount := 0
 
 	for {
 		time.Sleep(1 * time.Second)
 
-		resp, err := httpClient.Get(fmt.Sprintf("http://localhost:80/tool/status?id=%s", executionID))
+		// Get status from the runner API
+		statusURL := fmt.Sprintf("%s/runners/%s/ops/status/%s",
+			client.GetBaseURL(), runnerName, executionID)
+
+		resp, err := http.Get(statusURL)
 		if err != nil {
 			return fmt.Errorf("failed to get execution status: %w", err)
 		}
 
-		var status struct {
-			Status string `json:"status"`
-			Output string `json:"output,omitempty"`
-			Error  string `json:"error,omitempty"`
-		}
-
+		var status ToolStatusAndLogs
 		if err := json.NewDecoder(resp.Body).Decode(&status); err != nil {
 			resp.Body.Close()
 			return fmt.Errorf("failed to decode status: %w", err)
 		}
 		resp.Body.Close()
 
-		// Only print new output
-		if status.Output != "" && status.Output != lastOutput {
+		// Print new logs
+		for i := lastLogCount; i < len(status.Logs); i++ {
 			if rawOutput {
-				fmt.Print(status.Output[len(lastOutput):])
+				fmt.Print(status.Logs[i])
 			} else {
-				fmt.Printf("%s\n", status.Output[len(lastOutput):])
+				fmt.Printf("📝 %s\n", status.Logs[i])
 			}
-			lastOutput = status.Output
 		}
+		lastLogCount = len(status.Logs)
 
-		if status.Status == "completed" || status.Status == "failed" {
+		// Print new events
+		for i := lastEventCount; i < len(status.Events); i++ {
 			if !rawOutput {
-				if status.Status == "completed" {
+				fmt.Printf("🔔 Event: %s\n", status.Events[i])
+			}
+		}
+		lastEventCount = len(status.Events)
+
+		if status.Status.Status == "completed" || status.Status.Status == "failed" {
+			if !rawOutput {
+				if status.Status.Status == "completed" {
 					fmt.Fprintf(os.Stderr, "\n%s\n", style.HighlightStyle.Render("✅ Execution completed"))
 				} else {
 					fmt.Fprintf(os.Stderr, "\n%s\n", style.HighlightStyle.Render("❌ Execution failed"))
 				}
 			}
-			if status.Status == "failed" {
-				return fmt.Errorf("execution failed: %s", status.Error)
+			if status.Status.Status == "failed" {
+				return fmt.Errorf("execution failed")
 			}
 			break
 		} else if !rawOutput {
