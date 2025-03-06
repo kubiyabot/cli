@@ -8,6 +8,7 @@ require (
 	github.com/charmbracelet/bubbles v0.20.0
 	github.com/charmbracelet/bubbletea v1.1.0
 	github.com/charmbracelet/lipgloss v0.13.0
+	github.com/golang-jwt/jwt/v4 v4.5.1
 	github.com/mattn/go-isatty v0.0.20
 	github.com/spf13/cobra v1.8.0
 	k8s.io/api v0.31.3

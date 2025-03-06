@@ -6,6 +6,16 @@ import (
 	"time"
 )
 
+type Integration struct {
+	Name    string `json:"name"`
+	Type    string `json:"integration_type"`
+	Configs []struct {
+		Name      string         `json:"name"`
+		IsDefault bool           `json:"is_default"`
+		Details   map[string]any `json:"vendor_specific"`
+	} `json:"configs,omitempty"`
+}
+
 // Agent represents a Kubiya teammate
 type Agent struct {
 	UUID           string            `json:"uuid"`
