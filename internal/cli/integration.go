@@ -41,7 +41,7 @@ func newActivateIntegrationCommand(cfg *config.Config) *cobra.Command {
 					return err
 				}
 
-				go openUrl(installUrl)
+				openUrl(installUrl)
 				fmt.Printf("✅ GitHub App integration activated successfully!\nInstallation URL: %s\nPlease open this URL in your browser to complete the installation.", installUrl)
 			default:
 				return fmt.Errorf("integration type %s is not supported only: %s",
