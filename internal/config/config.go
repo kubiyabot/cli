@@ -4,9 +4,14 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
+
+	"github.com/golang-jwt/jwt/v4"
 )
 
 type Config struct {
+	Org         string
+	Email       string
 	APIKey      string
 	BaseURL     string
 	Debug       bool
@@ -40,4 +45,41 @@ func Load() (*Config, error) {
 		Debug:       os.Getenv("KUBIYA_DEBUG") == "true",
 		AutoSession: autoSession,
 	}, nil
+}
+
+func (c *Config) BaseURLV2() string {
+	const (
+		v1 = "/v1"
+		v2 = "/v2"
+	)
+
+	return strings.ReplaceAll(c.BaseURL, v1, v2)
+}
+
+func (c *Config) jwtDecoder() (*Config, error) {
+	token, _, _ := new(jwt.Parser).ParseUnverified(c.APIKey, jwt.MapClaims{})
+	if token == nil {
+		return c, fmt.Errorf("invalid JWT format")
+	}
+
+	if claims, ok := token.Claims.(jwt.MapClaims); ok {
+		const (
+			emailKey = "email"
+			orgKey   = "organization"
+		)
+
+		if val, exists := claims[orgKey]; exists {
+			if org, ok := val.(string); ok {
+				c.Org = org
+			}
+		}
+
+		if val, exists := claims[emailKey]; exists {
+			if email, ok := val.(string); ok {
+				c.Email = email
+			}
+		}
+	}
+
+	return c, nil
 }
