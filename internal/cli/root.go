@@ -3,10 +3,11 @@ package cli
 import (
 	"fmt"
 
+	"github.com/spf13/cobra"
+
 	"github.com/kubiyabot/cli/internal/config"
 	"github.com/kubiyabot/cli/internal/tui"
 	"github.com/kubiyabot/cli/internal/version"
-	"github.com/spf13/cobra"
 )
 
 func Execute(cfg *config.Config) error {
@@ -68,6 +69,7 @@ Need help? Visit: https://docs.kubiya.ai`,
 		newGenerateToolCommand(cfg),
 		newUpdateCommand(cfg),
 		newVersionCommand(cfg),
+		newIntegrationsCommand(cfg),
 	)
 
 	return rootCmd.Execute()
