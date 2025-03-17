@@ -23,6 +23,9 @@ var logger *log.Logger
 func init() {
 	file, err := os.OpenFile("kubiya_chat.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
 	if err != nil {
+		// If we can't open the log file, fall back to stderr
+		logger = log.New(os.Stderr, "KUBIYA: ", log.LstdFlags|log.Lshortfile)
+		logger.Printf("Warning: Could not open log file: %v, logging to stderr", err)
 		return
 	}
 	logger = log.New(file, "", log.LstdFlags|log.Lshortfile)
@@ -95,20 +98,27 @@ func (c *Client) SendMessage(ctx context.Context, teammateID, message string, se
 		SessionID: sessionID,
 	}
 
-	logger.Printf("=== Starting SendMessage ===")
-	logger.Printf("Payload: %+v", payload)
+	// Safety check for logger
+	if logger != nil {
+		logger.Printf("=== Starting SendMessage ===")
+		logger.Printf("Payload: %+v", payload)
+	}
 
 	reqURL := fmt.Sprintf("%s/converse", c.baseURL)
 	jsonData, err := json.Marshal(payload)
 	if err != nil {
-		logger.Printf("Error marshalling payload: %v", err)
+		if logger != nil {
+			logger.Printf("Error marshalling payload: %v", err)
+		}
 		close(messagesChan)
 		return nil, fmt.Errorf("failed to marshal payload: %w", err)
 	}
 
 	req, err := http.NewRequest("POST", reqURL, bytes.NewBuffer(jsonData))
 	if err != nil {
-		logger.Printf("Error creating request: %v", err)
+		if logger != nil {
+			logger.Printf("Error creating request: %v", err)
+		}
 		close(messagesChan)
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -123,7 +133,9 @@ func (c *Client) SendMessage(ctx context.Context, teammateID, message string, se
 
 	resp, err := client.Do(req)
 	if err != nil {
-		logger.Printf("Error executing request: %v", err)
+		if logger != nil {
+			logger.Printf("Error executing request: %v", err)
+		}
 		close(messagesChan)
 		return nil, fmt.Errorf("failed to execute request: %w", err)
 	}
@@ -132,7 +144,9 @@ func (c *Client) SendMessage(ctx context.Context, teammateID, message string, se
 		body, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
 		close(messagesChan)
-		logger.Printf("Unexpected status code: %d, body: %s", resp.StatusCode, string(body))
+		if logger != nil {
+			logger.Printf("Unexpected status code: %d, body: %s", resp.StatusCode, string(body))
+		}
 		return nil, fmt.Errorf("unexpected status code: %d, body: %s", resp.StatusCode, string(body))
 	}
 
@@ -151,7 +165,9 @@ func (c *Client) SendMessage(ctx context.Context, teammateID, message string, se
 				line, err := reader.ReadString('\n')
 				if err != nil {
 					if err != io.EOF {
-						logger.Printf("Error reading line: %v", err)
+						if logger != nil {
+							logger.Printf("Error reading line: %v", err)
+						}
 						messagesChan <- ChatMessage{
 							Content:    fmt.Sprintf("Stream error: %v", err),
 							Timestamp:  time.Now().Format(time.RFC3339),
@@ -177,7 +193,9 @@ func (c *Client) SendMessage(ctx context.Context, teammateID, message string, se
 					SessionID string `json:"session_id,omitempty"`
 				}
 				if err := json.Unmarshal([]byte(line), &event); err != nil {
-					logger.Printf("JSON unmarshal error: %v for line: %s", err, line)
+					if logger != nil {
+						logger.Printf("JSON unmarshal error: %v for line: %s", err, line)
+					}
 					continue
 				}
 
@@ -202,7 +220,9 @@ func (c *Client) SendMessage(ctx context.Context, teammateID, message string, se
 				}
 
 				lastMessage = event.Message
-				logger.Printf("Sending message: %+v", msg)
+				if logger != nil {
+					logger.Printf("Sending message: %+v", msg)
+				}
 				messagesChan <- msg
 			}
 		}
