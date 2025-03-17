@@ -11,7 +11,8 @@ import (
 
 var (
 	// Version is the current version of the CLI
-	Version = "v0.0.6"
+	// This will be overridden by ldflags during build
+	Version = "dev"
 
 	// These variables are set by goreleaser
 	commit  = "unknown"
@@ -24,6 +25,13 @@ var (
 	checkMutex    sync.Mutex
 	checkInterval = 24 * time.Hour
 )
+
+// SetBuildInfo sets the build information
+func SetBuildInfo(commitHash, buildDate, builder string) {
+	commit = commitHash
+	date = buildDate
+	builtBy = builder
+}
 
 type githubRelease struct {
 	TagName string `json:"tag_name"`
