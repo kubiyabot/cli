@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os/exec"
 	"strings"
@@ -24,6 +25,28 @@ func (c *Client) ListSources(ctx context.Context) ([]Source, error) {
 	var sources []Source
 	if err := json.NewDecoder(resp.Body).Decode(&sources); err != nil {
 		return nil, fmt.Errorf("failed to decode sources response: %w", err)
+	}
+
+	// Make sure we have correct type information
+	for i := range sources {
+		// Set default type if not available
+		if sources[i].Type == "" {
+			if sources[i].URL == "" || len(sources[i].InlineTools) > 0 {
+				sources[i].Type = "inline"
+			} else {
+				sources[i].Type = "git"
+			}
+		}
+
+		// Debug logging
+		if c.debug {
+			fmt.Printf("Source %s: Type=%s, URL=%s, Tools=%d, InlineTools=%d\n",
+				sources[i].UUID,
+				sources[i].Type,
+				sources[i].URL,
+				len(sources[i].Tools),
+				len(sources[i].InlineTools))
+		}
 	}
 
 	return sources, nil
@@ -77,6 +100,15 @@ func (c *Client) GetSourceMetadata(ctx context.Context, uuid string) (*Source, e
 			fmt.Printf("  Args: %d, Env: %d, Secrets: %d\n",
 				len(tool.Args), len(tool.Env), len(tool.Secrets))
 		}
+
+		// Also log inline tools if available
+		if len(source.InlineTools) > 0 {
+			fmt.Printf("Inline tools found: %d\n", len(source.InlineTools))
+			for i, tool := range source.InlineTools {
+				fmt.Printf("Inline Tool %d: %s (%s)\n", i+1, tool.Name, tool.Description)
+			}
+		}
+
 		if len(metadata.Errors) > 0 {
 			fmt.Printf("\nErrors found:\n")
 			for _, err := range metadata.Errors {
@@ -102,10 +134,50 @@ func (c *Client) DeleteSource(ctx context.Context, sourceUUID string, runnerName
 	return nil
 }
 
-// LoadSource loads a source from a local path
-func (c *Client) LoadSource(ctx context.Context, path string) (*Source, error) {
+// LoadSource loads a source from a local path or from inline tools
+func (c *Client) LoadSource(ctx context.Context, path string, options ...SourceOption) (*Source, error) {
 	if c.debug {
 		fmt.Printf("Loading source from path: %s\n", path)
+	}
+
+	// Check if this is an inline source request
+	var source Source
+	var inlineTools []Tool
+	var runnerName string
+
+	// Extract options before processing
+	for _, option := range options {
+		option(&source)
+	}
+
+	inlineTools = source.InlineTools
+	runnerName = source.Runner
+
+	// For inline sources (empty path or explicitly marked as inline)
+	if path == "" || source.Type == "inline" {
+		// Always mark as inline type if URL is empty
+		source.Type = "inline"
+
+		if len(inlineTools) > 0 {
+			if c.debug {
+				fmt.Printf("Loading inline source with %d tools\n", len(inlineTools))
+			}
+
+			// Use discovery API to validate the inline tools first
+			discovered, err := c.DiscoverSource(ctx, "", source.DynamicConfig, runnerName, inlineTools)
+			if err != nil {
+				return nil, fmt.Errorf("failed to validate inline tools: %w", err)
+			}
+
+			// Return the discovered source
+			return &Source{
+				Name:          source.Name,
+				Type:          "inline",
+				InlineTools:   discovered.Tools,
+				DynamicConfig: source.DynamicConfig,
+				Runner:        runnerName,
+			}, nil
+		}
 	}
 
 	// Handle local paths differently
@@ -189,12 +261,33 @@ func (c *Client) LoadSource(ctx context.Context, path string) (*Source, error) {
 	}
 
 	// Create new source if none found
-	source, err := c.CreateSource(ctx, path)
+	source = Source{
+		URL:           path,
+		Type:          "git",
+		Name:          source.Name,
+		DynamicConfig: source.DynamicConfig,
+		Runner:        runnerName,
+	}
+
+	// Discover the source before creating
+	discovered, err := c.DiscoverSource(ctx, path, source.DynamicConfig, runnerName, nil)
 	if err != nil {
 		return nil, err
 	}
 
-	return c.GetSourceMetadata(ctx, source.UUID)
+	// Apply discovered information
+	source.Tools = discovered.Tools
+
+	// Create the source
+	created, err := c.CreateSource(ctx, path,
+		WithName(source.Name),
+		WithDynamicConfig(source.DynamicConfig),
+		WithRunner(runnerName))
+	if err != nil {
+		return nil, err
+	}
+
+	return c.GetSourceMetadata(ctx, created.UUID)
 }
 
 // Internal helper functions
@@ -239,11 +332,32 @@ func normalizeGitHubURL(url string) string {
 	return url
 }
 
-// CreateSource creates a new source from a URL
-func (c *Client) CreateSource(ctx context.Context, url string) (*Source, error) {
-	// Create the source directly without pre-loading
+// CreateSource creates a new source from a URL or with inline tools
+func (c *Client) CreateSource(ctx context.Context, url string, opts ...SourceOption) (*Source, error) {
+	// Create the source with defaults
 	source := Source{
 		URL: url,
+	}
+
+	// If URL is empty, default to inline type
+	if url == "" {
+		source.Type = "inline"
+	} else {
+		source.Type = "git" // Explicitly set type for git sources
+	}
+
+	// Apply options
+	for _, opt := range opts {
+		opt(&source)
+	}
+
+	// Ensure type is set based on content
+	if len(source.InlineTools) > 0 {
+		source.Type = "inline"
+	}
+
+	if c.debug {
+		fmt.Printf("Creating source: %+v\n", source)
 	}
 
 	data, err := json.Marshal(source)
@@ -266,6 +380,82 @@ func (c *Client) CreateSource(ctx context.Context, url string) (*Source, error) 
 	}
 
 	return &created, nil
+}
+
+// SourceOption is a functional option for configuring a source
+type SourceOption func(*Source)
+
+// WithName sets the name of a source
+func WithName(name string) SourceOption {
+	return func(s *Source) {
+		s.Name = name
+	}
+}
+
+// WithInlineTools sets inline tools for a source
+func WithInlineTools(tools []Tool) SourceOption {
+	return func(s *Source) {
+		s.InlineTools = tools
+		s.Type = "inline"
+	}
+}
+
+// WithDynamicConfig sets the dynamic configuration for a source
+func WithDynamicConfig(config map[string]interface{}) SourceOption {
+	return func(s *Source) {
+		s.DynamicConfig = config
+	}
+}
+
+// WithRunner sets the runner for a source
+func WithRunner(runner string) SourceOption {
+	return func(s *Source) {
+		s.Runner = runner
+	}
+}
+
+// UpdateSource updates an existing source
+func (c *Client) UpdateSource(ctx context.Context, uuid string, opts ...SourceOption) (*Source, error) {
+	// First get the existing source
+	source, err := c.GetSource(ctx, uuid)
+	if err != nil {
+		return nil, err
+	}
+
+	// Apply options
+	for _, opt := range opts {
+		opt(source)
+	}
+
+	// Ensure type is set correctly based on content
+	if len(source.InlineTools) > 0 {
+		source.Type = "inline"
+	} else if source.URL == "" {
+		source.Type = "inline"
+	} else if source.Type == "" {
+		source.Type = "git"
+	}
+
+	data, err := json.Marshal(source)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "PUT",
+		fmt.Sprintf("%s/sources/%s", c.cfg.BaseURL, uuid), bytes.NewBuffer(data))
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Set("Authorization", "UserKey "+c.cfg.APIKey)
+	req.Header.Set("Content-Type", "application/json")
+
+	var updated Source
+	if err := c.do(req, &updated); err != nil {
+		return nil, err
+	}
+
+	return &updated, nil
 }
 
 // GetSource retrieves a source by its UUID
@@ -334,4 +524,35 @@ func (c *Client) GetSourceMetadataCached(ctx context.Context, sourceUUID string)
 	// Store in cache
 	c.cache.Set(sourceUUID, source)
 	return source, nil
+}
+
+// GetRawSourceMetadata retrieves metadata for a source as a raw JSON string
+// This is useful for debugging when there are parsing errors
+func (c *Client) GetRawSourceMetadata(ctx context.Context, uuid string) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET",
+		fmt.Sprintf("%s/sources/%s/metadata", c.baseURL, uuid), nil)
+	if err != nil {
+		return "", err
+	}
+
+	req.Header.Set("Authorization", "UserKey "+c.cfg.APIKey)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+	}
+
+	// Read response body as raw string
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+
+	return string(bodyBytes), nil
 }

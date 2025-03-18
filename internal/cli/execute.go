@@ -91,6 +91,16 @@ func newExecuteCommand(cfg *config.Config) *cobra.Command {
 						break
 					}
 				}
+
+				// Also check inline tools if not found
+				if tool == nil {
+					for _, t := range source.InlineTools {
+						if t.Name == toolName {
+							tool = &t
+							break
+						}
+					}
+				}
 			} else {
 				// Search all sources
 				sources, err := client.ListSources(cmd.Context())
@@ -103,7 +113,21 @@ func newExecuteCommand(cfg *config.Config) *cobra.Command {
 					if err != nil {
 						continue
 					}
+
+					// Check regular tools
 					for _, t := range metadata.Tools {
+						if t.Name == toolName {
+							tool = &t
+							source = metadata
+							break
+						}
+					}
+					if tool != nil {
+						break
+					}
+
+					// Check inline tools
+					for _, t := range metadata.InlineTools {
 						if t.Name == toolName {
 							tool = &t
 							source = metadata
