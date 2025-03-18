@@ -354,27 +354,27 @@ type RunnerManifest struct {
 
 // Webhook represents a Kubiya webhook
 type Webhook struct {
-	ID            string        `json:"id"`
-	Name          string        `json:"name"`
-	Source        string        `json:"source"`
-	AgentID       string        `json:"agent_id"`
-	Communication Communication `json:"communication"`
-	CreatedAt     string        `json:"created_at"`
-	CreatedBy     string        `json:"created_by"`
-	Filter        string        `json:"filter"`
-	ManagedBy     string        `json:"managed_by"`
-	Org           string        `json:"org"`
-	Prompt        string        `json:"prompt"`
-	TaskID        string        `json:"task_id"`
-	UpdatedAt     string        `json:"updated_at"`
-	WebhookURL    string        `json:"webhook_url"`
+	ID                 string        `json:"id"`
+	Name               string        `json:"name"`
+	Source             string        `json:"source"`
+	AgentID            string        `json:"agent_id"`
+	Communication      Communication `json:"communication"`
+	CreatedAt          string        `json:"created_at,omitempty"`
+	CreatedBy          string        `json:"created_by,omitempty"`
+	Filter             string        `json:"filter"`
+	ManagedBy          string        `json:"managed_by,omitempty"`
+	Org                string        `json:"org,omitempty"`
+	Prompt             string        `json:"prompt"`
+	TaskID             string        `json:"task_id,omitempty"`
+	UpdatedAt          string        `json:"updated_at,omitempty"`
+	WebhookURL         string        `json:"webhook_url,omitempty"`
+	HideWebhookHeaders bool          `json:"hide_webhook_headers,omitempty"`
 }
 
 // Communication represents webhook communication settings
 type Communication struct {
 	Method      string `json:"method"`
 	Destination string `json:"destination"`
-	HideHeaders bool   `json:"hide_webhook_headers,omitempty"`
 }
 
 // Add this to types.go
