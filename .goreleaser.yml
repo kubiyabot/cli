@@ -3,7 +3,7 @@ before:
     - go mod tidy
 
 builds:
-  - main: ./cmd/kubiya
+  - main: ./main.go
     binary: kubiya-cli-{{ .Os }}-{{ .Arch }}
     env:
       - CGO_ENABLED=0
