@@ -1,6 +1,7 @@
 package kubiya
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -52,20 +53,24 @@ type Knowledge struct {
 
 // Source represents a tool source
 type Source struct {
-	UUID                    string         `json:"uuid"`
-	URL                     string         `json:"url"`
-	Name                    string         `json:"name"`
-	Description             string         `json:"description"`
-	TaskID                  string         `json:"task_id"`
-	ManagedBy               string         `json:"managed_by"`
-	ConnectedAgentsCount    int            `json:"connected_agents_count"`
-	ConnectedToolsCount     int            `json:"connected_tools_count"`
-	ConnectedWorkflowsCount int            `json:"connected_workflows_count"`
-	KubiyaMetadata          KubiyaMetadata `json:"kubiya_metadata"`
-	ErrorsCount             int            `json:"errors_count"`
-	Tools                   []Tool         `json:"tools"`
-	CreatedAt               time.Time      `json:"created_at"`
-	UpdatedAt               time.Time      `json:"updated_at"`
+	UUID                    string                 `json:"uuid"`
+	URL                     string                 `json:"url"`
+	Name                    string                 `json:"name"`
+	Description             string                 `json:"description"`
+	Type                    string                 `json:"type,omitempty"` // "git", "inline", or empty for backwards compatibility
+	TaskID                  string                 `json:"task_id"`
+	ManagedBy               string                 `json:"managed_by"`
+	ConnectedAgentsCount    int                    `json:"connected_agents_count"`
+	ConnectedToolsCount     int                    `json:"connected_tools_count"`
+	ConnectedWorkflowsCount int                    `json:"connected_workflows_count"`
+	KubiyaMetadata          KubiyaMetadata         `json:"kubiya_metadata"`
+	ErrorsCount             int                    `json:"errors_count"`
+	Tools                   []Tool                 `json:"tools"`
+	InlineTools             []Tool                 `json:"inline_tools,omitempty"`   // For inline sources
+	DynamicConfig           map[string]interface{} `json:"dynamic_config,omitempty"` // Dynamic configuration
+	Runner                  string                 `json:"runner,omitempty"`         // Runner name
+	CreatedAt               time.Time              `json:"created_at"`
+	UpdatedAt               time.Time              `json:"updated_at"`
 }
 
 // KubiyaMetadata represents metadata about source creation and updates
@@ -94,22 +99,139 @@ type ToolSource struct {
 
 // Tool represents a tool in a source
 type Tool struct {
-	Name        string     `json:"name" yaml:"name"`
-	Source      ToolSource `json:"source"`
-	Description string     `json:"description" yaml:"description"`
-	Args        []ToolArg  `json:"args" yaml:"args,omitempty"`
-	Env         []string   `json:"env" yaml:"env,omitempty"`
-	Content     string     `json:"content" yaml:"content,omitempty"`
-	FileName    string     `json:"file_name" yaml:"file_name,omitempty"`
-	Secrets     []string   `json:"secrets,omitempty"`
-	IconURL     string     `json:"icon_url,omitempty"`
-	Type        string     `json:"type,omitempty"`
-	Alias       string     `json:"alias,omitempty"`
-	WithFiles   []string   `json:"with_files,omitempty"`
-	WithVolumes []string   `json:"with_volumes,omitempty"`
-	LongRunning bool       `json:"long_running,omitempty"`
-	Metadata    []string   `json:"metadata,omitempty"`
-	Mermaid     string     `json:"mermaid,omitempty"`
+	Name        string      `json:"name" yaml:"name"`
+	Source      ToolSource  `json:"source"`
+	Description string      `json:"description" yaml:"description"`
+	Args        []ToolArg   `json:"args" yaml:"args,omitempty"`
+	Env         []string    `json:"env" yaml:"env,omitempty"`
+	Content     string      `json:"content" yaml:"content,omitempty"`
+	FileName    string      `json:"file_name" yaml:"file_name,omitempty"`
+	Secrets     []string    `json:"secrets,omitempty"`
+	IconURL     string      `json:"icon_url,omitempty"`
+	Type        string      `json:"type,omitempty"`
+	Alias       string      `json:"alias,omitempty"`
+	WithFiles   interface{} `json:"with_files,omitempty"`   // Can be []string or map[string]interface{}
+	WithVolumes interface{} `json:"with_volumes,omitempty"` // Can be []string or map[string]interface{}
+	LongRunning bool        `json:"long_running,omitempty"`
+	Metadata    interface{} `json:"metadata,omitempty"` // Can be []string or other formats
+	Mermaid     string      `json:"mermaid,omitempty"`
+}
+
+// GetToolFiles returns a list of files associated with this tool,
+// handling both string array and object formats safely
+func (t *Tool) GetToolFiles() []string {
+	files := []string{}
+
+	if t.WithFiles == nil {
+		return files
+	}
+
+	// Try to convert different formats to string slice
+	switch v := t.WithFiles.(type) {
+	case []string:
+		// Already a string slice
+		return v
+	case []interface{}:
+		// Convert interface slice to string slice
+		for _, item := range v {
+			if str, ok := item.(string); ok {
+				files = append(files, str)
+			}
+		}
+	case map[string]interface{}:
+		// Extract keys and values from map
+		for key, value := range v {
+			files = append(files, key)
+			if str, ok := value.(string); ok {
+				files = append(files, str)
+			}
+		}
+	}
+
+	return files
+}
+
+// GetVolumes returns a list of volumes associated with this tool,
+// handling both string array and object formats safely
+func (t *Tool) GetVolumes() []string {
+	volumes := []string{}
+
+	if t.WithVolumes == nil {
+		return volumes
+	}
+
+	// Try to convert different formats to string slice
+	switch v := t.WithVolumes.(type) {
+	case []string:
+		// Already a string slice
+		return v
+	case []interface{}:
+		// Convert interface slice to string slice
+		for _, item := range v {
+			if str, ok := item.(string); ok {
+				volumes = append(volumes, str)
+			}
+		}
+	case map[string]interface{}:
+		// Extract keys and values from map
+		for key, value := range v {
+			volumes = append(volumes, key)
+			if str, ok := value.(string); ok {
+				volumes = append(volumes, str)
+			}
+		}
+	}
+
+	return volumes
+}
+
+// GetMetadata returns metadata associated with this tool as strings,
+// handling both string array and object formats safely
+func (t *Tool) GetMetadata() []string {
+	metadata := []string{}
+
+	if t.Metadata == nil {
+		return metadata
+	}
+
+	// Try to convert different formats to string slice
+	switch v := t.Metadata.(type) {
+	case []string:
+		// Already a string slice
+		return v
+	case []interface{}:
+		// Convert interface slice to string slice
+		for _, item := range v {
+			if str, ok := item.(string); ok {
+				metadata = append(metadata, str)
+			} else {
+				// Try to marshal non-string items as JSON
+				if jsonData, err := json.Marshal(item); err == nil {
+					metadata = append(metadata, string(jsonData))
+				}
+			}
+		}
+	case map[string]interface{}:
+		// Extract keys and values from map
+		for key, value := range v {
+			metadata = append(metadata, key)
+			if str, ok := value.(string); ok {
+				metadata = append(metadata, str)
+			} else {
+				// Try to marshal non-string items as JSON
+				if jsonData, err := json.Marshal(value); err == nil {
+					metadata = append(metadata, string(jsonData))
+				}
+			}
+		}
+	default:
+		// Try to marshal any other type as JSON
+		if jsonData, err := json.Marshal(v); err == nil {
+			metadata = append(metadata, string(jsonData))
+		}
+	}
+
+	return metadata
 }
 
 // ToolMetadata represents metadata for a tool
@@ -252,6 +374,7 @@ type Webhook struct {
 type Communication struct {
 	Method      string `json:"method"`
 	Destination string `json:"destination"`
+	HideHeaders bool   `json:"hide_webhook_headers,omitempty"`
 }
 
 // Add this to types.go

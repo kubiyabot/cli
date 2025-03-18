@@ -569,16 +569,26 @@ func (c *Client) TeammateExists(ctx context.Context, nameOrID string) (*Teammate
 }
 
 // Example method to discover a source
-func (c *Client) DiscoverSource(ctx context.Context, sourceURL string, cfg map[string]interface{}, runnerName string) (*SourceDiscoveryResponse, error) {
+func (c *Client) DiscoverSource(ctx context.Context, sourceURL string, cfg map[string]interface{}, runnerName string, inlineTools []Tool) (*SourceDiscoveryResponse, error) {
 	body := struct {
 		DynamicConfig map[string]interface{} `json:"dynamic_config"`
+		InlineTools   []Tool                 `json:"inline_tools,omitempty"`
 	}{
 		DynamicConfig: cfg,
+		InlineTools:   inlineTools,
 	}
 
-	endpoint := fmt.Sprintf("/sources/load?url=%s", url.QueryEscape(sourceURL))
+	endpoint := "/sources/load"
+	if sourceURL != "" {
+		endpoint = fmt.Sprintf("%s?url=%s", endpoint, url.QueryEscape(sourceURL))
+	}
+
 	if runnerName != "" {
-		endpoint += fmt.Sprintf("&runner=%s", runnerName)
+		if strings.Contains(endpoint, "?") {
+			endpoint += fmt.Sprintf("&runner=%s", runnerName)
+		} else {
+			endpoint += fmt.Sprintf("?runner=%s", runnerName)
+		}
 	}
 
 	resp, err := c.post(ctx, endpoint, body)

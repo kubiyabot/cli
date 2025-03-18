@@ -95,6 +95,8 @@ func newListToolsCommand(cfg *config.Config) *cobra.Command {
 					return err
 				}
 				tools = source.Tools
+				// Also include inline tools if available
+				tools = append(tools, source.InlineTools...)
 			} else {
 				// Get tools from all sources
 				sources, err := client.ListSources(cmd.Context())
@@ -108,6 +110,8 @@ func newListToolsCommand(cfg *config.Config) *cobra.Command {
 						continue
 					}
 					tools = append(tools, metadata.Tools...)
+					// Also include inline tools if available
+					tools = append(tools, metadata.InlineTools...)
 				}
 			}
 
@@ -430,6 +434,16 @@ func newDescribeToolCommand(cfg *config.Config) *cobra.Command {
 						break
 					}
 				}
+				// Also check inline tools if not found
+				if tool == nil {
+					for _, t := range source.InlineTools {
+						if t.Name == toolName {
+							tool = &t
+							sourceName = source.Name
+							break
+						}
+					}
+				}
 			} else {
 				// Search all sources
 				sources, err := client.ListSources(cmd.Context())
@@ -442,7 +456,19 @@ func newDescribeToolCommand(cfg *config.Config) *cobra.Command {
 					if err != nil {
 						continue
 					}
+					// Check regular tools
 					for _, t := range metadata.Tools {
+						if t.Name == toolName {
+							tool = &t
+							sourceName = source.Name
+							break
+						}
+					}
+					if tool != nil {
+						break
+					}
+					// Check inline tools if not found
+					for _, t := range metadata.InlineTools {
 						if t.Name == toolName {
 							tool = &t
 							sourceName = source.Name

@@ -113,6 +113,65 @@ var (
 	StatusStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("39")).
 			Bold(true)
+
+	// Additional styles for improved UI
+	ActiveStyle = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color("#10B981"))
+
+	InactiveStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#EF4444"))
+
+	TableHeaderStyle = lipgloss.NewStyle().
+				Bold(true).
+				Foreground(lipgloss.Color("#60A5FA")).
+				Padding(0, 1)
+
+	TableRowStyle = lipgloss.NewStyle().
+			Padding(0, 1)
+
+	TableBorderStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("#374151"))
+
+	InfoBoxStyle = lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color("#60A5FA")).
+			Padding(1, 2).
+			MarginTop(1).
+			MarginBottom(1)
+
+	SpinnerStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#60A5FA"))
+
+	ProgressBarStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("#10B981"))
+
+	ProgressBarEmptyStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("#374151"))
+
+	CountStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#60A5FA")).
+			Bold(true)
+
+	KeyStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#F59E0B")).
+			Bold(true)
+
+	ValueStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#94A3B8"))
+
+	HeadingStyle = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color("#60A5FA")).
+			MarginTop(1).
+			MarginBottom(1)
+
+	BulletStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#F59E0B"))
+
+	HelpTextStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#94A3B8")).
+			Italic(true)
 )
 
 // DisableColors disables all color styling for non-TTY environments
@@ -145,6 +204,23 @@ func DisableColors() {
 	ToolOutputPrefixStyle = noStyle
 	CommandStyle = noStyle
 	StatusStyle = noStyle
+
+	// Disable additional styles
+	ActiveStyle = noStyle
+	InactiveStyle = noStyle
+	TableHeaderStyle = noStyle
+	TableRowStyle = noStyle
+	TableBorderStyle = noStyle
+	InfoBoxStyle = noStyle
+	SpinnerStyle = noStyle
+	ProgressBarStyle = noStyle
+	ProgressBarEmptyStyle = noStyle
+	CountStyle = noStyle
+	KeyStyle = noStyle
+	ValueStyle = noStyle
+	HeadingStyle = noStyle
+	BulletStyle = noStyle
+	HelpTextStyle = noStyle
 }
 
 // Add this function to check if colors should be enabled
