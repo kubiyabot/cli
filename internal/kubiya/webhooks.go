@@ -11,40 +11,15 @@ import (
 
 // ListWebhooks retrieves all webhooks
 func (c *Client) ListWebhooks(ctx context.Context) ([]Webhook, error) {
-	requestURL := fmt.Sprintf("%s/event", c.baseURL)
-
 	if c.debug {
-		fmt.Printf("Making webhook list request to: %s\n", requestURL)
-		fmt.Printf("Using API key: %s...%s\n", c.cfg.APIKey[:5], c.cfg.APIKey[len(c.cfg.APIKey)-5:])
+		fmt.Printf("Listing webhooks using get helper\n")
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "GET", requestURL, nil)
+	resp, err := c.get(ctx, "/event")
 	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Set("Authorization", "UserKey "+c.cfg.APIKey)
-
-	resp, err := c.client.Do(req)
-	if err != nil {
-		if c.debug {
-			fmt.Printf("Error making webhook list request: %v\n", err)
-		}
 		return nil, err
 	}
 	defer resp.Body.Close()
-
-	if c.debug {
-		fmt.Printf("Webhook list response status: %d\n", resp.StatusCode)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		if c.debug {
-			fmt.Printf("Error response body: %s\n", string(body))
-		}
-		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
-	}
 
 	var webhooks []Webhook
 	if err := json.NewDecoder(resp.Body).Decode(&webhooks); err != nil {
@@ -63,23 +38,15 @@ func (c *Client) ListWebhooks(ctx context.Context) ([]Webhook, error) {
 
 // GetWebhook retrieves a specific webhook by ID
 func (c *Client) GetWebhook(ctx context.Context, id string) (*Webhook, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET",
-		fmt.Sprintf("%s/event/%s", c.baseURL, id), nil)
-	if err != nil {
-		return nil, err
+	if c.debug {
+		fmt.Printf("Getting webhook %s using get helper\n", id)
 	}
 
-	req.Header.Set("Authorization", "UserKey "+c.cfg.APIKey)
-
-	resp, err := c.client.Do(req)
+	resp, err := c.get(ctx, fmt.Sprintf("/event/%s", id))
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
-	}
 
 	var webhook Webhook
 	if err := json.NewDecoder(resp.Body).Decode(&webhook); err != nil {
@@ -91,29 +58,15 @@ func (c *Client) GetWebhook(ctx context.Context, id string) (*Webhook, error) {
 
 // UpdateWebhook updates an existing webhook
 func (c *Client) UpdateWebhook(ctx context.Context, id string, webhook Webhook) (*Webhook, error) {
-	data, err := json.Marshal(webhook)
-	if err != nil {
-		return nil, err
+	if c.debug {
+		fmt.Printf("Updating webhook %s using put helper\n", id)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "PUT",
-		fmt.Sprintf("%s/event/%s", c.baseURL, id), bytes.NewBuffer(data))
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Set("Authorization", "UserKey "+c.cfg.APIKey)
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.client.Do(req)
+	resp, err := c.put(ctx, fmt.Sprintf("/event/%s", id), webhook)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
-	}
 
 	var updated Webhook
 	if err := json.NewDecoder(resp.Body).Decode(&updated); err != nil {
@@ -125,28 +78,22 @@ func (c *Client) UpdateWebhook(ctx context.Context, id string, webhook Webhook) 
 
 // CreateWebhook creates a new webhook
 func (c *Client) CreateWebhook(ctx context.Context, webhook Webhook) (*Webhook, error) {
-	data, err := json.Marshal(webhook)
-	if err != nil {
-		return nil, err
+	// Use the client's post helper method which handles URL formatting consistently
+	if c.debug {
+		fmt.Printf("Creating webhook using post helper\n")
+		data, _ := json.MarshalIndent(webhook, "", "  ")
+		fmt.Printf("Webhook payload: %s\n", string(data))
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST",
-		fmt.Sprintf("%s/event", c.baseURL), bytes.NewBuffer(data))
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Set("Authorization", "UserKey "+c.cfg.APIKey)
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.client.Do(req)
+	resp, err := c.post(ctx, "/event", webhook)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("unexpected status code: %d, response: %s", resp.StatusCode, string(body))
 	}
 
 	var created Webhook
@@ -159,23 +106,15 @@ func (c *Client) CreateWebhook(ctx context.Context, webhook Webhook) (*Webhook, 
 
 // DeleteWebhook deletes a webhook by ID
 func (c *Client) DeleteWebhook(ctx context.Context, id string) error {
-	req, err := http.NewRequestWithContext(ctx, "DELETE",
-		fmt.Sprintf("%s/event/%s", c.baseURL, id), nil)
-	if err != nil {
-		return err
+	if c.debug {
+		fmt.Printf("Deleting webhook %s using delete helper\n", id)
 	}
 
-	req.Header.Set("Authorization", "UserKey "+c.cfg.APIKey)
-
-	resp, err := c.client.Do(req)
+	resp, err := c.delete(ctx, fmt.Sprintf("/event/%s", id))
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("unexpected status code: %d", resp.StatusCode)
-	}
 
 	// Parse response
 	var result struct {

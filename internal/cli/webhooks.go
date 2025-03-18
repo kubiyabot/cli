@@ -188,7 +188,7 @@ func newGetWebhookCommand(cfg *config.Config) *cobra.Command {
 					fmt.Printf("  Destination: %s\n", webhook.Communication.Destination)
 				}
 
-				fmt.Printf("  Hide Headers: %t\n", webhook.Communication.HideHeaders)
+				fmt.Printf("  Hide Headers: %t\n", webhook.HideWebhookHeaders)
 
 				// Print filter details
 				if webhook.Filter != "" {
@@ -256,8 +256,6 @@ func newCreateWebhookCommand(cfg *config.Config) *cobra.Command {
 		hideHeaders bool
 		fromFile    string
 		fromStdin   bool
-		teamName    string
-		channelName string
 	)
 
 	cmd := &cobra.Command{
@@ -278,8 +276,7 @@ func newCreateWebhookCommand(cfg *config.Config) *cobra.Command {
     --source "jira" \
     --agent-id "abc-123" \
     --method "Teams" \
-    --team-name "kubiya.ai" \
-    --channel-name "General" \
+    --destination "kubiya.ai:General" \
     --prompt "New issue: {{.event.issue.key}}"
 
   # Create webhook from JSON/YAML file
@@ -375,14 +372,15 @@ func newCreateWebhookCommand(cfg *config.Config) *cobra.Command {
 
 			// Create webhook from flags
 			webhook := kubiya.Webhook{
-				Name:    name,
-				Source:  source,
-				AgentID: agentID,
-				Communication: kubiya.Communication{
-					HideHeaders: hideHeaders,
+				Name:               name,
+				Source:             source,
+				AgentID:            agentID,
+				Filter:             filter,
+				Prompt:             prompt,
+				HideWebhookHeaders: hideHeaders,
+				Communication:      kubiya.Communication{
+					// No HideHeaders field here anymore
 				},
-				Filter: filter,
-				Prompt: prompt,
 			}
 
 			// Set method and destination based on specified method
@@ -390,14 +388,20 @@ func newCreateWebhookCommand(cfg *config.Config) *cobra.Command {
 
 			// Teams-specific processing
 			if strings.EqualFold(method, "Teams") {
-				// If team and channel provided, format as Teams destination
-				if teamName != "" && channelName != "" {
-					webhook.Communication.Method = "Teams"
-					webhook.Communication.Destination = fmt.Sprintf("#{\"team_name\": \"%s\", \"channel_name\": \"%s\"}", teamName, channelName)
-				} else if destination == "" {
-					return fmt.Errorf("for Teams webhooks, you must provide either --destination or both --team-name and --channel-name")
+				if destination != "" {
+					// Parse the destination in format "team:channel"
+					parts := strings.Split(destination, ":")
+					if len(parts) == 2 {
+						// Use the parsed team and channel names directly in the destination format
+						webhook.Communication.Method = "Teams"
+						// Format Teams destination exactly as the API expects it
+						webhook.Communication.Destination = fmt.Sprintf("#{\"team_name\": \"%s\", \"channel_name\": \"%s\"}", parts[0], parts[1])
+					} else {
+						// Try to use as-is (might be in JSON format already)
+						webhook.Communication.Destination = destination
+					}
 				} else {
-					webhook.Communication.Destination = destination
+					return fmt.Errorf("for Teams webhooks, you must provide --destination in the format 'team:channel' (e.g., 'kubiya.ai:General')")
 				}
 			} else {
 				webhook.Communication.Destination = destination
@@ -448,24 +452,21 @@ func newCreateWebhookCommand(cfg *config.Config) *cobra.Command {
 	cmd.Flags().StringVarP(&source, "source", "s", "", "Event source")
 	cmd.Flags().StringVarP(&agentID, "agent-id", "a", "", "Agent ID")
 	cmd.Flags().StringVarP(&method, "method", "m", "Slack", "Communication method (Slack|Teams|HTTP)")
-	cmd.Flags().StringVarP(&destination, "destination", "d", "", "Communication destination (channel for Slack, JSON for Teams)")
+	cmd.Flags().StringVarP(&destination, "destination", "d", "", "Communication destination (Slack: #channel, Teams: team:channel)")
 	cmd.Flags().StringVarP(&filter, "filter", "f", "", "Event filter (JMESPath expression)")
 	cmd.Flags().StringVarP(&prompt, "prompt", "p", "", "Agent prompt with template variables ({{.event.*}})")
 	cmd.Flags().BoolVar(&hideHeaders, "hide-headers", false, "Hide webhook headers in notifications")
-
-	// Teams-specific flags
-	cmd.Flags().StringVar(&teamName, "team-name", "", "Teams team name (when method is Teams)")
-	cmd.Flags().StringVar(&channelName, "channel-name", "", "Teams channel name (when method is Teams)")
 
 	// File input flags
 	cmd.Flags().StringVar(&fromFile, "file", "", "File containing webhook definition (JSON or YAML)")
 	cmd.Flags().BoolVar(&fromStdin, "stdin", false, "Read webhook definition from stdin")
 
-	// Only require name, source, agent-id, and prompt if not using file/stdin
-	cmd.MarkFlagsRequiredTogether("name", "source", "agent-id", "prompt")
-	cmd.MarkFlagsMutuallyExclusive("file", "stdin", "name")
-	cmd.MarkFlagsMutuallyExclusive("team-name", "destination")
-	cmd.MarkFlagsRequiredTogether("team-name", "channel-name")
+	// Try to mark flags required together if this Cobra version supports it
+	cobra12OrHigher := true
+	if cobra12OrHigher {
+		cmd.MarkFlagsRequiredTogether("name", "source", "agent-id", "prompt")
+		cmd.MarkFlagsMutuallyExclusive("file", "stdin", "name")
+	}
 
 	return cmd
 }
@@ -525,7 +526,7 @@ func newUpdateWebhookCommand(cfg *config.Config) *cobra.Command {
 				existing.Prompt = prompt
 			}
 			if hideHeadersSet {
-				existing.Communication.HideHeaders = hideHeaders
+				existing.HideWebhookHeaders = hideHeaders
 			}
 
 			// Show changes
@@ -535,7 +536,7 @@ func newUpdateWebhookCommand(cfg *config.Config) *cobra.Command {
 			fmt.Printf("Agent ID: %s\n", existing.AgentID)
 			fmt.Printf("Communication Method: %s\n", existing.Communication.Method)
 			fmt.Printf("Communication Destination: %s\n", existing.Communication.Destination)
-			fmt.Printf("Hide Headers: %t\n", existing.Communication.HideHeaders)
+			fmt.Printf("Hide Headers: %t\n", existing.HideWebhookHeaders)
 			fmt.Printf("Filter: %s\n", existing.Filter)
 			fmt.Printf("Prompt: %s\n", existing.Prompt)
 
@@ -944,13 +945,13 @@ func newExportWebhookCommand(cfg *config.Config) *cobra.Command {
 func generateWebhookTemplate(format string) string {
 	// Create example webhook
 	webhook := kubiya.Webhook{
-		Name:    "example-webhook",
-		Source:  "github",
-		AgentID: "AGENT_ID_HERE",
+		Name:               "example-webhook",
+		Source:             "github",
+		AgentID:            "AGENT_ID_HERE",
+		HideWebhookHeaders: false,
 		Communication: kubiya.Communication{
 			Method:      "Slack",
 			Destination: "#channel-name",
-			HideHeaders: false,
 		},
 		Filter: "pull_request[?state == 'open']",
 		Prompt: "# GitHub Pull Request\n\nPlease analyze the following PR details:\n\n- Title: {{.event.pull_request.title}}\n- Author: {{.event.pull_request.user.login}}\n- Description: {{.event.pull_request.body}}",
@@ -1070,12 +1071,9 @@ func newWizardWebhookCommand(cfg *config.Config) *cobra.Command {
 				}
 			case "2":
 				webhook.Communication.Method = "Teams"
-				teamName := readInput("Teams team name", "")
-				channelName := readInput("Teams channel name", "")
-				if teamName != "" && channelName != "" {
-					webhook.Communication.Destination = fmt.Sprintf("#{\"team_name\": \"%s\", \"channel_name\": \"%s\"}", teamName, channelName)
-				} else {
-					return fmt.Errorf("team name and channel name are required for Teams communication")
+				webhook.Communication.Destination = readInput("Teams destination (e.g., kubiya.ai:General)", "")
+				if webhook.Communication.Destination == "" {
+					return fmt.Errorf("Teams destination is required")
 				}
 			case "3":
 				webhook.Communication.Method = "HTTP"
@@ -1115,7 +1113,7 @@ func newWizardWebhookCommand(cfg *config.Config) *cobra.Command {
 
 			// Get header visibility
 			hideHeadersChoice := readInput("Hide webhook headers in notifications? (y/N)", "n")
-			webhook.Communication.HideHeaders = strings.ToLower(hideHeadersChoice) == "y"
+			webhook.HideWebhookHeaders = strings.ToLower(hideHeadersChoice) == "y"
 
 			// Review webhook details
 			fmt.Println("\n📝 Review webhook details:")
@@ -1124,7 +1122,7 @@ func newWizardWebhookCommand(cfg *config.Config) *cobra.Command {
 			fmt.Printf("Agent ID: %s\n", webhook.AgentID)
 			fmt.Printf("Communication Method: %s\n", webhook.Communication.Method)
 			fmt.Printf("Communication Destination: %s\n", webhook.Communication.Destination)
-			fmt.Printf("Hide Headers: %t\n", webhook.Communication.HideHeaders)
+			fmt.Printf("Hide Headers: %t\n", webhook.HideWebhookHeaders)
 			fmt.Printf("Filter: %s\n", webhook.Filter)
 			fmt.Printf("Prompt: \n%s\n", webhook.Prompt)
 
