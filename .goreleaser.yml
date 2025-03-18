@@ -16,9 +16,10 @@ builds:
       - arm64
     ldflags:
       - -s -w
-      - -X main.versionStr={{.Tag}}
-      - -X main.commit={{.Commit}}
-      - -X main.date={{.Date}}
+      - -X github.com/kubiyabot/cli/internal/version.Version={{.Tag}}
+      - -X github.com/kubiyabot/cli/internal/version.commit={{.Commit}}
+      - -X github.com/kubiyabot/cli/internal/version.date={{.Date}}
+      - -X github.com/kubiyabot/cli/internal/version.builtBy=goreleaser
     mod_timestamp: '{{ .CommitTimestamp }}'
 
 # Disable archives to distribute raw binaries
