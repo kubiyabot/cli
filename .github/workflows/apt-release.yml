@@ -26,7 +26,12 @@ jobs:
       - name: Install required packages
         run: |
           sudo apt-get update
-          sudo apt-get install -y devscripts debhelper dh-make
+          sudo apt-get install -y devscripts debhelper dh-make gnupg
+
+      - name: Setup GPG
+        run: |
+          echo "${{ secrets.GPG_PRIVATE_KEY }}" | gpg --import
+          echo "${{ secrets.GPG_PASSPHRASE }}" | gpg --batch --yes --passphrase-fd 0 --sign-key $(gpg --list-secret-keys --keyid-format=long | grep -A 1 "sec" | tail -n 1 | awk '{print $1}')
 
       - name: Create Debian package structure
         run: |
@@ -84,8 +89,8 @@ jobs:
       - name: Sign Release file
         run: |
           cd apt-repo/dists/stable
-          gpg --clearsign -o InRelease Release
-          gpg -abs -o Release.gpg Release
+          echo "${{ secrets.GPG_PASSPHRASE }}" | gpg --batch --yes --passphrase-fd 0 --clearsign -o InRelease Release
+          echo "${{ secrets.GPG_PASSPHRASE }}" | gpg --batch --yes --passphrase-fd 0 -abs -o Release.gpg Release
 
       - name: Deploy to GitHub Pages
         uses: peaceiris/actions-gh-pages@v3
