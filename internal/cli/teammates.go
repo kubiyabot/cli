@@ -39,18 +39,20 @@ func newTeammateCommand(cfg *config.Config) *cobra.Command {
 
 func newCreateTeammateCommand(cfg *config.Config) *cobra.Command {
 	var (
-		name            string
-		description     string
-		interactive     bool
-		llmModel        string
-		instructionType string
-		inputFile       string
-		inputFormat     string
-		fromStdin       bool
-		sources         []string
-		secrets         []string
-		integrations    []string
-		envVars         []string
+		name              string
+		description       string
+		interactive       bool
+		llmModel          string
+		instructionType   string
+		inputFile         string
+		inputFormat       string
+		fromStdin         bool
+		sources           []string
+		secrets           []string
+		integrations      []string
+		envVars           []string
+		inlineSourceFile  string
+		inlineSourceStdin bool
 	)
 
 	cmd := &cobra.Command{
@@ -76,6 +78,58 @@ func newCreateTeammateCommand(cfg *config.Config) *cobra.Command {
 
 			var teammate kubiya.Teammate
 			var err error
+
+			// Handle inline sources first if provided
+			if inlineSourceFile != "" || inlineSourceStdin {
+				// We need to create a temporary stand-alone source using sources.go functionality
+				var sourceName string
+
+				if name != "" {
+					sourceName = fmt.Sprintf("%s - Inline Source", name)
+				} else {
+					sourceName = "Inline Source for Teammate"
+				}
+
+				// Set up command to use sources functionality
+				args := []string{"source", "add"}
+
+				if inlineSourceFile != "" {
+					fmt.Printf("📄 Using inline source from file: %s\n", inlineSourceFile)
+					args = append(args, "--inline", inlineSourceFile)
+				} else if inlineSourceStdin {
+					fmt.Println("📥 Reading inline source from stdin...")
+					args = append(args, "--inline-stdin")
+				}
+
+				// Add name
+				args = append(args, "--name", sourceName)
+
+				// Add yes flag to skip confirmation
+				args = append(args, "--yes")
+
+				// If runner is specified, add it
+				if llmModel != "" {
+					args = append(args, "--runner", llmModel)
+				}
+
+				// Capture the output to extract the UUID
+				fmt.Printf("Creating inline source '%s'...\n", sourceName)
+				output, err := captureCommandOutput("kubiya", args...)
+				if err != nil {
+					return fmt.Errorf("failed to create inline source: %w\nOutput: %s", err, output)
+				}
+
+				// Extract the UUID from the output
+				sourceUUID := extractUUIDFromSourceOutput(output)
+				if sourceUUID == "" {
+					return fmt.Errorf("failed to extract UUID from source creation output: %s", output)
+				}
+
+				fmt.Printf("✅ Created inline source with UUID: %s\n", sourceUUID)
+
+				// Add the source UUID to the teammate
+				teammate.Sources = append(teammate.Sources, sourceUUID)
+			}
 
 			// Process input based on flags
 			switch {
@@ -168,6 +222,14 @@ func newCreateTeammateCommand(cfg *config.Config) *cobra.Command {
 				return fmt.Errorf("failed to create teammate: %w", err)
 			}
 
+			// Ensure we have a valid UUID before displaying
+			if created.UUID == "" {
+				fmt.Printf("\n%s\n", style.WarningStyle.Render("⚠️ Warning: API returned a teammate with empty UUID!"))
+				fmt.Printf("The teammate may have been created, but the UUID was not returned by the API.\n")
+				fmt.Printf("Please check the 'kubiya teammate list' command to find your teammate.\n\n")
+			}
+
+			// Display the teammate info
 			fmt.Printf("%s Created teammate: %s (UUID: %s)\n\n",
 				style.SuccessStyle.Render("✅"),
 				style.HighlightStyle.Render(created.Name),
@@ -175,10 +237,17 @@ func newCreateTeammateCommand(cfg *config.Config) *cobra.Command {
 
 			// Helpful next steps
 			fmt.Printf("%s\n", style.SubtitleStyle.Render("Next Steps"))
-			fmt.Printf("• View details: %s\n",
-				style.CommandStyle.Render(fmt.Sprintf("kubiya teammate get %s", created.UUID)))
-			fmt.Printf("• Edit teammate: %s\n",
-				style.CommandStyle.Render(fmt.Sprintf("kubiya teammate edit %s --interactive", created.UUID)))
+			if created.UUID != "" {
+				fmt.Printf("• View details: %s\n",
+					style.CommandStyle.Render(fmt.Sprintf("kubiya teammate get %s", created.UUID)))
+				fmt.Printf("• Edit teammate: %s\n",
+					style.CommandStyle.Render(fmt.Sprintf("kubiya teammate edit %s --interactive", created.UUID)))
+			} else {
+				fmt.Printf("• List all teammates: %s\n",
+					style.CommandStyle.Render("kubiya teammate list"))
+				fmt.Printf("• Create another teammate: %s\n",
+					style.CommandStyle.Render("kubiya teammate create --interactive"))
+			}
 
 			return nil
 		},
@@ -201,6 +270,10 @@ func newCreateTeammateCommand(cfg *config.Config) *cobra.Command {
 	cmd.Flags().StringArrayVar(&secrets, "secret", []string{}, "Secret name to attach (can be specified multiple times)")
 	cmd.Flags().StringArrayVar(&integrations, "integration", []string{}, "Integration to attach (can be specified multiple times)")
 	cmd.Flags().StringArrayVar(&envVars, "env", []string{}, "Environment variable in KEY=VALUE format (can be specified multiple times)")
+
+	// Add flags for inline sources
+	cmd.Flags().StringVar(&inlineSourceFile, "inline-source", "", "File containing inline source tool definitions (YAML or JSON)")
+	cmd.Flags().BoolVar(&inlineSourceStdin, "inline-source-stdin", false, "Read inline source tool definitions from stdin")
 
 	return cmd
 }
@@ -258,6 +331,34 @@ func validateTeammate(teammate *kubiya.Teammate) error {
 
 	if teammate.InstructionType == "" {
 		teammate.InstructionType = "tools"
+	}
+
+	// Validate all sources have non-empty UUIDs
+	for i, sourceID := range teammate.Sources {
+		if sourceID == "" {
+			return fmt.Errorf("source at index %d has empty UUID", i)
+		}
+	}
+
+	// Validate all secrets have non-empty names
+	for i, secret := range teammate.Secrets {
+		if secret == "" {
+			return fmt.Errorf("secret at index %d has empty name", i)
+		}
+	}
+
+	// Validate all integrations have non-empty names
+	for i, integration := range teammate.Integrations {
+		if integration == "" {
+			return fmt.Errorf("integration at index %d has empty name", i)
+		}
+	}
+
+	// Validate environment variables have non-empty keys
+	for key := range teammate.Environment {
+		if key == "" {
+			return fmt.Errorf("environment variable has empty key")
+		}
 	}
 
 	return nil
@@ -1448,4 +1549,29 @@ func confirmYesNo(prompt string) bool {
 	var confirm string
 	fmt.Scanln(&confirm)
 	return strings.ToLower(confirm) == "y"
+}
+
+// captureCommandOutput runs a command and returns its output
+func captureCommandOutput(command string, args ...string) (string, error) {
+	cmd := exec.Command(command, args...)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("command failed: %s, error: %w", string(output), err)
+	}
+	return string(output), nil
+}
+
+// extractUUIDFromSourceOutput extracts the UUID from the source creation output
+func extractUUIDFromSourceOutput(output string) string {
+	// Look for lines containing "UUID: <uuid>"
+	lines := strings.Split(output, "\n")
+	for _, line := range lines {
+		if strings.Contains(line, "UUID:") {
+			parts := strings.SplitN(line, "UUID:", 2)
+			if len(parts) == 2 {
+				return strings.TrimSpace(parts[1])
+			}
+		}
+	}
+	return ""
 }
