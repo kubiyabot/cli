@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -741,4 +742,607 @@ func (c *Client) GenerateTool(ctx context.Context, description, sessionID string
 	}()
 
 	return messages, nil
+}
+
+// ListProjects retrieves all projects
+func (c *Client) ListProjects(ctx context.Context) ([]Project, error) {
+	if c.debug {
+		fmt.Printf("Making request to: %s/usecases\n", c.baseURL)
+	}
+
+	resp, err := c.get(ctx, "/usecases")
+	if err != nil {
+		if c.debug {
+			fmt.Printf("Error fetching projects: %v\n", err)
+		}
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if c.debug {
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body = io.NopCloser(bytes.NewBuffer(body))
+		fmt.Printf("Response Status: %d\n", resp.StatusCode)
+		fmt.Printf("Response Body: %s\n", string(body))
+	}
+
+	var response struct {
+		Usecases []Project `json:"usecases"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+		if c.debug {
+			fmt.Printf("Error decoding response: %v\n", err)
+		}
+		return nil, err
+	}
+
+	if c.debug {
+		fmt.Printf("Parsed %d projects\n", len(response.Usecases))
+		for i, p := range response.Usecases {
+			fmt.Printf("Project %d: Name=%s, UUID=%s, Status=%s\n",
+				i+1, p.Name, p.UUID, p.Status)
+		}
+	}
+
+	return response.Usecases, nil
+}
+
+// GetProject retrieves a project by UUID
+func (c *Client) GetProject(ctx context.Context, uuid string) (*Project, error) {
+	resp, err := c.get(ctx, fmt.Sprintf("/tasks/%s", uuid))
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var project Project
+	if err := json.NewDecoder(resp.Body).Decode(&project); err != nil {
+		return nil, err
+	}
+	return &project, nil
+}
+
+// CreateProject creates a new project
+func (c *Client) CreateProject(ctx context.Context, templateID string, name string, description string, variables map[string]string) (*Project, error) {
+	// Validate variables against template
+	if templateID != "" {
+		missingVars, extraVars, typeErrors, err := c.ValidateVariablesAgainstTemplate(ctx, templateID, variables)
+		if err != nil {
+			return nil, err
+		}
+
+		// Error if any required variables are missing
+		if len(missingVars) > 0 {
+			return nil, fmt.Errorf("missing required variables: %s", strings.Join(missingVars, ", "))
+		}
+
+		// Error if any type validation errors
+		if len(typeErrors) > 0 {
+			return nil, fmt.Errorf("variable type validation errors: %s", strings.Join(typeErrors, ", "))
+		}
+
+		// Log extra variables as warning
+		if len(extraVars) > 0 && c.debug {
+			fmt.Printf("Warning: The following variables are not defined in the template: %s\n",
+				strings.Join(extraVars, ", "))
+		}
+	}
+
+	// Convert variables to Variable objects
+	validatedVars := make([]Variable, 0, len(variables))
+	for name, value := range variables {
+		validatedVars = append(validatedVars, Variable{
+			Name:  name,
+			Value: value,
+			Type:  "string", // Default type
+		})
+	}
+
+	// Create request body
+	requestBody := map[string]interface{}{
+		"template_id": templateID,
+		"name":        name,
+		"description": description,
+		"variables":   validatedVars,
+	}
+
+	body, err := json.Marshal(requestBody)
+	if err != nil {
+		return nil, err
+	}
+
+	url := fmt.Sprintf("%s/usecases", c.baseURL)
+
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(body))
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "UserKey "+c.cfg.APIKey)
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("unexpected status code: %d, body: %s", resp.StatusCode, string(body))
+	}
+
+	var project Project
+	if err := json.NewDecoder(resp.Body).Decode(&project); err != nil {
+		return nil, err
+	}
+
+	return &project, nil
+}
+
+// UpdateProject updates an existing project
+func (c *Client) UpdateProject(ctx context.Context, projectID string, name string, description string, variables map[string]string) (*Project, error) {
+	// Validate variables
+	// First get project to determine template ID
+	project, err := c.GetProject(ctx, projectID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get project: %w", err)
+	}
+
+	// If the project has a template ID, validate variables against it
+	var validatedVars []Variable
+	if templateID := project.UsecaseID; templateID != "" {
+		missingVars, extraVars, typeErrors, err := c.ValidateVariablesAgainstTemplate(ctx, templateID, variables)
+		if err != nil {
+			return nil, err
+		}
+
+		// Error if any required variables are missing
+		if len(missingVars) > 0 {
+			return nil, fmt.Errorf("missing required variables: %s", strings.Join(missingVars, ", "))
+		}
+
+		// Error if any type validation errors
+		if len(typeErrors) > 0 {
+			return nil, fmt.Errorf("variable type validation errors: %s", strings.Join(typeErrors, ", "))
+		}
+
+		// Log extra variables as warning
+		if len(extraVars) > 0 && c.debug {
+			fmt.Printf("Warning: The following variables are not defined in the template: %s\n",
+				strings.Join(extraVars, ", "))
+		}
+
+		// Convert variables to Variable objects
+		validatedVars = make([]Variable, 0, len(variables))
+		for name, value := range variables {
+			validatedVars = append(validatedVars, Variable{
+				Name:  name,
+				Value: value,
+				Type:  "string", // Default type
+			})
+		}
+	} else {
+		// Simple conversion if no template
+		validatedVars = make([]Variable, 0, len(variables))
+		for name, value := range variables {
+			validatedVars = append(validatedVars, Variable{
+				Name:  name,
+				Value: value,
+				Type:  "string",
+			})
+		}
+	}
+
+	// Create request body
+	requestBody := map[string]interface{}{
+		"name":        name,
+		"description": description,
+		"variables":   validatedVars,
+	}
+
+	body, err := json.Marshal(requestBody)
+	if err != nil {
+		return nil, err
+	}
+
+	url := fmt.Sprintf("%s/usecases/%s", c.baseURL, projectID)
+
+	req, err := http.NewRequestWithContext(ctx, "PATCH", url, bytes.NewBuffer(body))
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "UserKey "+c.cfg.APIKey)
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("unexpected status code: %d, body: %s", resp.StatusCode, string(body))
+	}
+
+	var updatedProject Project
+	if err := json.NewDecoder(resp.Body).Decode(&updatedProject); err != nil {
+		return nil, err
+	}
+
+	return &updatedProject, nil
+}
+
+// DeleteProject deletes a project by UUID
+func (c *Client) DeleteProject(ctx context.Context, uuid string) error {
+	resp, err := c.delete(ctx, fmt.Sprintf("/tasks/%s", uuid))
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	return nil
+}
+
+// ListProjectTemplates retrieves project templates from a repository
+func (c *Client) ListProjectTemplates(ctx context.Context, repository string) ([]ProjectTemplate, error) {
+	var urlString string
+	// The correct API endpoint for templates is /api/v1/usecases
+	urlString = fmt.Sprintf("%s/usecases", c.baseURL)
+
+	req, err := http.NewRequestWithContext(ctx, "GET", urlString, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Set("Authorization", "UserKey "+c.cfg.APIKey)
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if c.debug {
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body = io.NopCloser(bytes.NewBuffer(body))
+		fmt.Printf("Response Status: %d\n", resp.StatusCode)
+		fmt.Printf("Response Body: %s\n", string(body))
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("unexpected status code: %d, body: %s", resp.StatusCode, string(body))
+	}
+
+	var response struct {
+		Usecases []ProjectTemplate `json:"usecases"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+		return nil, err
+	}
+
+	return response.Usecases, nil
+}
+
+// GetProjectTemplate retrieves a project template by ID
+func (c *Client) GetProjectTemplate(ctx context.Context, id string) (*ProjectTemplate, error) {
+	// The correct API endpoint for a specific template is /api/v1/usecases/{id}
+	url := fmt.Sprintf("%s/usecases/%s", c.baseURL, id)
+
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Set("Authorization", "UserKey "+c.cfg.APIKey)
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if c.debug {
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body = io.NopCloser(bytes.NewBuffer(body))
+		fmt.Printf("Response Status: %d\n", resp.StatusCode)
+		fmt.Printf("Response Body: %s\n", string(body))
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("unexpected status code: %d, body: %s", resp.StatusCode, string(body))
+	}
+
+	// The API returns the template directly, not wrapped in a "template" field
+	var template ProjectTemplate
+
+	if err := json.NewDecoder(resp.Body).Decode(&template); err != nil {
+		return nil, err
+	}
+
+	return &template, nil
+}
+
+// CreateProjectPlan creates a new plan for a project
+func (c *Client) CreateProjectPlan(ctx context.Context, projectID string) (*ProjectPlan, error) {
+	payload := map[string]interface{}{
+		"project_id": projectID,
+	}
+
+	resp, err := c.post(ctx, fmt.Sprintf("/tasks/plan/%s", projectID), payload)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var plan ProjectPlan
+	if err := json.NewDecoder(resp.Body).Decode(&plan); err != nil {
+		return nil, err
+	}
+	return &plan, nil
+}
+
+// GetProjectPlan retrieves a plan by ID
+func (c *Client) GetProjectPlan(ctx context.Context, planID string) (*ProjectPlan, error) {
+	resp, err := c.get(ctx, fmt.Sprintf("/tasks/plan/%s", planID))
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var plan ProjectPlan
+	if err := json.NewDecoder(resp.Body).Decode(&plan); err != nil {
+		return nil, err
+	}
+	return &plan, nil
+}
+
+// ApproveProjectPlan approves a plan for execution
+func (c *Client) ApproveProjectPlan(ctx context.Context, planID string) (*ProjectExecution, error) {
+	// The API uses PUT with the same payload as in the example
+	payload := map[string]interface{}{
+		"action": "approve",
+	}
+
+	resp, err := c.put(ctx, fmt.Sprintf("/tasks/%s", planID), payload)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var execution ProjectExecution
+	if err := json.NewDecoder(resp.Body).Decode(&execution); err != nil {
+		return nil, err
+	}
+	return &execution, nil
+}
+
+// GetProjectExecution retrieves an execution by ID
+func (c *Client) GetProjectExecution(ctx context.Context, executionID string) (*ProjectExecution, error) {
+	resp, err := c.get(ctx, fmt.Sprintf("/tasks/%s", executionID))
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var execution ProjectExecution
+	if err := json.NewDecoder(resp.Body).Decode(&execution); err != nil {
+		return nil, err
+	}
+	return &execution, nil
+}
+
+// GetProjectExecutionLogs retrieves logs for an execution
+func (c *Client) GetProjectExecutionLogs(ctx context.Context, executionID string) ([]string, error) {
+	resp, err := c.get(ctx, fmt.Sprintf("/tasks/logs/%s", executionID))
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var logsResponse struct {
+		Done bool `json:"done"`
+		Plan struct {
+			Status  string `json:"status"`
+			Content string `json:"content"`
+		} `json:"plan"`
+		Apply struct {
+			Status  string `json:"status"`
+			Content string `json:"content"`
+		} `json:"apply"`
+		Status string   `json:"status"`
+		Errors []string `json:"errors"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&logsResponse); err != nil {
+		return nil, err
+	}
+
+	logs := []string{}
+	if logsResponse.Plan.Content != "" {
+		logs = append(logs, fmt.Sprintf("Plan: %s\n%s", logsResponse.Plan.Status, logsResponse.Plan.Content))
+	}
+	if logsResponse.Apply.Content != "" {
+		logs = append(logs, fmt.Sprintf("Apply: %s\n%s", logsResponse.Apply.Status, logsResponse.Apply.Content))
+	}
+	for _, err := range logsResponse.Errors {
+		logs = append(logs, fmt.Sprintf("Error: %s", err))
+	}
+
+	return logs, nil
+}
+
+// ValidateVariableType validates that a variable value matches the expected type
+func (c *Client) ValidateVariableType(value string, expectedType string) (interface{}, error) {
+	switch expectedType {
+	case "string":
+		return value, nil
+	case "number":
+		// Try to parse as int first
+		if intVal, err := strconv.Atoi(value); err == nil {
+			return intVal, nil
+		}
+		// Then try as float
+		if floatVal, err := strconv.ParseFloat(value, 64); err == nil {
+			return floatVal, nil
+		}
+		return nil, fmt.Errorf("value '%s' is not a valid number", value)
+	case "boolean", "bool":
+		switch strings.ToLower(value) {
+		case "true", "yes", "1", "y":
+			return true, nil
+		case "false", "no", "0", "n":
+			return false, nil
+		default:
+			return nil, fmt.Errorf("value '%s' is not a valid boolean", value)
+		}
+	case "list", "array":
+		// If it starts with [ and ends with ], try to parse as JSON
+		if strings.HasPrefix(value, "[") && strings.HasSuffix(value, "]") {
+			var list []interface{}
+			if err := json.Unmarshal([]byte(value), &list); err != nil {
+				return nil, fmt.Errorf("value '%s' is not a valid list: %w", value, err)
+			}
+			return list, nil
+		}
+		// Otherwise, try to parse as comma-separated values
+		items := strings.Split(value, ",")
+		trimmedItems := make([]string, 0, len(items))
+		for _, item := range items {
+			trimmedItems = append(trimmedItems, strings.TrimSpace(item))
+		}
+		return trimmedItems, nil
+	case "map", "object":
+		// If it starts with { and ends with }, try to parse as JSON
+		if strings.HasPrefix(value, "{") && strings.HasSuffix(value, "}") {
+			var obj map[string]interface{}
+			if err := json.Unmarshal([]byte(value), &obj); err != nil {
+				return nil, fmt.Errorf("value '%s' is not a valid object: %w", value, err)
+			}
+			return obj, nil
+		}
+		// Otherwise, try to parse as key=value pairs
+		items := strings.Split(value, ",")
+		obj := make(map[string]string)
+		for _, item := range items {
+			parts := strings.SplitN(strings.TrimSpace(item), "=", 2)
+			if len(parts) != 2 {
+				return nil, fmt.Errorf("value '%s' is not a valid key=value pair", item)
+			}
+			obj[parts[0]] = parts[1]
+		}
+		return obj, nil
+	default:
+		// For unknown types, just pass the string value
+		return value, nil
+	}
+}
+
+// ValidateVariablesAgainstTemplate validates that all required variables are present
+// and their types match what's expected by the template.
+func (c *Client) ValidateVariablesAgainstTemplate(ctx context.Context, templateID string, variables map[string]string) ([]string, []string, []string, error) {
+	// Get the template
+	template, err := c.GetProjectTemplate(ctx, templateID)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("failed to get template: %w", err)
+	}
+
+	// Collect all variables from template and resources
+	allVariables := make(map[string]TemplateVariable)
+	requiredVars := make(map[string]bool)
+
+	// Add template variables
+	for _, v := range template.Variables {
+		allVariables[v.Name] = v
+		if v.Required && v.Default == nil {
+			requiredVars[v.Name] = true
+		}
+	}
+
+	// Add resource variables
+	for _, resource := range template.Resources {
+		for _, v := range resource.Variables {
+			allVariables[v.Name] = TemplateVariable{
+				Name:        v.Name,
+				Type:        v.Type,
+				Default:     v.Default,
+				Description: v.Description,
+				Required:    true, // Consider resource variables required
+			}
+			requiredVars[v.Name] = true
+		}
+	}
+
+	// Find missing required variables
+	var missingRequired []string
+	for name := range requiredVars {
+		if _, ok := variables[name]; !ok {
+			missingRequired = append(missingRequired, name)
+		}
+	}
+
+	// Find variables not in template
+	var extraVars []string
+	for name := range variables {
+		if _, ok := allVariables[name]; !ok {
+			extraVars = append(extraVars, name)
+		}
+	}
+
+	// Validate types of provided variables
+	var typeErrors []string
+	for name, value := range variables {
+		if templateVar, ok := allVariables[name]; ok {
+			valid, errMsg := validateVariableType(value, templateVar.Type)
+			if !valid {
+				typeErrors = append(typeErrors, fmt.Sprintf("%s: %s", name, errMsg))
+			}
+		}
+	}
+
+	return missingRequired, extraVars, typeErrors, nil
+}
+
+// Helper function to validate variable types
+func validateVariableType(value, expectedType string) (bool, string) {
+	switch expectedType {
+	case "string":
+		// All values can be treated as strings
+		return true, ""
+
+	case "number":
+		// Try to parse as a number
+		if _, err := strconv.ParseFloat(value, 64); err != nil {
+			return false, fmt.Sprintf("expected number but got '%s'", value)
+		}
+
+	case "bool", "boolean":
+		// Try to parse as a boolean
+		lowerValue := strings.ToLower(value)
+		if lowerValue != "true" && lowerValue != "false" &&
+			lowerValue != "0" && lowerValue != "1" &&
+			lowerValue != "yes" && lowerValue != "no" {
+			return false, fmt.Sprintf("expected boolean but got '%s'", value)
+		}
+
+	case "list", "array":
+		// Try to parse as a JSON array
+		var list []interface{}
+		if err := json.Unmarshal([]byte(value), &list); err != nil {
+			return false, fmt.Sprintf("expected JSON array but got '%s'", value)
+		}
+
+	case "map", "object":
+		// Try to parse as a JSON object
+		var m map[string]interface{}
+		if err := json.Unmarshal([]byte(value), &m); err != nil {
+			return false, fmt.Sprintf("expected JSON object but got '%s'", value)
+		}
+	}
+
+	return true, ""
 }
