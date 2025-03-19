@@ -60,6 +60,20 @@ make build
 make install
 ```
 
+## APT Installation (Debian/Ubuntu)
+
+To install Kubiya CLI using APT:
+
+```bash
+# Add Kubiya's APT repository
+curl -fsSL https://cli.kubiya.ai/apt-key.gpg | sudo gpg --dearmor -o /usr/share/keyrings/kubiya-archive-keyring.gpg
+echo "deb [signed-by=/usr/share/keyrings/kubiya-archive-keyring.gpg] https://cli.kubiya.ai/apt stable main" | sudo tee /etc/apt/sources.list.d/kubiya.list
+
+# Update package list and install Kubiya CLI
+sudo apt update
+sudo apt install kubiya-cli
+```
+
 ## Configuration 🔧
 
 ### Using Environment Variables

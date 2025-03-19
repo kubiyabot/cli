@@ -1,0 +1,96 @@
+name: Build and Publish APT Package
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: true
+
+      - name: Install required packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y devscripts debhelper dh-make
+
+      - name: Create Debian package structure
+        run: |
+          mkdir -p debian
+          cat > debian/control << EOF
+          Source: kubiya-cli
+          Section: utils
+          Priority: optional
+          Maintainer: Kubiya <support@kubiya.ai>
+          Build-Depends: debhelper-compat (= 13), dh-golang, golang-go
+          Standards-Version: 4.5.1
+
+          Package: kubiya-cli
+          Architecture: any
+          Depends: \${shlibs:Depends}, \${misc:Depends}
+          Description: Kubiya CLI
+           Command line interface for Kubiya AI platform.
+          EOF
+
+          cat > debian/rules << EOF
+          #!/usr/bin/make -f
+          %:
+          	dh \$@ --with golang
+          EOF
+
+          chmod +x debian/rules
+
+      - name: Build Debian package
+        run: |
+          dpkg-buildpackage -us -uc -b
+
+      - name: Setup APT repository
+        run: |
+          mkdir -p apt-repo/dists/stable/main/binary-amd64
+          cp ../kubiya-cli_*_amd64.deb apt-repo/
+          cd apt-repo
+          dpkg-scanpackages . /dev/null > dists/stable/main/binary-amd64/Packages
+          gzip -9 dists/stable/main/binary-amd64/Packages
+
+      - name: Create Release file
+        run: |
+          cd apt-repo/dists/stable
+          cat > Release << EOF
+          Origin: Kubiya
+          Label: Kubiya APT Repository
+          Suite: stable
+          Version: 1.0
+          Codename: stable
+          Date: $(date -u +"%a, %d %b %Y %H:%M:%S UTC")
+          Architectures: amd64
+          Components: main
+          Description: APT repository for Kubiya CLI
+          EOF
+
+      - name: Sign Release file
+        run: |
+          cd apt-repo/dists/stable
+          gpg --clearsign -o InRelease Release
+          gpg -abs -o Release.gpg Release
+
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./apt-repo
+          publish_branch: gh-pages
+          force_orphan: true
