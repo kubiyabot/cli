@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Kubiya CLI APT Repository</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        h1 {
+            color: #333;
+        }
+        .instructions {
+            background-color: #f5f5f5;
+            padding: 20px;
+            border-radius: 5px;
+        }
+        code {
+            background-color: #f0f0f0;
+            padding: 2px 5px;
+            border-radius: 3px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Kubiya CLI APT Repository</h1>
+    <p>This is the APT repository for the Kubiya CLI package.</p>
+    
+    <div class="instructions">
+        <h2>Installation Instructions</h2>
+        <p>To install Kubiya CLI using APT, run the following commands:</p>
+        <pre><code># Add Kubiya's APT repository
+curl -fsSL https://kubiyabot.github.io/cli/apt-key.gpg | sudo gpg --dearmor -o /usr/share/keyrings/kubiya-archive-keyring.gpg
+echo "deb [signed-by=/usr/share/keyrings/kubiya-archive-keyring.gpg] https://kubiyabot.github.io/cli/apt/dists/stable stable main" | sudo tee /etc/apt/sources.list.d/kubiya.list
+
+# Update package list and install Kubiya CLI
+sudo apt update
+sudo apt install kubiya-cli</code></pre>
+    </div>
+</body>
+</html> 
