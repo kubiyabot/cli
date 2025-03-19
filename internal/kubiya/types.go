@@ -523,3 +523,132 @@ type ToolGenerationChatMessage struct {
 	Type                 string                 `json:"type"`
 	GeneratedToolContent []GeneratedToolContent `json:"generated_tool_content"`
 }
+
+// ProjectTemplate represents a template for creating projects
+type ProjectTemplate struct {
+	UUID          string             `json:"uuid,omitempty"`
+	ID            string             `json:"id,omitempty"`
+	Name          string             `json:"name"`
+	Description   string             `json:"description,omitempty"`
+	Version       string             `json:"version,omitempty"`
+	RepositoryURL string             `json:"repository_url,omitempty"`
+	URL           string             `json:"url,omitempty"`
+	Repository    string             `json:"repository,omitempty"`
+	Readme        string             `json:"readme,omitempty"`
+	Icons         []interface{}      `json:"icons,omitempty"`
+	Variables     []TemplateVariable `json:"variables,omitempty"`
+	Secrets       []TemplateSecret   `json:"secrets,omitempty"`
+	Providers     []TemplateProvider `json:"providers,omitempty"`
+	Resources     []TemplateResource `json:"resources,omitempty"`
+}
+
+// TemplateProvider represents a provider used by a template
+type TemplateProvider struct {
+	Name string `json:"name"`
+}
+
+// TemplateResource represents a resource in a template
+type TemplateResource struct {
+	Name      string                `json:"name"`
+	Type      string                `json:"type"`
+	Provider  string                `json:"provider"`
+	Variables []TemplateRscVariable `json:"variables,omitempty"`
+}
+
+// TemplateRscVariable represents a variable for a resource in a template
+type TemplateRscVariable struct {
+	Name         string      `json:"name"`
+	Type         string      `json:"type"`
+	Value        interface{} `json:"value,omitempty"`
+	Default      interface{} `json:"default,omitempty"`
+	HasError     bool        `json:"has_error,omitempty"`
+	Description  string      `json:"description,omitempty"`
+	ErrorDetail  string      `json:"error_detail,omitempty"`
+	ErrorSummary string      `json:"error_summary,omitempty"`
+}
+
+// TemplateSecret represents a secret required by a template
+type TemplateSecret struct {
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	ToEnv       string `json:"to_env,omitempty"`
+	Value       string `json:"value,omitempty"`
+}
+
+// TemplateVariable defines a variable expected by a template
+type TemplateVariable struct {
+	Name         string      `json:"name"`
+	Type         string      `json:"type"`
+	Description  string      `json:"description,omitempty"`
+	Default      interface{} `json:"default,omitempty"`
+	Value        interface{} `json:"value,omitempty"`
+	Required     bool        `json:"required,omitempty"`
+	Sensitive    bool        `json:"sensitive,omitempty"`
+	HasError     bool        `json:"has_error,omitempty"`
+	ErrorDetail  string      `json:"error_detail,omitempty"`
+	ErrorSummary string      `json:"error_summary,omitempty"`
+}
+
+// Variable represents a variable value in a project
+type Variable struct {
+	Name      string      `json:"name"`
+	Value     interface{} `json:"value"`
+	Type      string      `json:"type,omitempty"`
+	Sensitive bool        `json:"sensitive,omitempty"`
+}
+
+// Project represents a project instance
+type Project struct {
+	ID          string        `json:"id,omitempty"`
+	UUID        string        `json:"uuid,omitempty"`
+	Name        string        `json:"name"`
+	Description string        `json:"description,omitempty"`
+	Status      string        `json:"status,omitempty"`
+	UsecaseID   string        `json:"usecase_id,omitempty"`
+	CreatedAt   string        `json:"created_at,omitempty"`
+	UpdatedAt   string        `json:"updated_at,omitempty"`
+	Variables   []Variable    `json:"variables,omitempty"`
+	URL         string        `json:"url,omitempty"`
+	Repository  string        `json:"repository,omitempty"`
+	Readme      string        `json:"readme,omitempty"`
+	Icons       []interface{} `json:"icons,omitempty"`
+}
+
+// ProjectResource represents a resource in a project
+type ProjectResource struct {
+	ID          string                 `json:"id"`
+	Type        string                 `json:"type"`
+	Name        string                 `json:"name"`
+	Status      string                 `json:"status"`
+	Properties  map[string]interface{} `json:"properties"`
+	DependsOn   []string               `json:"depends_on,omitempty"`
+	Provisioner string                 `json:"provisioner,omitempty"`
+}
+
+// ProjectPlan represents a plan for project changes
+type ProjectPlan struct {
+	ProjectID  string                  `json:"project_id"`
+	PlanID     string                  `json:"plan_id"`
+	Status     string                  `json:"status"`
+	Changes    []ProjectResourceChange `json:"changes"`
+	CreatedAt  time.Time               `json:"created_at"`
+	ApprovedAt *time.Time              `json:"approved_at,omitempty"`
+}
+
+// ProjectResourceChange represents a change to a resource in a project plan
+type ProjectResourceChange struct {
+	ResourceID string `json:"resource_id"`
+	Action     string `json:"action"` // create, update, delete
+	Before     string `json:"before,omitempty"`
+	After      string `json:"after,omitempty"`
+}
+
+// ProjectExecution represents the execution of a project plan
+type ProjectExecution struct {
+	ProjectID   string     `json:"project_id"`
+	PlanID      string     `json:"plan_id"`
+	ExecutionID string     `json:"execution_id"`
+	Status      string     `json:"status"`
+	StartTime   time.Time  `json:"start_time"`
+	EndTime     *time.Time `json:"end_time,omitempty"`
+}

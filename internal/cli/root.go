@@ -13,7 +13,7 @@ import (
 func Execute(cfg *config.Config) error {
 	rootCmd := &cobra.Command{
 		Use:   "kubiya",
-		Short: "🤖 Kubiya CLI - Your DevOps Automation Companion",
+		Short: "🤖 Kubiya CLI - Your Agentic AI Automation Companion",
 		Long: `Welcome to Kubiya CLI! 👋
 
 A powerful tool for interacting with your Kubiya teammates and managing your automation sources.
@@ -23,7 +23,7 @@ Quick Start:
   • Chat:             kubiya chat --interactive
   • Browse sources:    kubiya browse  # Interactive source browser
   • Manage teammates: kubiya teammate list
-  • List sources:     kubiya source list
+  • Manage tools:     kubiya tool list
   • Manage knowledge: kubiya knowledge list
   • Manage runners:   kubiya runner list
   • Manage webhooks:  kubiya webhook list
@@ -70,6 +70,7 @@ Need help? Visit: https://docs.kubiya.ai`,
 		newUpdateCommand(cfg),
 		newVersionCommand(cfg),
 		newIntegrationsCommand(cfg),
+		newProjectCommand(cfg),
 	)
 
 	return rootCmd.Execute()

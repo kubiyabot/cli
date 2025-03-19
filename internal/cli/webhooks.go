@@ -13,8 +13,10 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/charmbracelet/lipgloss"
 	"github.com/kubiyabot/cli/internal/config"
 	"github.com/kubiyabot/cli/internal/kubiya"
+	"github.com/kubiyabot/cli/internal/style"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 )
@@ -29,7 +31,7 @@ func newWebhooksCommand(cfg *config.Config) *cobra.Command {
 
 	cmd.AddCommand(
 		newListWebhooksCommand(cfg),
-		newGetWebhookCommand(cfg),
+		newDescribeWebhookCommand(cfg),
 		newCreateWebhookCommand(cfg),
 		newUpdateWebhookCommand(cfg),
 		newDeleteWebhookCommand(cfg),
@@ -44,16 +46,22 @@ func newWebhooksCommand(cfg *config.Config) *cobra.Command {
 
 func newListWebhooksCommand(cfg *config.Config) *cobra.Command {
 	var outputFormat string
+	var limit int
 
 	cmd := &cobra.Command{
 		Use:     "list",
 		Short:   "📋 List all webhooks",
-		Example: "  kubiya webhook list\n  kubiya webhook list --output json\n  kubiya webhook list --output yaml",
+		Example: "  kubiya webhook list\n  kubiya webhook list --output json\n  kubiya webhook list --limit 10",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			client := kubiya.NewClient(cfg)
 			webhooks, err := client.ListWebhooks(cmd.Context())
 			if err != nil {
 				return err
+			}
+
+			// Apply limit if specified
+			if limit > 0 && limit < len(webhooks) {
+				webhooks = webhooks[:limit]
 			}
 
 			switch outputFormat {
@@ -67,76 +75,241 @@ func newListWebhooksCommand(cfg *config.Config) *cobra.Command {
 				fmt.Println(string(yamlData))
 				return nil
 			case "wide":
-				// Detailed tabular output
+				// Enhanced detailed tabular output with better design
+				fmt.Printf("╭─────────────────────────────────────────────────────────────────────────────────────────────────╮\n")
+				fmt.Printf("│ 🔗 %s                                                                 │\n", style.TitleStyle.Render("WEBHOOKS - DETAILED VIEW"))
+				fmt.Printf("╰─────────────────────────────────────────────────────────────────────────────────────────────────╯\n\n")
+
 				w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-				fmt.Fprintln(w, "🔗 WEBHOOKS (DETAILED VIEW)")
-				fmt.Fprintln(w, "ID\tNAME\tSOURCE\tDESTINATION\tMETHOD\tFILTER\tCREATED BY\tMANAGED BY")
-				for _, wh := range webhooks {
-					filter := wh.Filter
-					if filter == "" {
-						filter = "<none>"
+
+				// Write colored header
+				fmt.Fprintln(w, style.HeaderStyle.Render("ID")+"\t"+
+					style.HeaderStyle.Render("NAME")+"\t"+
+					style.HeaderStyle.Render("SOURCE")+"\t"+
+					style.HeaderStyle.Render("DESTINATION")+"\t"+
+					style.HeaderStyle.Render("METHOD")+"\t"+
+					style.HeaderStyle.Render("FILTER")+"\t"+
+					style.HeaderStyle.Render("CREATED BY")+"\t"+
+					style.HeaderStyle.Render("MANAGED BY"))
+
+				fmt.Fprintln(w, "───────────────────────────────\t"+
+					"───────────────────────\t"+
+					"───────────\t"+
+					"───────────────────────\t"+
+					"───────────\t"+
+					"───────────\t"+
+					"───────────\t"+
+					"───────────")
+
+				if len(webhooks) == 0 {
+					fmt.Fprintln(w, style.DimStyle.Render("<no webhooks found>"))
+				} else {
+					for _, wh := range webhooks {
+						filter := wh.Filter
+						if filter == "" {
+							filter = style.DimStyle.Render("<none>")
+						}
+
+						managedBy := wh.ManagedBy
+						if managedBy == "" {
+							managedBy = style.DimStyle.Render("<none>")
+						}
+
+						// Truncate long values
+						name := truncateString(wh.Name, 25)
+						source := truncateString(wh.Source, 12)
+						destination := formatDestination(wh.Communication.Destination, wh.Communication.Method, 30)
+						filter = truncateString(filter, 15)
+						createdBy := truncateString(wh.CreatedBy, 15)
+						managedBy = truncateString(managedBy, 15)
+
+						fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+							style.DimStyle.Render(wh.ID),
+							style.HighlightStyle.Render(name),
+							style.SubtitleStyle.Render(source),
+							destination,
+							getMethodWithIcon(wh.Communication.Method),
+							filter,
+							createdBy,
+							managedBy,
+						)
 					}
-
-					managedBy := wh.ManagedBy
-					if managedBy == "" {
-						managedBy = "<none>"
-					}
-
-					fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-						wh.ID,
-						wh.Name,
-						wh.Source,
-						wh.Communication.Destination,
-						wh.Communication.Method,
-						filter,
-						wh.CreatedBy,
-						managedBy,
-					)
-				}
-				return w.Flush()
-			case "text":
-				fallthrough
-			default:
-				// Standard tabular output
-				w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-				fmt.Fprintln(w, "🔗 WEBHOOKS")
-				fmt.Fprintln(w, "ID\tNAME\tSOURCE\tDESTINATION\tMETHOD")
-				for _, wh := range webhooks {
-					fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
-						wh.ID,
-						wh.Name,
-						wh.Source,
-						wh.Communication.Destination,
-						wh.Communication.Method,
-					)
 				}
 
-				// Add helpful tip at the bottom
 				if err := w.Flush(); err != nil {
 					return err
 				}
 
-				fmt.Println("\n📌 Tips:")
-				fmt.Println("- Use 'kubiya webhook get <id>' to see more details")
-				fmt.Println("- Use '--output wide' to see additional fields")
-				fmt.Println("- Use '--output json' or '--output yaml' for machine-readable output")
+				printListTips(len(webhooks))
+			case "text":
+				fallthrough
+			default:
+				// Header section with adequate width
+				title := style.TitleStyle.Render("WEBHOOKS")
+				fmt.Printf("╭────────────────────────────────────────────────────────────────────────────────────────╮\n")
+				fmt.Printf("│ 🔗 %-85s │\n", title)
+				fmt.Printf("╰────────────────────────────────────────────────────────────────────────────────────────╯\n\n")
 
+				// Use tabwriter with fixed-width settings (padchar is a space)
+				// 0 minwidth, 8 tabwidth, 2 padding, ' ' padchar, 0 flags
+				w := tabwriter.NewWriter(os.Stdout, 0, 8, 2, ' ', 0)
+
+				// Define header columns with fixed spacing
+				headers := []string{
+					style.HeaderStyle.Render("ID"),
+					style.HeaderStyle.Render("NAME"),
+					style.HeaderStyle.Render("SOURCE"),
+					style.HeaderStyle.Render("DESTINATION"),
+					style.HeaderStyle.Render("METHOD"),
+				}
+
+				// Define separator lines with matching lengths
+				separators := []string{
+					"─────────────────────────────",
+					"───────────────────────",
+					"──────────",
+					"───────────────────────",
+					"──────────",
+				}
+
+				// Print headers and separator lines
+				fmt.Fprintf(w, " %s\t%s\t%s\t%s\t%s\n", headers[0], headers[1], headers[2], headers[3], headers[4])
+				fmt.Fprintf(w, " %s\t%s\t%s\t%s\t%s\n", separators[0], separators[1], separators[2], separators[3], separators[4])
+
+				if len(webhooks) == 0 {
+					fmt.Fprintln(w, style.DimStyle.Render(" <no webhooks found>"))
+				} else {
+					for _, wh := range webhooks {
+						// Truncate long values for better display
+						name := truncateString(wh.Name, 25)
+						source := truncateString(wh.Source, 12)
+						destination := formatDestination(wh.Communication.Destination, wh.Communication.Method, 25)
+
+						fmt.Fprintf(w, " %s\t%s\t%s\t%s\t%s\n",
+							style.DimStyle.Render(wh.ID),
+							style.HighlightStyle.Render(name),
+							style.SubtitleStyle.Render(source),
+							destination,
+							getMethodWithIcon(wh.Communication.Method),
+						)
+					}
+				}
+
+				if err := w.Flush(); err != nil {
+					return err
+				}
+
+				printListTips(len(webhooks))
 				return nil
 			}
+			return nil
 		},
 	}
 
 	cmd.Flags().StringVarP(&outputFormat, "output", "o", "text", "Output format (text|wide|json|yaml)")
+	cmd.Flags().IntVarP(&limit, "limit", "l", 0, "Limit the number of webhooks to display")
 	return cmd
 }
 
-func newGetWebhookCommand(cfg *config.Config) *cobra.Command {
+// Helper function to print list command tips
+func printListTips(webhookCount int) {
+	fmt.Printf("\n%s\n", style.SubtitleStyle.Render("💡 Tips:"))
+	fmt.Printf("  • %s to see detailed information\n", style.CommandStyle.Render("kubiya webhook describe <id>"))
+	fmt.Printf("  • %s to see additional fields\n", style.CommandStyle.Render("--output wide"))
+	fmt.Printf("  • %s or %s for machine-readable output\n",
+		style.CommandStyle.Render("--output json"),
+		style.CommandStyle.Render("--output yaml"))
+
+	if webhookCount > 10 {
+		fmt.Printf("  • %s to limit the displayed results\n",
+			style.CommandStyle.Render("--limit <number>"))
+	}
+}
+
+// formatDestination formats the destination based on the method type
+func formatDestination(destination string, method string, maxLen int) string {
+	switch strings.ToLower(method) {
+	case "teams":
+		if strings.HasPrefix(destination, "#{") && strings.HasSuffix(destination, "}") {
+			// Extract team and channel from Teams destination
+			jsonStr := destination[1:] // Remove the leading #
+			var teamsConfig map[string]string
+			if err := json.Unmarshal([]byte(jsonStr), &teamsConfig); err == nil {
+				teamName := teamsConfig["team_name"]
+				channelName := teamsConfig["channel_name"]
+				if teamName != "" && channelName != "" {
+					formatted := fmt.Sprintf("%s:%s", teamName, channelName)
+					return style.HighlightStyle.Render(truncateString(formatted, maxLen))
+				}
+			}
+		}
+	case "slack":
+		if strings.HasPrefix(destination, "#") {
+			// Highlight Slack channels
+			return style.SuccessStyle.Render(truncateString(destination, maxLen))
+		} else if strings.HasPrefix(destination, "@") {
+			// Highlight Slack users
+			return style.HighlightStyle.Render(truncateString(destination, maxLen))
+		} else if strings.Contains(destination, "@") {
+			// Likely an email address
+			return style.WarningStyle.Render(truncateString(destination, maxLen))
+		}
+	case "http":
+		if destination == "" {
+			// HTTP with no destination is SSE stream
+			return style.WarningStyle.Render("HTTP SSE Stream")
+		}
+		return style.WarningStyle.Render(truncateString(destination, maxLen))
+	}
+
+	// Default formatting for other cases
+	return style.DimStyle.Render(truncateString(destination, maxLen))
+}
+
+// getMethodWithIcon returns the method with an appropriate icon
+func getMethodWithIcon(method string) string {
+	switch strings.ToLower(method) {
+	case "slack":
+		return style.SuccessStyle.Render("💬 Slack")
+	case "teams":
+		return style.SubtitleStyle.Render("👥 Teams")
+	case "http":
+		return style.WarningStyle.Render("🌐 HTTP")
+	default:
+		return style.DimStyle.Render(method)
+	}
+}
+
+// Helper function to truncate long strings
+func truncateString(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen-3] + "..."
+}
+
+// Helper function to get color style based on method
+func getMethodStyle(method string) lipgloss.Style {
+	switch strings.ToLower(method) {
+	case "slack":
+		return style.SuccessStyle
+	case "teams":
+		return style.SubtitleStyle
+	case "http":
+		return style.WarningStyle
+	default:
+		return style.DimStyle
+	}
+}
+
+func newDescribeWebhookCommand(cfg *config.Config) *cobra.Command {
 	var outputFormat string
 
 	cmd := &cobra.Command{
-		Use:     "get [id]",
-		Short:   "📖 Get webhook details",
-		Example: "  kubiya webhook get abc-123\n  kubiya webhook get abc-123 --output json",
+		Use:     "describe [id]",
+		Aliases: []string{"get", "info", "show"},
+		Short:   "📖 Show detailed webhook information",
+		Example: "  kubiya webhook describe abc-123\n  kubiya webhook describe abc-123 --output json",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			client := kubiya.NewClient(cfg)
@@ -148,100 +321,126 @@ func newGetWebhookCommand(cfg *config.Config) *cobra.Command {
 			switch outputFormat {
 			case "json":
 				return json.NewEncoder(os.Stdout).Encode(webhook)
+			case "yaml":
+				yamlData, err := yaml.Marshal(webhook)
+				if err != nil {
+					return fmt.Errorf("failed to marshal webhook to YAML: %w", err)
+				}
+				fmt.Println(string(yamlData))
+				return nil
 			case "text":
-				fmt.Printf("🔗 Webhook: %s\n\n", webhook.Name)
-				fmt.Printf("ID: %s\n", webhook.ID)
-				fmt.Printf("Source: %s\n", webhook.Source)
-				fmt.Printf("Agent ID: %s\n", webhook.AgentID)
+				fallthrough
+			default:
+				// Enhanced text output with better formatting
+				fmt.Printf("╭─────────────────────────────────────────────────╮\n")
+				fmt.Printf("│ 🔗 Webhook: %-37s │\n", style.HighlightStyle.Render(webhook.Name))
+				fmt.Printf("╰─────────────────────────────────────────────────╯\n\n")
 
-				// Print communication details with appropriate formatting
-				fmt.Printf("Communication:\n")
+				// Basic Information section
+				fmt.Printf("%s\n", style.SubtitleStyle.Render("📋 Basic Information"))
+				fmt.Printf("   ID:       %s\n", style.DimStyle.Render(webhook.ID))
+				fmt.Printf("   Source:   %s\n", style.SubtitleStyle.Render(webhook.Source))
+				fmt.Printf("   Agent ID: %s\n", style.DimStyle.Render(webhook.AgentID))
+
+				// Communication section
+				fmt.Printf("\n%s\n", style.SubtitleStyle.Render("🔌 Communication"))
+				fmt.Printf("   Method: %s\n", getMethodStyle(webhook.Communication.Method).Render(webhook.Communication.Method))
+
+				// Handle different communication methods
 				switch webhook.Communication.Method {
 				case "Slack":
-					fmt.Printf("  Method: %s\n", webhook.Communication.Method)
-					fmt.Printf("  Destination: %s\n", webhook.Communication.Destination)
+					fmt.Printf("   Channel: %s\n", style.HighlightStyle.Render(webhook.Communication.Destination))
 				case "Teams":
-					fmt.Printf("  Method: %s\n", webhook.Communication.Method)
-					// For Teams, try to parse and pretty print the JSON destination
 					if strings.HasPrefix(webhook.Communication.Destination, "#{") && strings.HasSuffix(webhook.Communication.Destination, "}") {
 						// Extract the JSON part
 						jsonStr := webhook.Communication.Destination[1:] // Remove the leading #
 						var teamsConfig map[string]string
 						if err := json.Unmarshal([]byte(jsonStr), &teamsConfig); err == nil {
-							fmt.Printf("  Team: %s\n", teamsConfig["team_name"])
-							fmt.Printf("  Channel: %s\n", teamsConfig["channel_name"])
+							fmt.Printf("   Team:    %s\n", style.HighlightStyle.Render(teamsConfig["team_name"]))
+							fmt.Printf("   Channel: %s\n", style.HighlightStyle.Render(teamsConfig["channel_name"]))
 						} else {
-							fmt.Printf("  Destination: %s\n", webhook.Communication.Destination)
+							fmt.Printf("   Destination: %s\n", webhook.Communication.Destination)
 						}
 					} else {
-						fmt.Printf("  Destination: %s\n", webhook.Communication.Destination)
+						fmt.Printf("   Destination: %s\n", webhook.Communication.Destination)
 					}
 				case "HTTP":
-					fmt.Printf("  Method: %s\n", webhook.Communication.Method)
 					if webhook.Communication.Destination != "" {
-						fmt.Printf("  Destination: %s\n", webhook.Communication.Destination)
+						fmt.Printf("   Endpoint: %s\n", style.HighlightStyle.Render(webhook.Communication.Destination))
 					} else {
-						fmt.Printf("  Destination: <direct HTTP response>\n")
+						fmt.Printf("   Endpoint: %s\n", style.DimStyle.Render("<direct HTTP response>"))
 					}
 				default:
-					fmt.Printf("  Method: %s\n", webhook.Communication.Method)
-					fmt.Printf("  Destination: %s\n", webhook.Communication.Destination)
+					fmt.Printf("   Destination: %s\n", webhook.Communication.Destination)
 				}
 
-				fmt.Printf("  Hide Headers: %t\n", webhook.HideWebhookHeaders)
+				fmt.Printf("   Hide Headers: %s\n", getBoolStyle(webhook.HideWebhookHeaders))
 
-				// Print filter details
+				// Filter section (if available)
 				if webhook.Filter != "" {
-					fmt.Printf("Filter: %s\n", webhook.Filter)
-				} else {
-					fmt.Printf("Filter: <none>\n")
+					fmt.Printf("\n%s\n", style.SubtitleStyle.Render("🔍 Filter"))
+					fmt.Printf("   %s\n", style.SubtitleStyle.Render(webhook.Filter))
 				}
 
-				// Print management details
-				if webhook.ManagedBy != "" {
-					fmt.Printf("Managed By: %s\n", webhook.ManagedBy)
-					if webhook.TaskID != "" {
-						fmt.Printf("Task ID: %s\n", webhook.TaskID)
+				// Management section (if available)
+				if webhook.ManagedBy != "" || webhook.CreatedBy != "" {
+					fmt.Printf("\n%s\n", style.SubtitleStyle.Render("👤 Management"))
+					if webhook.ManagedBy != "" {
+						fmt.Printf("   Managed By: %s\n", style.HighlightStyle.Render(webhook.ManagedBy))
+						if webhook.TaskID != "" {
+							fmt.Printf("   Task ID:    %s\n", style.DimStyle.Render(webhook.TaskID))
+						}
+					}
+					if webhook.CreatedBy != "" {
+						fmt.Printf("   Created By: %s\n", style.HighlightStyle.Render(webhook.CreatedBy))
+					}
+					if webhook.CreatedAt != "" && webhook.CreatedAt != "1970-01-01T00:00:00Z" && webhook.CreatedAt != "0001-01-01T00:00:00Z" {
+						fmt.Printf("   Created At: %s\n", style.DimStyle.Render(webhook.CreatedAt))
+					}
+					if webhook.UpdatedAt != "" && webhook.UpdatedAt != "0001-01-01T00:00:00Z" {
+						fmt.Printf("   Updated At: %s\n", style.DimStyle.Render(webhook.UpdatedAt))
 					}
 				}
 
-				// Print timestamps
-				if webhook.CreatedAt != "" && webhook.CreatedAt != "1970-01-01T00:00:00Z" && webhook.CreatedAt != "0001-01-01T00:00:00Z" {
-					fmt.Printf("Created At: %s\n", webhook.CreatedAt)
-				}
-				if webhook.UpdatedAt != "" && webhook.UpdatedAt != "0001-01-01T00:00:00Z" {
-					fmt.Printf("Updated At: %s\n", webhook.UpdatedAt)
-				}
-				if webhook.CreatedBy != "" {
-					fmt.Printf("Created By: %s\n", webhook.CreatedBy)
+				// Prompt section
+				fmt.Printf("\n%s\n", style.SubtitleStyle.Render("💬 Prompt"))
+				promptLines := strings.Split(webhook.Prompt, "\n")
+				for _, line := range promptLines {
+					fmt.Printf("   %s\n", line)
 				}
 
-				// Extract template variables from the prompt
-				fmt.Printf("\nPrompt: \n%s\n", webhook.Prompt)
-
+				// Template Variables section
 				templateVars := extractTemplateVars(webhook.Prompt)
 				if len(templateVars) > 0 {
-					fmt.Printf("\n📝 Template Variables:\n")
+					fmt.Printf("\n%s\n", style.SubtitleStyle.Render("🔤 Template Variables"))
 					for _, v := range templateVars {
-						fmt.Printf("- %s\n", v)
+						fmt.Printf("   • %s\n", style.SubtitleStyle.Render(v))
 					}
 				}
 
-				fmt.Printf("\n📎 Webhook URL: %s\n", webhook.WebhookURL)
+				// URL and Testing section
+				fmt.Printf("\n%s\n", style.SubtitleStyle.Render("🌐 Webhook URL"))
+				fmt.Printf("   %s\n", style.HighlightStyle.Render(webhook.WebhookURL))
 
-				// Print example usage for testing
-				fmt.Printf("\n🧪 Test this webhook:\n")
-				fmt.Printf("  kubiya webhook test --id %s --data '{\"test\": true}'\n", webhook.ID)
+				fmt.Printf("\n%s\n", style.SubtitleStyle.Render("🧪 Test Command"))
+				fmt.Printf("   %s\n",
+					style.CommandStyle.Render(fmt.Sprintf("kubiya webhook test --id %s --data '{\"test\": true}'", webhook.ID)))
 
 				return nil
-			default:
-				return fmt.Errorf("unknown output format: %s", outputFormat)
 			}
 		},
 	}
 
-	cmd.Flags().StringVarP(&outputFormat, "output", "o", "text", "Output format (text|json)")
+	cmd.Flags().StringVarP(&outputFormat, "output", "o", "text", "Output format (text|json|yaml)")
 	return cmd
+}
+
+// Helper function to get color style based on boolean value
+func getBoolStyle(value bool) string {
+	if value {
+		return style.SuccessStyle.Render("true")
+	}
+	return style.DimStyle.Render("false")
 }
 
 func newCreateWebhookCommand(cfg *config.Config) *cobra.Command {
