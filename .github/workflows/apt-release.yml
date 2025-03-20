@@ -60,14 +60,18 @@ jobs:
           Depends: \${shlibs:Depends}, \${misc:Depends}
           Description: Kubiya CLI
            Command line interface for Kubiya AI platform.
+
+          # Go package information
+          XS-Go-Import-Path: github.com/kubiyabot/cli
           EOF
 
           cat > debian/rules << EOF
           #!/usr/bin/make -f
           export GO111MODULE=on
           export GOPROXY=direct
+          export DH_GOPKG=github.com/kubiyabot/cli
           %:
-          	dh \$@ --with golang --buildsystem=golang
+          	dh \$@ --with golang
           EOF
 
           chmod +x debian/rules
