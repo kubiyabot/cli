@@ -36,7 +36,7 @@ jobs:
       - name: Install required packages
         run: |
           sudo apt-get update
-          sudo apt-get install -y devscripts debhelper dh-make gnupg build-essential dh-golang golang-go
+          sudo apt-get install -y devscripts debhelper dh-make gnupg build-essential dh-golang golang-go golang-1.22-go
 
       - name: Import GPG key
         uses: crazy-max/ghaction-import-gpg@v6
@@ -52,7 +52,7 @@ jobs:
           Section: utils
           Priority: optional
           Maintainer: Kubiya <support@kubiya.ai>
-          Build-Depends: debhelper-compat (= 13), dh-golang, golang-go
+          Build-Depends: debhelper-compat (= 13), dh-golang, golang-go, golang-1.22-go
           Standards-Version: 4.5.1
           XS-Go-Import-Path: github.com/kubiyabot/cli
 
@@ -68,6 +68,7 @@ jobs:
           export GO111MODULE=on
           export GOPROXY=direct
           export DH_GOPKG=github.com/kubiyabot/cli
+          export DH_GOLANG_EXCLUDES=obj-x86_64-linux-gnu
           %:
           	dh \$@ --with golang
           EOF
