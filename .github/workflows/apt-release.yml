@@ -31,7 +31,7 @@ jobs:
       - name: Install required packages
         run: |
           sudo apt-get update
-          sudo apt-get install -y devscripts debhelper dh-make gnupg
+          sudo apt-get install -y devscripts debhelper dh-make gnupg build-essential dh-golang golang-go
 
       - name: Import GPG key
         uses: crazy-max/ghaction-import-gpg@v6
