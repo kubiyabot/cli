@@ -2,6 +2,11 @@ name: Build and Publish APT Package
 
 on:
   push:
+    branches-ignore:
+      - main
+      - stable
+    paths-ignore:
+      - '.git/**'
     tags:
       - 'v*'
 
