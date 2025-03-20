@@ -3,10 +3,12 @@ package cli
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"regexp"
 	"sort"
 	"strings"
@@ -823,6 +825,8 @@ func newTestWebhookCommand(cfg *config.Config) *cobra.Command {
 		dataJSON        string
 		waitForResponse bool
 		verbose         bool
+		autoGenerate    bool
+		monitorEvents   bool
 	)
 
 	cmd := &cobra.Command{
@@ -838,7 +842,10 @@ func newTestWebhookCommand(cfg *config.Config) *cobra.Command {
   kubiya webhook test --id abc-123 --auto-generate
   
   # Wait for the webhook to complete and show response
-  kubiya webhook test --id abc-123 --data '{"key": "value"}' --wait`,
+  kubiya webhook test --id abc-123 --data '{"key": "value"}' --wait
+  
+  # Monitor webhook events in real-time
+  kubiya webhook test --id abc-123 --data '{"key": "value"}' --wait --monitor`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			client := kubiya.NewClient(cfg)
 
@@ -867,6 +874,17 @@ func newTestWebhookCommand(cfg *config.Config) *cobra.Command {
 				if err := json.Unmarshal([]byte(dataJSON), &testData); err != nil {
 					return fmt.Errorf("invalid JSON data: %w", err)
 				}
+
+				// Check if we need to convert dot notation to nested objects
+				if mapData, ok := testData.(map[string]interface{}); ok {
+					testData = convertDotNotationToNested(mapData)
+
+					if verbose {
+						fmt.Println("🔄 Converting flat keys to nested structure:")
+						prettyJSON, _ := json.MarshalIndent(testData, "", "  ")
+						fmt.Printf("%s\n\n", string(prettyJSON))
+					}
+				}
 			} else if dataFile != "" {
 				// Data provided in file
 				data, err := os.ReadFile(dataFile)
@@ -877,51 +895,60 @@ func newTestWebhookCommand(cfg *config.Config) *cobra.Command {
 				if err := json.Unmarshal(data, &testData); err != nil {
 					return fmt.Errorf("invalid JSON in data file: %w", err)
 				}
-			} else {
-				// Use default test data with template variable examples if webhook was retrieved
-				if webhook != nil {
-					templateVars := extractTemplateVars(webhook.Prompt)
-					testData = make(map[string]interface{})
 
-					if len(templateVars) > 0 {
-						// Add example values for each template variable
-						data := testData.(map[string]interface{})
-						for _, v := range templateVars {
-							// Handle nested variables like event.issue.key
-							parts := strings.Split(v, ".")
+				// Check if we need to convert dot notation to nested objects
+				if mapData, ok := testData.(map[string]interface{}); ok {
+					testData = convertDotNotationToNested(mapData)
 
-							// Start with the root object
-							current := data
+					if verbose {
+						fmt.Println("🔄 Converting flat keys to nested structure:")
+						prettyJSON, _ := json.MarshalIndent(testData, "", "  ")
+						fmt.Printf("%s\n\n", string(prettyJSON))
+					}
+				}
+			} else if autoGenerate && webhook != nil {
+				// Use auto-generated test data based on template variables
+				templateVars := extractTemplateVars(webhook.Prompt)
+				testData = make(map[string]interface{})
 
-							// Create nested objects for each part except the last
-							for i, part := range parts {
-								if i == len(parts)-1 {
-									// For the last part, set a sample value
-									current[part] = fmt.Sprintf("sample-%s", part)
-								} else {
-									// For intermediate parts, create a nested object if needed
-									if _, exists := current[part]; !exists {
-										current[part] = make(map[string]interface{})
-									}
-									current = current[part].(map[string]interface{})
+				if len(templateVars) > 0 {
+					// Add example values for each template variable
+					data := testData.(map[string]interface{})
+					for _, v := range templateVars {
+						// Handle nested variables like event.issue.key
+						parts := strings.Split(v, ".")
+
+						// Start with the root object
+						current := data
+
+						// Create nested objects for each part except the last
+						for i, part := range parts {
+							if i == len(parts)-1 {
+								// For the last part, set a sample value
+								current[part] = fmt.Sprintf("sample-%s", part)
+							} else {
+								// For intermediate parts, create a nested object if needed
+								if _, exists := current[part]; !exists {
+									current[part] = make(map[string]interface{})
 								}
+								current = current[part].(map[string]interface{})
 							}
 						}
 					}
+				}
 
-					// Add default test metadata
-					data := testData.(map[string]interface{})
-					data["_test"] = map[string]interface{}{
-						"timestamp": time.Now().Format(time.RFC3339),
-						"message":   "Test webhook from Kubiya CLI",
-					}
-				} else {
-					// Simple default test data if we don't have the webhook
-					testData = map[string]interface{}{
-						"test":      true,
-						"timestamp": time.Now().Format(time.RFC3339),
-						"message":   "Test webhook from Kubiya CLI",
-					}
+				// Add default test metadata
+				data := testData.(map[string]interface{})
+				data["_test"] = map[string]interface{}{
+					"timestamp": time.Now().Format(time.RFC3339),
+					"message":   "Test webhook from Kubiya CLI",
+				}
+			} else {
+				// Simple default test data
+				testData = map[string]interface{}{
+					"test":      true,
+					"timestamp": time.Now().Format(time.RFC3339),
+					"message":   "Test webhook from Kubiya CLI",
 				}
 			}
 
@@ -930,12 +957,66 @@ func newTestWebhookCommand(cfg *config.Config) *cobra.Command {
 			prettyJSON, _ := json.MarshalIndent(testData, "", "  ")
 			fmt.Printf("Payload:\n%s\n\n", string(prettyJSON))
 
+			// If we have monitor flag explicitly set to true, enable it regardless of wait flag
+			// If monitor flag is not set but wait is set, enable monitoring by default
+			if monitorEvents || (waitForResponse && webhookID != "" && webhook != nil && !cmd.Flags().Changed("monitor")) {
+				monitorEvents = true
+			}
+
 			// Send the test with response handling
 			if waitForResponse {
+				// Create a cancellable context for the entire operation
+				ctx, cancel := context.WithCancel(cmd.Context())
+				defer cancel()
+
+				// Set up signal handling for graceful cancellation
+				sigChan := make(chan os.Signal, 1)
+				signal.Notify(sigChan, os.Interrupt)
+
+				// Channel to signal when we should exit
+				exitChan := make(chan struct{})
+
+				go func() {
+					select {
+					case <-sigChan:
+						fmt.Println("\n⚠️ Interrupt received, stopping webhook test...")
+						cancel()
+					case <-exitChan:
+						// Normal exit, do nothing
+						return
+					}
+				}()
+
 				fmt.Println("⏳ Waiting for webhook to process...")
-				resp, err := client.TestWebhookWithResponse(cmd.Context(), webhookURL, testData)
+
+				// Start a webhook test monitor if we have the webhook ID and name
+				var webhookTest *kubiya.WebhookTest
+				var monitorDone chan struct{}
+
+				// Only start monitoring if --monitor flag is set and we have webhook details
+				if monitorEvents && webhookID != "" && webhook != nil {
+					// Create a new webhook test session
+					webhookTest = kubiya.NewWebhookTest(client, webhook.Name)
+
+					// Channel to signal when monitoring is done
+					monitorDone = make(chan struct{})
+
+					// Start monitoring in a goroutine
+					go func() {
+						defer close(monitorDone)
+						if err := webhookTest.StartTest(ctx); err != nil && ctx.Err() == nil {
+							fmt.Printf("Error monitoring webhook: %v\n", err)
+						}
+					}()
+				}
+
+				// Send the webhook request and wait for HTTP response
+				resp, err := client.TestWebhookWithResponse(ctx, webhookURL, testData)
 				if err != nil {
-					return fmt.Errorf("webhook test failed: %w", err)
+					if ctx.Err() != context.Canceled {
+						return fmt.Errorf("webhook test failed: %w", err)
+					}
+					return fmt.Errorf("webhook test was canceled")
 				}
 
 				// Print response status
@@ -958,6 +1039,32 @@ func newTestWebhookCommand(cfg *config.Config) *cobra.Command {
 						fmt.Println(string(responseBody))
 					}
 				}
+
+				// If webhook test monitor is active, wait for completion or interrupt
+				if monitorEvents && webhookID != "" && webhookTest != nil && monitorDone != nil {
+					fmt.Println("\n📡 Monitoring webhook execution events in real-time. Press Ctrl+C to stop...")
+					fmt.Println("   Note: The webhook has been triggered and is being processed by the server.")
+					fmt.Println("   We are now monitoring for any events or actions it performs.")
+
+					if verbose {
+						fmt.Println("\n🔍 Debug Information:")
+						fmt.Printf("   - Webhook ID: %s\n", webhookID)
+						fmt.Printf("   - Webhook Name: %s\n", webhook.Name)
+						fmt.Printf("   - Webhook Source: %s\n", webhook.Source)
+						fmt.Printf("   - Webhook Method: %s\n", webhook.Communication.Method)
+
+						// Print the payload we sent in dot notation format for easy matching with template vars
+						fmt.Println("   - Payload in dot notation (for template matching):")
+						printMapInDotNotation(testData, "     ", "")
+					}
+
+					// Just wait for user to press Ctrl+C
+					<-ctx.Done()
+					fmt.Println("\nWebhook monitoring stopped.")
+				} else {
+					// If not monitoring, signal to exit
+					close(exitChan)
+				}
 			} else {
 				// Just send without waiting for response
 				if err := client.TestWebhook(cmd.Context(), webhookURL, testData); err != nil {
@@ -975,8 +1082,10 @@ func newTestWebhookCommand(cfg *config.Config) *cobra.Command {
 	cmd.Flags().StringVar(&webhookURL, "url", "", "Webhook URL")
 	cmd.Flags().StringVar(&dataJSON, "data", "", "JSON data to send")
 	cmd.Flags().StringVar(&dataFile, "data-file", "", "File containing JSON data to send")
-	cmd.Flags().BoolVar(&waitForResponse, "wait", false, "Wait for webhook response")
+	cmd.Flags().BoolVar(&waitForResponse, "wait", false, "Wait for HTTP response (automatically enables monitoring with --id)")
 	cmd.Flags().BoolVar(&verbose, "verbose", false, "Show detailed information")
+	cmd.Flags().BoolVar(&autoGenerate, "auto-generate", false, "Auto-generate test data based on template variables")
+	cmd.Flags().BoolVar(&monitorEvents, "monitor", false, "Monitor webhook events in real-time (requires --id)")
 
 	// Make sure only one of id or url is provided
 	cmd.MarkFlagsMutuallyExclusive("id", "url")
@@ -1465,4 +1574,94 @@ func extractTemplateVars(prompt string) []string {
 	// Sort the variables for consistent output
 	sort.Strings(vars)
 	return vars
+}
+
+// printMapInDotNotation prints a map in dot notation format
+func printMapInDotNotation(data interface{}, indent string, prefix string) {
+	switch v := data.(type) {
+	case map[string]interface{}:
+		for k, val := range v {
+			key := k
+			if prefix != "" {
+				key = prefix + "." + k
+			}
+
+			switch child := val.(type) {
+			case map[string]interface{}:
+				fmt.Printf("%s%s:\n", indent, key)
+				printMapInDotNotation(child, indent+"  ", key)
+			case []interface{}:
+				fmt.Printf("%s%s: (array with %d items)\n", indent, key, len(child))
+				for i, item := range child {
+					arrayKey := fmt.Sprintf("%s[%d]", key, i)
+					fmt.Printf("%s  %s:\n", indent, arrayKey)
+					printMapInDotNotation(item, indent+"    ", "")
+				}
+			default:
+				fmt.Printf("%s%s: %v\n", indent, key, val)
+			}
+		}
+	case []interface{}:
+		fmt.Printf("%s(array with %d items)\n", indent, len(v))
+		for i, item := range v {
+			fmt.Printf("%s  [%d]:\n", indent, i)
+			printMapInDotNotation(item, indent+"    ", "")
+		}
+	default:
+		if prefix != "" {
+			fmt.Printf("%s%s: %v\n", indent, prefix, v)
+		} else {
+			fmt.Printf("%s%v\n", indent, v)
+		}
+	}
+}
+
+// Add this new helper function to convert dot notation keys to nested objects
+// convertDotNotationToNested transforms keys with dots like "event.issue.key"
+// into nested objects {"event":{"issue":{"key":"value"}}}
+func convertDotNotationToNested(flatMap map[string]interface{}) map[string]interface{} {
+	result := make(map[string]interface{})
+
+	for key, value := range flatMap {
+		// Skip keys that don't contain dots
+		if !strings.Contains(key, ".") {
+			result[key] = value
+			continue
+		}
+
+		// Split the key by dots
+		parts := strings.Split(key, ".")
+
+		// Start with the root of the result
+		current := result
+
+		// For each part except the last one, create nested maps as needed
+		for i := 0; i < len(parts)-1; i++ {
+			part := parts[i]
+
+			// If this part doesn't exist yet in the current map, create it
+			if _, exists := current[part]; !exists {
+				current[part] = make(map[string]interface{})
+			}
+
+			// If it exists but is not a map, we have a conflict
+			nextMap, isMap := current[part].(map[string]interface{})
+			if !isMap {
+				// Handle conflict by creating a new map and copying the old value
+				// under a special key
+				oldValue := current[part]
+				nextMap = make(map[string]interface{})
+				nextMap["_value"] = oldValue
+				current[part] = nextMap
+			}
+
+			// Move down into the next level
+			current = nextMap
+		}
+
+		// Set the value at the final part
+		current[parts[len(parts)-1]] = value
+	}
+
+	return result
 }

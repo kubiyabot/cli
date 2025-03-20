@@ -30,17 +30,25 @@ type Client struct {
 	baseURL string
 	debug   bool
 	cache   *Cache
+	audit   *AuditClient
 }
 
 // NewClient creates a new Kubiya API client
 func NewClient(cfg *config.Config) *Client {
-	return &Client{
+	client := &Client{
 		cfg:     cfg,
 		client:  &http.Client{Timeout: 30 * time.Second},
 		baseURL: cfg.BaseURL,
 		debug:   cfg.Debug,
-		cache:   NewCache(5 * time.Minute), // If you have a cache defined elsewhere
+		cache:   NewCache(5 * time.Minute),
 	}
+	client.audit = NewAuditClient(client)
+	return client
+}
+
+// Audit returns the audit client
+func (c *Client) Audit() *AuditClient {
+	return c.audit
 }
 
 // do performs an HTTP request and decodes the response into v
