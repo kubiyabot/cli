@@ -71,6 +71,7 @@ Need help? Visit: https://docs.kubiya.ai`,
 		newVersionCommand(cfg),
 		newIntegrationsCommand(cfg),
 		newProjectCommand(cfg),
+		newAuditCommand(cfg),
 	)
 
 	return rootCmd.Execute()
