@@ -1,11 +1,13 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strings"
 	"text/tabwriter"
@@ -39,20 +41,28 @@ func newTeammateCommand(cfg *config.Config) *cobra.Command {
 
 func newCreateTeammateCommand(cfg *config.Config) *cobra.Command {
 	var (
-		name              string
-		description       string
-		interactive       bool
-		llmModel          string
-		instructionType   string
-		inputFile         string
-		inputFormat       string
-		fromStdin         bool
-		sources           []string
-		secrets           []string
-		integrations      []string
-		envVars           []string
-		inlineSourceFile  string
-		inlineSourceStdin bool
+		name                string
+		description         string
+		interactive         bool
+		llmModel            string
+		instructionType     string
+		inputFile           string
+		inputFormat         string
+		fromStdin           bool
+		sources             []string
+		secrets             []string
+		integrations        []string
+		envVars             []string
+		inlineSourceFile    string
+		inlineSourceStdin   bool
+		webhooks            []string // Existing webhook IDs to attach
+		webhookDestinations []string // Destinations for created webhooks (depends on method type)
+		webhookMethod       string   // Webhook method (slack, teams, http, etc.)
+		webhookPrompt       string   // Prompt for created webhooks
+		webhookFile         string   // File containing webhook definitions
+		knowledgeItems      []string // Existing knowledge item IDs to attach
+		knowledgeFiles      []string // Files to create as knowledge items
+		knowledgeLabels     []string // Labels for created knowledge items
 	)
 
 	cmd := &cobra.Command{
@@ -72,12 +82,34 @@ func newCreateTeammateCommand(cfg *config.Config) *cobra.Command {
   kubiya teammate create --name "DevOps Bot" --desc "Handles DevOps tasks" \
     --source abc-123 --source def-456 \
     --secret DB_PASSWORD --env "LOG_LEVEL=debug" \
-    --integration github`,
+    --integration github
+
+  # Create with webhook - system will generate a webhook URL as output
+  kubiya teammate create --name "Slack Bot" \
+    --webhook-dest "#alerts" --webhook-method slack \
+    --webhook-prompt "Please analyze this alert"
+
+  # Create HTTP webhook (system provides the webhook URL)
+  kubiya teammate create --name "API Bot" --webhook-method http \
+    --webhook-prompt "Process this API request"
+
+  # Create with multiple webhook types
+  kubiya teammate create --name "Notification Bot" \
+    --webhook-method http \
+    --webhook-dest "#dev-alerts" --webhook-method slack \
+    --webhook-prompt "Process this notification"
+
+  # Create with webhooks from file
+  kubiya teammate create --name "WebhookBot" --webhook-file webhooks.json
+
+  # Create with knowledge item
+  kubiya teammate create --name "Docs Bot" --knowledge-file docs.md`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			client := kubiya.NewClient(cfg)
 
 			var teammate kubiya.Teammate
 			var err error
+			var createdResources []string // Track resources created to show in summary
 
 			// Handle inline sources first if provided
 			if inlineSourceFile != "" || inlineSourceStdin {
@@ -126,10 +158,51 @@ func newCreateTeammateCommand(cfg *config.Config) *cobra.Command {
 				}
 
 				fmt.Printf("✅ Created inline source with UUID: %s\n", sourceUUID)
+				createdResources = append(createdResources, fmt.Sprintf("Source: %s", sourceUUID))
 
 				// Add the source UUID to the teammate
 				teammate.Sources = append(teammate.Sources, sourceUUID)
 			}
+
+			// Process knowledge files if provided
+			var knowledgeIds []string
+			if len(knowledgeFiles) > 0 {
+				for _, filename := range knowledgeFiles {
+					// Read file content
+					content, err := os.ReadFile(filename)
+					if err != nil {
+						return fmt.Errorf("failed to read knowledge file '%s': %w", filename, err)
+					}
+
+					// Create a name from the filename if not specified
+					itemName := filepath.Base(filename)
+					itemName = strings.TrimSuffix(itemName, filepath.Ext(itemName))
+
+					// Create the knowledge item
+					item := kubiya.Knowledge{
+						Name:        itemName,
+						Description: fmt.Sprintf("Knowledge for teammate: %s", name),
+						Labels:      knowledgeLabels,
+						Content:     string(content),
+						Type:        "knowledge",
+						Source:      "teammate_creation",
+					}
+
+					created, err := client.CreateKnowledge(cmd.Context(), item)
+					if err != nil {
+						return fmt.Errorf("failed to create knowledge item from file '%s': %w", filename, err)
+					}
+
+					fmt.Printf("✅ Created knowledge item: %s (UUID: %s)\n", created.Name, created.UUID)
+					createdResources = append(createdResources, fmt.Sprintf("Knowledge: %s (%s)", created.Name, created.UUID))
+
+					// Add the knowledge UUID to the list
+					knowledgeIds = append(knowledgeIds, created.UUID)
+				}
+			}
+
+			// Add existing knowledge items
+			knowledgeIds = append(knowledgeIds, knowledgeItems...)
 
 			// Process input based on flags
 			switch {
@@ -190,9 +263,60 @@ func newCreateTeammateCommand(cfg *config.Config) *cobra.Command {
 				}
 			}
 
-			// Validate the teammate
-			if err := validateTeammate(&teammate); err != nil {
-				return err
+			// Add knowledge items to teammate's properties
+			if len(knowledgeIds) > 0 {
+				if teammate.Tags == nil {
+					teammate.Tags = []string{}
+				}
+				for _, id := range knowledgeIds {
+					teammate.Tags = append(teammate.Tags, fmt.Sprintf("knowledge:%s", id))
+				}
+			}
+
+			// Augment the teammate with the proper structure expected by the API
+			if teammate.Starters == nil {
+				teammate.Starters = []interface{}{}
+			}
+
+			// Initialize empty slices if nil to ensure proper JSON serialization
+			if teammate.Sources == nil {
+				teammate.Sources = []string{}
+			}
+			if teammate.Secrets == nil {
+				teammate.Secrets = []string{}
+			}
+			if teammate.Integrations == nil {
+				teammate.Integrations = []string{}
+			}
+			if teammate.Runners == nil {
+				teammate.Runners = []string{}
+			}
+			if teammate.AllowedGroups == nil {
+				teammate.AllowedGroups = []string{}
+			}
+			if teammate.AllowedUsers == nil {
+				teammate.AllowedUsers = []string{}
+			}
+			if teammate.Owners == nil {
+				teammate.Owners = []string{}
+			}
+			if teammate.Tools == nil {
+				teammate.Tools = []string{}
+			}
+			if teammate.Tasks == nil {
+				teammate.Tasks = []string{}
+			}
+			if teammate.Tags == nil {
+				teammate.Tags = []string{}
+			}
+
+			// Validate the teammate - this cannot be bypassed
+			if err := validateTeammate(client, cmd.Context(), &teammate); err != nil {
+				// Print a more helpful message with validation instructions
+				fmt.Printf("\n%s\n", style.ErrorStyle.Render("❌ Validation Error"))
+				fmt.Printf("%s\n\n", err.Error())
+
+				return fmt.Errorf("validation failed")
 			}
 
 			// Show confirmation with details before proceeding
@@ -214,11 +338,15 @@ func newCreateTeammateCommand(cfg *config.Config) *cobra.Command {
 			if len(teammate.Integrations) > 0 {
 				fmt.Printf("  Integrations: %d\n", len(teammate.Integrations))
 			}
+			if len(knowledgeIds) > 0 {
+				fmt.Printf("  Knowledge Items: %d\n", len(knowledgeIds))
+			}
 			fmt.Println()
 
 			// Send to API
 			created, err := client.CreateTeammate(cmd.Context(), teammate)
 			if err != nil {
+				// Enhanced error handling
 				return fmt.Errorf("failed to create teammate: %w", err)
 			}
 
@@ -227,6 +355,158 @@ func newCreateTeammateCommand(cfg *config.Config) *cobra.Command {
 				fmt.Printf("\n%s\n", style.WarningStyle.Render("⚠️ Warning: API returned a teammate with empty UUID!"))
 				fmt.Printf("The teammate may have been created, but the UUID was not returned by the API.\n")
 				fmt.Printf("Please check the 'kubiya teammate list' command to find your teammate.\n\n")
+
+				// Return with a more specific error to help debugging
+				if created.ID != "" {
+					fmt.Printf("Note: The API returned an ID field (%s) but not a UUID field.\n", style.HighlightStyle.Render(created.ID))
+					fmt.Printf("This may indicate a mismatch between the CLI and API versions.\n\n")
+				}
+			}
+
+			// Process webhooks if provided
+			if len(webhooks) > 0 || len(webhookDestinations) > 0 || webhookFile != "" {
+				// First, make sure we have a valid UUID
+				if created.UUID == "" && created.ID != "" {
+					created.UUID = created.ID
+				}
+
+				if created.UUID == "" {
+					fmt.Printf("⚠️ Cannot attach webhooks: teammate UUID is empty\n")
+				} else {
+					// Attach existing webhooks
+					for _, webhookID := range webhooks {
+						if err := attachWebhookToTeammate(cmd.Context(), client, webhookID, created.UUID); err != nil {
+							fmt.Printf("⚠️ Failed to attach webhook %s: %v\n", webhookID, err)
+						} else {
+							fmt.Printf("✅ Attached webhook %s to teammate\n", webhookID)
+							createdResources = append(createdResources, fmt.Sprintf("Attached webhook: %s", webhookID))
+						}
+					}
+
+					// Create new webhooks
+					for _, dest := range webhookDestinations {
+						method := webhookMethod
+						if method == "" {
+							method = "http" // Default method if not specified
+						}
+
+						prompt := webhookPrompt
+						if prompt == "" {
+							prompt = fmt.Sprintf("Default prompt for %s webhook", method)
+						}
+
+						webhook, err := createWebhook(cmd.Context(), client, created.UUID, dest, method, prompt)
+						if err != nil {
+							fmt.Printf("⚠️ Failed to create webhook for %s: %v\n", dest, err)
+						} else {
+							fmt.Printf("✅ Created %s webhook (ID: %s)\n", method, webhook.ID)
+							if webhook.WebhookURL != "" {
+								fmt.Printf("   📋 Webhook URL: %s\n", style.HighlightStyle.Render(webhook.WebhookURL))
+								createdResources = append(createdResources, fmt.Sprintf("Created %s webhook: %s (URL: %s)",
+									method, webhook.ID, webhook.WebhookURL))
+							} else {
+								createdResources = append(createdResources, fmt.Sprintf("Created %s webhook: %s",
+									method, webhook.ID))
+							}
+						}
+					}
+
+					// Create HTTP webhook if specified without any destinations
+					if webhookMethod == "http" && len(webhookDestinations) == 0 {
+						prompt := webhookPrompt
+						if prompt == "" {
+							prompt = "Default prompt for HTTP webhook"
+						}
+
+						webhook, err := createWebhook(cmd.Context(), client, created.UUID, "", "http", prompt)
+						if err != nil {
+							fmt.Printf("⚠️ Failed to create HTTP webhook: %v\n", err)
+						} else {
+							fmt.Printf("✅ Created HTTP webhook (ID: %s)\n", webhook.ID)
+							if webhook.WebhookURL != "" {
+								fmt.Printf("   📋 Webhook URL: %s\n", style.HighlightStyle.Render(webhook.WebhookURL))
+								fmt.Printf("   📊 Use the webhooks API or web interface to track webhook activity\n")
+								createdResources = append(createdResources, fmt.Sprintf("Created HTTP webhook: %s (URL: %s)",
+									webhook.ID, webhook.WebhookURL))
+							} else {
+								createdResources = append(createdResources, fmt.Sprintf("Created HTTP webhook: %s",
+									webhook.ID))
+							}
+						}
+					}
+
+					// Process webhooks from file if specified
+					if webhookFile != "" {
+						// Read file content
+						webhookData, err := os.ReadFile(webhookFile)
+						if err != nil {
+							fmt.Printf("⚠️ Failed to read webhook file: %v\n", err)
+						} else {
+							// Parse the webhooks (format depends on file extension)
+							var webhooks []kubiya.Webhook
+							ext := strings.ToLower(filepath.Ext(webhookFile))
+							if ext == ".json" {
+								if err := json.Unmarshal(webhookData, &webhooks); err != nil {
+									// Try single webhook parse if array fails
+									var singleWebhook kubiya.Webhook
+									if err := json.Unmarshal(webhookData, &singleWebhook); err != nil {
+										fmt.Printf("⚠️ Failed to parse webhook JSON: %v\n", err)
+									} else {
+										webhooks = []kubiya.Webhook{singleWebhook}
+									}
+								}
+							} else if ext == ".yaml" || ext == ".yml" {
+								if err := yaml.Unmarshal(webhookData, &webhooks); err != nil {
+									// Try single webhook parse if array fails
+									var singleWebhook kubiya.Webhook
+									if err := yaml.Unmarshal(webhookData, &singleWebhook); err != nil {
+										fmt.Printf("⚠️ Failed to parse webhook YAML: %v\n", err)
+									} else {
+										webhooks = []kubiya.Webhook{singleWebhook}
+									}
+								}
+							} else {
+								fmt.Printf("⚠️ Unsupported webhook file format: %s (use .json, .yaml, or .yml)\n", ext)
+							}
+
+							// Create each webhook
+							for i, webhook := range webhooks {
+								// Set the teammate ID
+								webhook.AgentID = created.UUID
+
+								// Set defaults if needed
+								if webhook.Name == "" {
+									webhook.Name = fmt.Sprintf("Webhook %d for %s", i+1, created.UUID)
+								}
+								if webhook.Communication.Method == "" {
+									webhook.Communication.Method = "http"
+								}
+								if webhook.Prompt == "" {
+									webhook.Prompt = fmt.Sprintf("Default prompt for %s webhook", webhook.Communication.Method)
+								}
+
+								// Create the webhook
+								createdWebhook, err := client.CreateWebhook(cmd.Context(), webhook)
+								if err != nil {
+									fmt.Printf("⚠️ Failed to create webhook %d from file: %v\n", i+1, err)
+									continue
+								}
+
+								fmt.Printf("✅ Created %s webhook from file (ID: %s)\n",
+									webhook.Communication.Method, createdWebhook.ID)
+
+								if createdWebhook.WebhookURL != "" {
+									fmt.Printf("   📋 Webhook URL: %s\n", style.HighlightStyle.Render(createdWebhook.WebhookURL))
+									createdResources = append(createdResources, fmt.Sprintf("Created %s webhook: %s (URL: %s)",
+										webhook.Communication.Method, createdWebhook.ID, createdWebhook.WebhookURL))
+								} else {
+									createdResources = append(createdResources, fmt.Sprintf("Created %s webhook: %s",
+										webhook.Communication.Method, createdWebhook.ID))
+								}
+							}
+						}
+					}
+				}
 			}
 
 			// Display the teammate info
@@ -234,6 +514,15 @@ func newCreateTeammateCommand(cfg *config.Config) *cobra.Command {
 				style.SuccessStyle.Render("✅"),
 				style.HighlightStyle.Render(created.Name),
 				style.DimStyle.Render(created.UUID))
+
+			// Show created resources summary if any
+			if len(createdResources) > 0 {
+				fmt.Printf("%s\n", style.SubtitleStyle.Render("Created Resources"))
+				for _, resource := range createdResources {
+					fmt.Printf("• %s\n", resource)
+				}
+				fmt.Println()
+			}
 
 			// Helpful next steps
 			fmt.Printf("%s\n", style.SubtitleStyle.Render("Next Steps"))
@@ -275,7 +564,75 @@ func newCreateTeammateCommand(cfg *config.Config) *cobra.Command {
 	cmd.Flags().StringVar(&inlineSourceFile, "inline-source", "", "File containing inline source tool definitions (YAML or JSON)")
 	cmd.Flags().BoolVar(&inlineSourceStdin, "inline-source-stdin", false, "Read inline source tool definitions from stdin")
 
+	// Add flags for webhooks
+	cmd.Flags().StringArrayVar(&webhooks, "webhook", []string{}, "Existing webhook ID to attach (can be specified multiple times)")
+	cmd.Flags().StringArrayVar(&webhookDestinations, "webhook-dest", []string{}, "Destination for new webhooks - required for slack/teams (not for http)")
+	cmd.Flags().StringVar(&webhookMethod, "webhook-method", "http", "Webhook type (slack, teams, http) - determines destination format")
+	cmd.Flags().StringVar(&webhookPrompt, "webhook-prompt", "", "Prompt for created webhooks")
+	cmd.Flags().StringVar(&webhookFile, "webhook-file", "", "JSON or YAML file containing webhook definitions to create")
+
+	// Add flags for knowledge
+	cmd.Flags().StringArrayVar(&knowledgeItems, "knowledge", []string{}, "Knowledge item ID to attach (can be specified multiple times)")
+	cmd.Flags().StringArrayVar(&knowledgeFiles, "knowledge-file", []string{}, "File to create as a knowledge item (can be specified multiple times)")
+	cmd.Flags().StringArrayVar(&knowledgeLabels, "knowledge-labels", []string{}, "Labels for created knowledge items (can be specified multiple times)")
+
+	// Add detailed description to the usage template
+	cmd.Long += "\n\nWebhook Methods:\n" +
+		"  - http: For HTTP webhooks. No destination needed - system provides a unique webhook URL.\n" +
+		"  - slack: For Slack notifications. Destination should be a Slack channel or webhook URL.\n" +
+		"  - teams: For Microsoft Teams. Destination should be a Teams webhook URL."
+
 	return cmd
+}
+
+// Helper function to attach a webhook to a teammate
+func attachWebhookToTeammate(ctx context.Context, client *kubiya.Client, webhookID, teammateID string) error {
+	// Get the webhook
+	webhook, err := client.GetWebhook(ctx, webhookID)
+	if err != nil {
+		return fmt.Errorf("failed to get webhook: %w", err)
+	}
+
+	// Update the webhook's agent ID
+	webhook.AgentID = teammateID
+
+	// Save the updated webhook
+	_, err = client.UpdateWebhook(ctx, webhookID, *webhook)
+	if err != nil {
+		return fmt.Errorf("failed to update webhook: %w", err)
+	}
+
+	return nil
+}
+
+// Helper function to create a webhook for a teammate
+func createWebhook(ctx context.Context, client *kubiya.Client, teammateID, destination, method, prompt string) (*kubiya.Webhook, error) {
+	// Create a new webhook
+	webhook := kubiya.Webhook{
+		Name:    fmt.Sprintf("%s webhook for %s", method, teammateID),
+		AgentID: teammateID,
+		Communication: kubiya.Communication{
+			Method:      method,
+			Destination: destination,
+		},
+		Prompt: prompt,
+	}
+
+	// For HTTP method with empty destination, just proceed (system will provide URL)
+	if method == "http" && destination == "" {
+		// Communication.Destination can be empty for HTTP webhooks
+	} else if destination == "" {
+		// For non-HTTP methods, destination is required
+		return nil, fmt.Errorf("destination is required for %s webhook", method)
+	}
+
+	// Create webhook via the API
+	createdWebhook, err := client.CreateWebhook(ctx, webhook)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create webhook: %w", err)
+	}
+
+	return createdWebhook, nil
 }
 
 // readTeammateFromFile reads and parses a teammate configuration from a file
@@ -319,7 +676,7 @@ func parseTeammateData(data []byte, format string) (kubiya.Teammate, error) {
 }
 
 // validateTeammate performs basic validation on a teammate
-func validateTeammate(teammate *kubiya.Teammate) error {
+func validateTeammate(client *kubiya.Client, ctx context.Context, teammate *kubiya.Teammate) error {
 	if teammate.Name == "" {
 		return fmt.Errorf("teammate name cannot be empty")
 	}
@@ -333,11 +690,26 @@ func validateTeammate(teammate *kubiya.Teammate) error {
 		teammate.InstructionType = "tools"
 	}
 
-	// Validate all sources have non-empty UUIDs
+	// Ensure we have at least one owner
+	// If no owners specified, use the current user ID (if available)
+	if len(teammate.Owners) == 0 {
+		// For now, we'll leave this empty and let the API handle it
+		// The API should set the current user as owner
+	}
+
+	// Validate all sources have non-empty UUIDs and match the expected UUID format
 	for i, sourceID := range teammate.Sources {
 		if sourceID == "" {
 			return fmt.Errorf("source at index %d has empty UUID", i)
 		}
+
+		// Basic UUID format validation (simple regex check)
+		if !isValidUUID(sourceID) {
+			return fmt.Errorf("source at index %d has invalid UUID format: %s", i, sourceID)
+		}
+
+		// Optional: Validate that the source exists
+		// This requires an API call, so it might be expensive
 	}
 
 	// Validate all secrets have non-empty names
@@ -345,23 +717,71 @@ func validateTeammate(teammate *kubiya.Teammate) error {
 		if secret == "" {
 			return fmt.Errorf("secret at index %d has empty name", i)
 		}
+
+		// Optionally validate that the secret exists
+		// This requires an API call, so it might be expensive
 	}
 
-	// Validate all integrations have non-empty names
-	for i, integration := range teammate.Integrations {
-		if integration == "" {
-			return fmt.Errorf("integration at index %d has empty name", i)
+	// Validate all integrations have non-empty names and actually exist
+	if len(teammate.Integrations) > 0 {
+		// Get all available integrations
+		integrations, err := client.ListIntegrations(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to validate integrations: %w", err)
+		}
+
+		availableIntegrations := make(map[string]bool)
+		for _, integration := range integrations {
+			availableIntegrations[integration.Name] = true
+		}
+
+		for i, integration := range teammate.Integrations {
+			if integration == "" {
+				return fmt.Errorf("integration at index %d has empty name", i)
+			}
+
+			// Check if integration exists in the system
+			if !availableIntegrations[integration] {
+				return fmt.Errorf("integration '%s' does not exist in the system", integration)
+			}
 		}
 	}
 
-	// Validate environment variables have non-empty keys
-	for key := range teammate.Environment {
+	// Validate environment variables have non-empty keys and values
+	for key, value := range teammate.Environment {
 		if key == "" {
 			return fmt.Errorf("environment variable has empty key")
 		}
+		if value == "" {
+			return fmt.Errorf("environment variable '%s' has empty value", key)
+		}
+	}
+
+	// Ensure the starters field is initialized properly
+	if teammate.Starters == nil {
+		teammate.Starters = []interface{}{}
 	}
 
 	return nil
+}
+
+// isValidUUID performs a simple check to determine if a string looks like a UUID
+// This is a basic validation, not a comprehensive UUID check
+func isValidUUID(id string) bool {
+	// Simple check for common UUID formats:
+	// - 8-4-4-4-12 format (standard UUID)
+	// - 32 hex characters (no dashes)
+	// - Formats like "abc-123" that are sometimes used in the system
+
+	// Check if it contains only valid hex chars and dashes
+	for _, c := range id {
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F') || c == '-') {
+			return false
+		}
+	}
+
+	// Length check (with or without dashes)
+	return len(id) > 8 && len(id) <= 36
 }
 
 func newEditTeammateCommand(cfg *config.Config) *cobra.Command {
@@ -381,6 +801,13 @@ func newEditTeammateCommand(cfg *config.Config) *cobra.Command {
 		addIntegrations    []string
 		removeIntegrations []string
 		outputFormat       string
+		// New webhook-related variables
+		addWebhooks         []string
+		removeWebhooks      []string
+		webhookDestinations []string
+		webhookMethod       string
+		webhookPrompt       string
+		webhookFile         string
 	)
 
 	cmd := &cobra.Command{
@@ -397,7 +824,19 @@ func newEditTeammateCommand(cfg *config.Config) *cobra.Command {
   
   # Add or remove components
   kubiya teammate edit abc-123 --add-source def-456 --remove-secret DB_PASSWORD
-  kubiya teammate edit abc-123 --add-env "DEBUG=true" --remove-integration github`,
+  kubiya teammate edit abc-123 --add-env "DEBUG=true" --remove-integration github
+  
+  # Add webhooks to teammate
+  kubiya teammate edit abc-123 --webhook-method slack --webhook-dest "#alerts" --webhook-prompt "Alert received"
+  
+  # Add HTTP webhook (system generates the URL)
+  kubiya teammate edit abc-123 --webhook-method http --webhook-prompt "Process this API request"
+  
+  # Add existing webhook by ID
+  kubiya teammate edit abc-123 --add-webhook webhook-123-456
+  
+  # Remove webhook from teammate
+  kubiya teammate edit abc-123 --remove-webhook webhook-789-012`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			client := kubiya.NewClient(cfg)
@@ -410,6 +849,7 @@ func newEditTeammateCommand(cfg *config.Config) *cobra.Command {
 			}
 
 			var updated kubiya.Teammate
+			var createdResources []string // Track resources created to show in summary
 
 			if interactive {
 				// Use TUI form
@@ -432,7 +872,8 @@ func newEditTeammateCommand(cfg *config.Config) *cobra.Command {
 				}
 			} else if hasCommandLineChanges(name, description, llmModel, instructions,
 				addSources, removeSources, addSecrets, removeSecrets,
-				addEnvVars, removeEnvVars, addIntegrations, removeIntegrations) {
+				addEnvVars, removeEnvVars, addIntegrations, removeIntegrations) ||
+				hasWebhookChanges(addWebhooks, removeWebhooks, webhookDestinations, webhookMethod, webhookPrompt) {
 
 				// Apply command-line changes
 				updated = *teammate
@@ -547,16 +988,18 @@ func newEditTeammateCommand(cfg *config.Config) *cobra.Command {
 			// Show changes
 			fmt.Printf("\n%s\n\n", style.TitleStyle.Render(" 🔄 Updating Teammate "))
 
-			if len(diff) == 0 {
+			if len(diff) == 0 && !hasWebhookChanges(addWebhooks, removeWebhooks, webhookDestinations, webhookMethod, webhookPrompt) {
 				fmt.Println("No changes detected. Update cancelled.")
 				return nil
 			}
 
-			fmt.Println("Changes:")
-			for _, change := range diff {
-				fmt.Printf("  • %s\n", change)
+			if len(diff) > 0 {
+				fmt.Println("Changes:")
+				for _, change := range diff {
+					fmt.Printf("  • %s\n", change)
+				}
+				fmt.Println()
 			}
-			fmt.Println()
 
 			// Confirm update with user
 			if !confirmYesNo("Proceed with these changes?") {
@@ -572,6 +1015,168 @@ func newEditTeammateCommand(cfg *config.Config) *cobra.Command {
 			fmt.Printf("%s Updated teammate: %s\n\n",
 				style.SuccessStyle.Render("✅"),
 				style.HighlightStyle.Render(result.Name))
+
+			// Process webhook changes after the teammate update
+			// Process existing webhook attachments/detachments
+			for _, webhookID := range addWebhooks {
+				if err := attachWebhookToTeammate(cmd.Context(), client, webhookID, uuid); err != nil {
+					fmt.Printf("⚠️ Failed to attach webhook %s: %v\n", webhookID, err)
+				} else {
+					fmt.Printf("✅ Attached webhook %s to teammate\n", webhookID)
+					createdResources = append(createdResources, fmt.Sprintf("Attached webhook: %s", webhookID))
+				}
+			}
+
+			for _, webhookID := range removeWebhooks {
+				// Detach webhook - we need to get it, set agent_id to empty, and update it
+				webhook, err := client.GetWebhook(cmd.Context(), webhookID)
+				if err != nil {
+					fmt.Printf("⚠️ Failed to get webhook %s: %v\n", webhookID, err)
+					continue
+				}
+
+				// Only detach if it's actually attached to this teammate
+				if webhook.AgentID == uuid {
+					webhook.AgentID = ""
+					if _, err := client.UpdateWebhook(cmd.Context(), webhookID, *webhook); err != nil {
+						fmt.Printf("⚠️ Failed to detach webhook %s: %v\n", webhookID, err)
+					} else {
+						fmt.Printf("✅ Detached webhook %s from teammate\n", webhookID)
+						createdResources = append(createdResources, fmt.Sprintf("Detached webhook: %s", webhookID))
+					}
+				} else {
+					fmt.Printf("⚠️ Webhook %s is not attached to this teammate\n", webhookID)
+				}
+			}
+
+			// Create new webhooks from command line arguments
+			if len(webhookDestinations) > 0 || (webhookMethod == "http" && webhookPrompt != "") {
+				// Create webhooks for each destination
+				for _, dest := range webhookDestinations {
+					method := webhookMethod
+					if method == "" {
+						method = "http" // Default method if not specified
+					}
+
+					prompt := webhookPrompt
+					if prompt == "" {
+						prompt = fmt.Sprintf("Default prompt for %s webhook", method)
+					}
+
+					webhook, err := createWebhook(cmd.Context(), client, uuid, dest, method, prompt)
+					if err != nil {
+						fmt.Printf("⚠️ Failed to create webhook for %s: %v\n", dest, err)
+					} else {
+						fmt.Printf("✅ Created %s webhook (ID: %s)\n", method, webhook.ID)
+						if webhook.WebhookURL != "" {
+							fmt.Printf("   📋 Webhook URL: %s\n", style.HighlightStyle.Render(webhook.WebhookURL))
+							createdResources = append(createdResources, fmt.Sprintf("Created %s webhook: %s (URL: %s)",
+								method, webhook.ID, webhook.WebhookURL))
+						} else {
+							createdResources = append(createdResources, fmt.Sprintf("Created %s webhook: %s",
+								method, webhook.ID))
+						}
+					}
+				}
+
+				// Create HTTP webhook if specified without any destinations
+				if webhookMethod == "http" && len(webhookDestinations) == 0 && webhookPrompt != "" {
+					webhook, err := createWebhook(cmd.Context(), client, uuid, "", "http", webhookPrompt)
+					if err != nil {
+						fmt.Printf("⚠️ Failed to create HTTP webhook: %v\n", err)
+					} else {
+						fmt.Printf("✅ Created HTTP webhook (ID: %s)\n", webhook.ID)
+						if webhook.WebhookURL != "" {
+							fmt.Printf("   📋 Webhook URL: %s\n", style.HighlightStyle.Render(webhook.WebhookURL))
+							fmt.Printf("   📊 Use the webhooks API or web interface to track webhook activity\n")
+							createdResources = append(createdResources, fmt.Sprintf("Created HTTP webhook: %s (URL: %s)",
+								webhook.ID, webhook.WebhookURL))
+						} else {
+							createdResources = append(createdResources, fmt.Sprintf("Created HTTP webhook: %s",
+								webhook.ID))
+						}
+					}
+				}
+			}
+
+			// Create webhooks from file if specified
+			if webhookFile != "" {
+				// Read file content
+				webhookData, err := os.ReadFile(webhookFile)
+				if err != nil {
+					return fmt.Errorf("failed to read webhook file: %w", err)
+				}
+
+				// Parse the webhooks (format depends on file extension)
+				var webhooks []kubiya.Webhook
+				ext := strings.ToLower(filepath.Ext(webhookFile))
+				if ext == ".json" {
+					if err := json.Unmarshal(webhookData, &webhooks); err != nil {
+						// Try single webhook parse if array fails
+						var singleWebhook kubiya.Webhook
+						if err := json.Unmarshal(webhookData, &singleWebhook); err != nil {
+							return fmt.Errorf("failed to parse webhook JSON: %w", err)
+						}
+						webhooks = []kubiya.Webhook{singleWebhook}
+					}
+				} else if ext == ".yaml" || ext == ".yml" {
+					if err := yaml.Unmarshal(webhookData, &webhooks); err != nil {
+						// Try single webhook parse if array fails
+						var singleWebhook kubiya.Webhook
+						if err := yaml.Unmarshal(webhookData, &singleWebhook); err != nil {
+							return fmt.Errorf("failed to parse webhook YAML: %w", err)
+						}
+						webhooks = []kubiya.Webhook{singleWebhook}
+					}
+				} else {
+					return fmt.Errorf("unsupported webhook file format: %s (use .json, .yaml, or .yml)", ext)
+				}
+
+				// Create each webhook
+				for i, webhook := range webhooks {
+					// Set the teammate ID
+					webhook.AgentID = uuid
+
+					// Set defaults if needed
+					if webhook.Name == "" {
+						webhook.Name = fmt.Sprintf("Webhook %d for %s", i+1, uuid)
+					}
+					if webhook.Communication.Method == "" {
+						webhook.Communication.Method = "http"
+					}
+					if webhook.Prompt == "" {
+						webhook.Prompt = fmt.Sprintf("Default prompt for %s webhook", webhook.Communication.Method)
+					}
+
+					// Create the webhook
+					createdWebhook, err := client.CreateWebhook(cmd.Context(), webhook)
+					if err != nil {
+						fmt.Printf("⚠️ Failed to create webhook %d from file: %v\n", i+1, err)
+						continue
+					}
+
+					fmt.Printf("✅ Created %s webhook from file (ID: %s)\n",
+						webhook.Communication.Method, createdWebhook.ID)
+
+					if createdWebhook.WebhookURL != "" {
+						fmt.Printf("   📋 Webhook URL: %s\n", style.HighlightStyle.Render(createdWebhook.WebhookURL))
+						createdResources = append(createdResources, fmt.Sprintf("Created %s webhook: %s (URL: %s)",
+							webhook.Communication.Method, createdWebhook.ID, createdWebhook.WebhookURL))
+					} else {
+						createdResources = append(createdResources, fmt.Sprintf("Created %s webhook: %s",
+							webhook.Communication.Method, createdWebhook.ID))
+					}
+				}
+			}
+
+			// Show created resources summary if any
+			if len(createdResources) > 0 {
+				fmt.Printf("%s\n", style.SubtitleStyle.Render("Created/Updated Resources"))
+				for _, resource := range createdResources {
+					fmt.Printf("• %s\n", resource)
+				}
+				fmt.Println()
+			}
 
 			// Provide next steps
 			fmt.Printf("%s\n", style.SubtitleStyle.Render("Next Steps"))
@@ -607,6 +1212,14 @@ func newEditTeammateCommand(cfg *config.Config) *cobra.Command {
 	cmd.Flags().StringArrayVar(&removeEnvVars, "remove-env", []string{}, "Remove environment variable key (can be specified multiple times)")
 	cmd.Flags().StringArrayVar(&removeIntegrations, "remove-integration", []string{}, "Remove integration (can be specified multiple times)")
 
+	// Webhook flags
+	cmd.Flags().StringArrayVar(&addWebhooks, "add-webhook", []string{}, "Add existing webhook by ID (can be specified multiple times)")
+	cmd.Flags().StringArrayVar(&removeWebhooks, "remove-webhook", []string{}, "Remove webhook by ID (can be specified multiple times)")
+	cmd.Flags().StringArrayVar(&webhookDestinations, "webhook-dest", []string{}, "Destination for new webhooks (depends on method type)")
+	cmd.Flags().StringVar(&webhookMethod, "webhook-method", "http", "Webhook type (slack, teams, http) - determines destination format")
+	cmd.Flags().StringVar(&webhookPrompt, "webhook-prompt", "", "Prompt for created webhooks")
+	cmd.Flags().StringVar(&webhookFile, "webhook-file", "", "JSON or YAML file containing webhook definitions to create")
+
 	return cmd
 }
 
@@ -632,6 +1245,29 @@ func hasCommandLineChanges(name, description, llmModel, instructions string,
 	}
 
 	if len(addIntegrations) > 0 || len(removeIntegrations) > 0 {
+		return true
+	}
+
+	return false
+}
+
+// Check if any webhook-related changes were specified
+func hasWebhookChanges(addWebhooks, removeWebhooks, webhookDestinations []string, webhookMethod, webhookPrompt string) bool {
+	if len(addWebhooks) > 0 || len(removeWebhooks) > 0 {
+		return true
+	}
+
+	if len(webhookDestinations) > 0 {
+		return true
+	}
+
+	// For HTTP webhooks, only a prompt is required (no destination)
+	if webhookMethod == "http" && webhookPrompt != "" {
+		return true
+	}
+
+	// For other webhook types, both method and destination are needed
+	if webhookMethod != "" && webhookMethod != "http" && webhookPrompt != "" {
 		return true
 	}
 

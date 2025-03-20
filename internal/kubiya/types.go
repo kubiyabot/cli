@@ -409,6 +409,7 @@ type EnvVarStatus struct {
 
 type Teammate struct {
 	UUID            string            `json:"uuid"`
+	ID              string            `json:"id"`
 	Name            string            `json:"name"`
 	Description     string            `json:"description"`
 	InstructionType string            `json:"instruction_type"`
@@ -428,7 +429,8 @@ type Teammate struct {
 	Links           []string          `json:"links"`
 	Tools           []string          `json:"tools"`
 	Tasks           []string          `json:"tasks"`
-	Starters        []string          `json:"starters"`
+	Starters        []interface{}     `json:"starters,omitempty"`
+	Tags            []string          `json:"tags,omitempty"`
 	Metadata        struct {
 		CreatedAt   string `json:"created_at"`
 		LastUpdated string `json:"last_updated"`

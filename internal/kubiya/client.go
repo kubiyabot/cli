@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/kubiyabot/cli/internal/config"
@@ -237,9 +238,18 @@ func (c *Client) GetTeammates(ctx context.Context) ([]Teammate, error) {
 		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}
 
-	// Filter out empty entries
+	// Process each teammate to ensure UUID is correctly set
 	var validTeammates []Teammate
 	for _, t := range teammates {
+		// If UUID is empty but ID is set, use ID as UUID
+		if t.UUID == "" && t.ID != "" {
+			t.UUID = t.ID
+			if c.debug {
+				fmt.Printf("Warning: UUID was empty for teammate %s, using ID field: %s\n", t.Name, t.ID)
+			}
+		}
+
+		// Filter out empty entries
 		if t.UUID != "" && t.Name != "" {
 			validTeammates = append(validTeammates, t)
 		}
@@ -383,37 +393,162 @@ func (c *Client) GetRunner(ctx context.Context, name string) (Runner, error) {
 
 // Example method: listing all runners
 func (c *Client) ListRunners(ctx context.Context) ([]Runner, error) {
-	resp, err := c.get(ctx, "/runners")
+	baseURL := strings.TrimSuffix(c.baseURL, "/api/v1")
+	url := fmt.Sprintf("%s/api/v3/runners", baseURL)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Authorization", "UserKey "+c.cfg.APIKey)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list runners: %w", err)
 	}
 	defer resp.Body.Close()
 
-	var runners []Runner
-	if err := json.NewDecoder(resp.Body).Decode(&runners); err != nil {
-		// If array decode fails, try single object
-		resp.Body.Close()
-		resp, err = c.get(ctx, "/runners")
+	// First try to decode as an array of raw JSON objects to handle version conversion
+	var rawRunners []map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&rawRunners); err != nil {
+		return nil, fmt.Errorf("failed to decode runners response: %w", err)
+	}
+
+	// Convert the raw runners to proper Runner structs
+	runners := make([]Runner, len(rawRunners))
+
+	// Use a wait group to fetch health status concurrently
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	semaphore := make(chan struct{}, 5) // Limit concurrent requests
+
+	for i, raw := range rawRunners {
+		// Convert version from number to string
+		if version, ok := raw["version"].(float64); ok {
+			if version == 0 {
+				raw["version"] = "v1"
+			} else if version == 2 {
+				raw["version"] = "v2"
+			}
+		}
+
+		// Marshal back to JSON and decode into Runner struct
+		runnerJSON, err := json.Marshal(raw)
 		if err != nil {
-			return nil, fmt.Errorf("failed to list runners: %w", err)
+			return nil, fmt.Errorf("failed to marshal runner: %w", err)
 		}
-		defer resp.Body.Close()
 
-		var runner Runner
-		if err := json.NewDecoder(resp.Body).Decode(&runner); err != nil {
-			return nil, fmt.Errorf("failed to decode runners response: %w", err)
+		if err := json.Unmarshal(runnerJSON, &runners[i]); err != nil {
+			return nil, fmt.Errorf("failed to decode runner: %w", err)
 		}
-		runners = []Runner{runner}
+
+		// Start a goroutine to fetch health status
+		wg.Add(1)
+		go func(index int) {
+			defer wg.Done()
+
+			// Acquire semaphore slot
+			semaphore <- struct{}{}
+			defer func() { <-semaphore }()
+
+			healthURL := fmt.Sprintf("%s/api/v3/runners/%s/health", baseURL, runners[index].Name)
+			healthReq, err := http.NewRequestWithContext(ctx, http.MethodGet, healthURL, nil)
+			if err != nil {
+				return
+			}
+
+			healthReq.Header.Set("Authorization", "UserKey "+c.cfg.APIKey)
+			healthReq.Header.Set("Content-Type", "application/json")
+
+			healthResp, err := c.client.Do(healthReq)
+			if err != nil {
+				return
+			}
+			defer healthResp.Body.Close()
+
+			if healthResp.StatusCode == http.StatusOK {
+				var healthData struct {
+					Checks []struct {
+						Error    string `json:"error"`
+						Metadata struct {
+							GitSHA  string `json:"git_sha"`
+							Release string `json:"release"`
+						} `json:"metadata"`
+						Name    string `json:"name"`
+						Status  string `json:"status"`
+						Version string `json:"version"`
+					} `json:"checks"`
+					Health  string `json:"health"`
+					Status  string `json:"status"`
+					Time    string `json:"time"`
+					Version string `json:"version"`
+				}
+
+				if err := json.NewDecoder(healthResp.Body).Decode(&healthData); err != nil {
+					return
+				}
+
+				// Use mutex to safely update runner data
+				mu.Lock()
+				// Update runner health information
+				runners[index].RunnerHealth.Status = healthData.Status
+				runners[index].RunnerHealth.Health = healthData.Health
+				runners[index].RunnerHealth.Version = healthData.Version
+
+				// Update tool manager health
+				for _, check := range healthData.Checks {
+					if check.Name == "tool-manager" {
+						runners[index].ToolManagerHealth.Status = check.Status
+						runners[index].ToolManagerHealth.Version = check.Version
+						if check.Error != "" {
+							runners[index].ToolManagerHealth.Error = check.Error
+						}
+					} else if check.Name == "agent-manager" {
+						runners[index].AgentManagerHealth.Status = check.Status
+						runners[index].AgentManagerHealth.Version = check.Version
+						if check.Error != "" {
+							runners[index].AgentManagerHealth.Error = check.Error
+						}
+					}
+				}
+				mu.Unlock()
+			}
+		}(i)
+
+		// Handle empty health status fields
+		if runners[i].RunnerHealth.Status == "" {
+			runners[i].RunnerHealth.Status = "unknown"
+		}
+		if runners[i].RunnerHealth.Health == "" {
+			runners[i].RunnerHealth.Health = "unknown"
+		}
+
+		// Handle empty tool manager health
+		if runners[i].ToolManagerHealth.Status == "" {
+			runners[i].ToolManagerHealth.Status = "unknown"
+		}
+		if runners[i].ToolManagerHealth.Health == "" {
+			runners[i].ToolManagerHealth.Health = "unknown"
+		}
+
+		// Handle empty agent manager health
+		if runners[i].AgentManagerHealth.Status == "" {
+			runners[i].AgentManagerHealth.Status = "unknown"
+		}
+		if runners[i].AgentManagerHealth.Health == "" {
+			runners[i].AgentManagerHealth.Health = "unknown"
+		}
+
+		// Use kubernetes_namespace if namespace is empty
+		if runners[i].Namespace == "" && runners[i].KubernetesNamespace != "" {
+			runners[i].Namespace = runners[i].KubernetesNamespace
+		}
 	}
 
-	// Convert version numbers to strings for consistency
-	for i := range runners {
-		if runners[i].Version == "0" {
-			runners[i].Version = "v1"
-		} else if runners[i].Version == "2" {
-			runners[i].Version = "v2"
-		}
-	}
+	// Wait for all health checks to complete
+	wg.Wait()
 
 	return runners, nil
 }
@@ -425,6 +560,42 @@ func (c *Client) GetRunnerManifest(ctx context.Context, name string) (RunnerMani
 		return RunnerManifest{}, fmt.Errorf("failed to get runner manifest: %w", err)
 	}
 	defer resp.Body.Close()
+
+	var manifest RunnerManifest
+	if err := json.NewDecoder(resp.Body).Decode(&manifest); err != nil {
+		return RunnerManifest{}, fmt.Errorf("failed to decode manifest response: %w", err)
+	}
+
+	return manifest, nil
+}
+
+// CreateRunnerManifest requests a new runner manifest from the API
+func (c *Client) CreateRunnerManifest(ctx context.Context, name string) (RunnerManifest, error) {
+	// The endpoint is a different path than the standard API
+	url := fmt.Sprintf("%s/api/v3/runners/%s", strings.TrimSuffix(c.baseURL, "/api/v1"), name)
+
+	if c.debug {
+		fmt.Printf("Creating runner manifest for %s at URL: %s\n", name, url)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, nil)
+	if err != nil {
+		return RunnerManifest{}, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Authorization", "UserKey "+c.cfg.APIKey)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return RunnerManifest{}, fmt.Errorf("failed to create runner manifest: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return RunnerManifest{}, fmt.Errorf("unexpected status code: %d, body: %s", resp.StatusCode, string(bodyBytes))
+	}
 
 	var manifest RunnerManifest
 	if err := json.NewDecoder(resp.Body).Decode(&manifest); err != nil {
@@ -461,31 +632,105 @@ func (c *Client) DownloadManifest(ctx context.Context, url string) ([]byte, erro
 
 // Example method: creating a teammate
 func (c *Client) CreateTeammate(ctx context.Context, teammate Teammate) (*Teammate, error) {
+	// Debug output for the request
+	if c.debug {
+		payload, _ := json.MarshalIndent(teammate, "", "  ")
+		fmt.Printf("CreateTeammate request payload:\n%s\n", string(payload))
+	}
+
 	resp, err := c.post(ctx, "/agents", teammate)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to create teammate: %w", err)
 	}
 	defer resp.Body.Close()
 
-	var created Teammate
-	if err := json.NewDecoder(resp.Body).Decode(&created); err != nil {
-		return nil, err
+	// Read the response body
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response body: %w", err)
 	}
+
+	// Debug output for the response
+	if c.debug {
+		fmt.Printf("CreateTeammate response:\n%s\n", string(bodyBytes))
+	}
+
+	// Unmarshal into created teammate
+	var created Teammate
+	if err := json.Unmarshal(bodyBytes, &created); err != nil {
+		// Try parsing as a different response format
+		var altResponse struct {
+			ID string `json:"id"`
+		}
+		if altErr := json.Unmarshal(bodyBytes, &altResponse); altErr == nil && altResponse.ID != "" {
+			// We got an alternative format with just an ID
+			created.ID = altResponse.ID
+			created.UUID = altResponse.ID // Also set UUID to match
+			created.Name = teammate.Name  // Copy over the name from the request
+			if c.debug {
+				fmt.Printf("Parsed teammate ID from alternative response format: %s\n", created.ID)
+			}
+		} else {
+			return nil, fmt.Errorf("failed to unmarshal response: %w\nResponse body: %s", err, string(bodyBytes))
+		}
+	}
+
+	// Ensure the UUID is set correctly
+	if created.UUID == "" && created.ID != "" {
+		created.UUID = created.ID
+		if c.debug {
+			fmt.Printf("Warning: UUID was empty, using ID field: %s\n", created.ID)
+		}
+	}
+
+	// Verify we have a valid teammate
+	if created.UUID == "" {
+		if c.debug {
+			fmt.Printf("Warning: Created teammate has empty UUID after processing\n")
+		}
+	}
+
 	return &created, nil
 }
 
 // Example method: updating a teammate
 func (c *Client) UpdateTeammate(ctx context.Context, uuid string, teammate Teammate) (*Teammate, error) {
+	// Debug output
+	if c.debug {
+		payload, _ := json.MarshalIndent(teammate, "", "  ")
+		fmt.Printf("UpdateTeammate request payload:\n%s\n", string(payload))
+	}
+
 	resp, err := c.put(ctx, fmt.Sprintf("/agents/%s", uuid), teammate)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
 
-	var updated Teammate
-	if err := json.NewDecoder(resp.Body).Decode(&updated); err != nil {
-		return nil, err
+	// Read the response body
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response body: %w", err)
 	}
+
+	// Debug output
+	if c.debug {
+		fmt.Printf("UpdateTeammate response:\n%s\n", string(bodyBytes))
+	}
+
+	var updated Teammate
+	if err := json.Unmarshal(bodyBytes, &updated); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal response: %w\nResponse body: %s", err, string(bodyBytes))
+	}
+
+	// Ensure the UUID is set correctly
+	if updated.UUID == "" && updated.ID != "" {
+		updated.UUID = updated.ID
+		if c.debug {
+			fmt.Printf("Warning: UUID was empty, using ID field: %s\n", updated.ID)
+		}
+	}
+
 	return &updated, nil
 }
 
