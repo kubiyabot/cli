@@ -57,7 +57,7 @@ type Source struct {
 	URL                     string                 `json:"url"`
 	Name                    string                 `json:"name"`
 	Description             string                 `json:"description"`
-	Type                    string                 `json:"type,omitempty"` // "git", "inline", or empty for backwards compatibility
+	Type                    string                 `json:"type,omitempty"` // "git" or "inline" (inline sources can be provided as inline tools or zip files)
 	TaskID                  string                 `json:"task_id"`
 	ManagedBy               string                 `json:"managed_by"`
 	ConnectedAgentsCount    int                    `json:"connected_agents_count"`

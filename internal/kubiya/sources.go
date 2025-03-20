@@ -1,13 +1,18 @@
 package kubiya
 
 import (
+	"archive/zip"
 	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
+	"net/url"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 )
 
@@ -31,7 +36,7 @@ func (c *Client) ListSources(ctx context.Context) ([]Source, error) {
 	for i := range sources {
 		// Set default type if not available
 		if sources[i].Type == "" {
-			if sources[i].URL == "" || len(sources[i].InlineTools) > 0 {
+			if sources[i].URL == "" || len(sources[i].InlineTools) > 0 || strings.HasSuffix(sources[i].URL, ".zip") {
 				sources[i].Type = "inline"
 			} else {
 				sources[i].Type = "git"
@@ -182,6 +187,26 @@ func (c *Client) LoadSource(ctx context.Context, path string, options ...SourceO
 
 	// Handle local paths differently
 	if path == "." || !strings.Contains(path, "://") {
+		// Check if this is a directory or a Python file
+		fileInfo, err := os.Stat(path)
+		if err == nil && (fileInfo.IsDir() || (filepath.Ext(path) == ".py")) {
+			// It's a directory or Python file, need to zip it
+			if c.debug {
+				fmt.Printf("Path is a directory or Python file, creating zip: %s\n", path)
+			}
+
+			// Create a temporary zip file
+			tempZipFile, err := createTempZip(path)
+			if err != nil {
+				return nil, fmt.Errorf("failed to create zip file: %w", err)
+			}
+			defer os.Remove(tempZipFile) // Clean up the temp file after use
+
+			// Upload the zip file
+			return c.LoadZipSource(ctx, tempZipFile, source.Name, runnerName)
+		}
+
+		// Regular Git repository handling
 		gitURL, branch, err := getGitInfo(path)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get git info: %w", err)
@@ -354,6 +379,26 @@ func (c *Client) CreateSource(ctx context.Context, url string, opts ...SourceOpt
 	// Ensure type is set based on content
 	if len(source.InlineTools) > 0 {
 		source.Type = "inline"
+	}
+
+	// Check if the URL is a local path and it's a directory or Python file
+	if url != "" && (url == "." || !strings.Contains(url, "://")) {
+		fileInfo, err := os.Stat(url)
+		if err == nil && (fileInfo.IsDir() || (filepath.Ext(url) == ".py")) {
+			if c.debug {
+				fmt.Printf("URL is a directory or Python file, creating as zip source: %s\n", url)
+			}
+
+			// Create a temporary zip file
+			tempZipFile, err := createTempZip(url)
+			if err != nil {
+				return nil, fmt.Errorf("failed to create zip file: %w", err)
+			}
+			defer os.Remove(tempZipFile) // Clean up the temp file after use
+
+			// Upload the zip file instead
+			return c.CreateZipSource(ctx, tempZipFile, source.Name, source.Runner)
+		}
 	}
 
 	if c.debug {
@@ -555,4 +600,380 @@ func (c *Client) GetRawSourceMetadata(ctx context.Context, uuid string) (string,
 	}
 
 	return string(bodyBytes), nil
+}
+
+// CreateZipSource creates a new source from a zip file
+// This is useful for uploading inline sources as a folder or Python file(s)
+func (c *Client) CreateZipSource(ctx context.Context, zipPath string, name string, runnerName string) (*Source, error) {
+	if c.debug {
+		fmt.Printf("Creating zip source from path: %s\n", zipPath)
+	}
+
+	// Open the zip file
+	file, err := os.Open(zipPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open zip file: %w", err)
+	}
+	defer file.Close()
+
+	// Prepare the multipart form
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+
+	// Create a form file
+	part, err := writer.CreateFormFile("file", filepath.Base(zipPath))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create form file: %w", err)
+	}
+
+	// Copy the file content to the form
+	if _, err = io.Copy(part, file); err != nil {
+		return nil, fmt.Errorf("failed to copy zip content: %w", err)
+	}
+
+	// Close the writer
+	if err = writer.Close(); err != nil {
+		return nil, fmt.Errorf("failed to close multipart writer: %w", err)
+	}
+
+	// Build the URL with query parameters
+	urlPath := "/sources/zip"
+	if runnerName != "" {
+		urlPath += fmt.Sprintf("?runner=%s", url.QueryEscape(runnerName))
+	}
+	if name != "" {
+		if strings.Contains(urlPath, "?") {
+			urlPath += fmt.Sprintf("&name=%s", url.QueryEscape(name))
+		} else {
+			urlPath += fmt.Sprintf("?name=%s", url.QueryEscape(name))
+		}
+	}
+
+	// Create a new HTTP request
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, fmt.Sprintf("%s%s", c.baseURL, urlPath), body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	// Set the content type
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	req.Header.Set("Authorization", "UserKey "+c.cfg.APIKey)
+
+	// Make the request
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to execute request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Check the response status
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("unexpected status code: %d, body: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	// Parse the response
+	var source Source
+	if err := json.NewDecoder(resp.Body).Decode(&source); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	// Ensure type is set correctly
+	if source.Type == "" {
+		source.Type = "inline"
+	}
+
+	return &source, nil
+}
+
+// LoadZipSource loads a source from a zip file without creating it permanently
+// This is useful for testing inline sources as a folder or Python file(s)
+func (c *Client) LoadZipSource(ctx context.Context, zipPath string, name string, runnerName string) (*Source, error) {
+	if c.debug {
+		fmt.Printf("Loading zip source from path: %s\n", zipPath)
+	}
+
+	// Open the zip file
+	file, err := os.Open(zipPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open zip file: %w", err)
+	}
+	defer file.Close()
+
+	// Prepare the multipart form
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+
+	// Create a form file
+	part, err := writer.CreateFormFile("file", filepath.Base(zipPath))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create form file: %w", err)
+	}
+
+	// Copy the file content to the form
+	if _, err = io.Copy(part, file); err != nil {
+		return nil, fmt.Errorf("failed to copy zip content: %w", err)
+	}
+
+	// Close the writer
+	if err = writer.Close(); err != nil {
+		return nil, fmt.Errorf("failed to close multipart writer: %w", err)
+	}
+
+	// Build the URL with query parameters
+	urlPath := "/sources/zip/load"
+	if runnerName != "" {
+		urlPath += fmt.Sprintf("?runner=%s", url.QueryEscape(runnerName))
+	}
+	if name != "" {
+		if strings.Contains(urlPath, "?") {
+			urlPath += fmt.Sprintf("&name=%s", url.QueryEscape(name))
+		} else {
+			urlPath += fmt.Sprintf("?name=%s", url.QueryEscape(name))
+		}
+	}
+
+	// Create a new HTTP request
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, fmt.Sprintf("%s%s", c.baseURL, urlPath), body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	// Set the content type
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	req.Header.Set("Authorization", "UserKey "+c.cfg.APIKey)
+
+	// Make the request
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to execute request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Check the response status
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("unexpected status code: %d, body: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	// Parse the response
+	var source Source
+	if err := json.NewDecoder(resp.Body).Decode(&source); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	// Ensure type is set correctly
+	if source.Type == "" {
+		source.Type = "inline"
+	}
+
+	return &source, nil
+}
+
+// Helper function to create a temporary zip file from a directory or file
+func createTempZip(srcPath string) (string, error) {
+	// Create a temporary file for the zip
+	tempFile, err := os.CreateTemp("", "kubiya-source-*.zip")
+	if err != nil {
+		return "", fmt.Errorf("failed to create temp file: %w", err)
+	}
+	tempFile.Close()
+
+	// Get the absolute path of the source
+	srcPath, err = filepath.Abs(srcPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to get absolute path: %w", err)
+	}
+
+	// Create a new zip file
+	zipFile, err := os.Create(tempFile.Name())
+	if err != nil {
+		return "", fmt.Errorf("failed to create zip file: %w", err)
+	}
+	defer zipFile.Close()
+
+	zipWriter := zip.NewWriter(zipFile)
+	defer zipWriter.Close()
+
+	// Check if source path is a file or directory
+	fileInfo, err := os.Stat(srcPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to stat source path: %w", err)
+	}
+
+	if fileInfo.IsDir() {
+		// Check if the directory is a Python project
+		isPythonProject := isPythonProject(srcPath)
+
+		// Walk through the directory
+		err = filepath.Walk(srcPath, func(path string, info os.FileInfo, err error) error {
+			if err != nil {
+				return err
+			}
+
+			// Skip directories
+			if info.IsDir() {
+				return nil
+			}
+
+			// Create a relative path for the file within the zip
+			relPath, err := filepath.Rel(srcPath, path)
+			if err != nil {
+				return fmt.Errorf("failed to get relative path: %w", err)
+			}
+
+			// Skip hidden files and directories
+			if strings.HasPrefix(relPath, ".") || strings.Contains(relPath, "/.") {
+				return nil
+			}
+
+			// For Python projects, filter only Python-related files
+			if isPythonProject {
+				if !isPythonFile(relPath) && !isPythonProjectFile(relPath) {
+					return nil
+				}
+			}
+
+			// Create a new file in the zip
+			file, err := os.Open(path)
+			if err != nil {
+				return fmt.Errorf("failed to open file: %w", err)
+			}
+			defer file.Close()
+
+			// Create a header for the file
+			header, err := zip.FileInfoHeader(info)
+			if err != nil {
+				return fmt.Errorf("failed to create file header: %w", err)
+			}
+
+			// Set the name in the header to the relative path
+			header.Name = relPath
+			header.Method = zip.Deflate
+
+			// Create a writer for the file in the zip
+			writer, err := zipWriter.CreateHeader(header)
+			if err != nil {
+				return fmt.Errorf("failed to create file in zip: %w", err)
+			}
+
+			// Copy the file contents to the zip
+			_, err = io.Copy(writer, file)
+			if err != nil {
+				return fmt.Errorf("failed to write file to zip: %w", err)
+			}
+
+			return nil
+		})
+
+		if err != nil {
+			return "", fmt.Errorf("failed to add files to zip: %w", err)
+		}
+	} else {
+		// It's a single file, add it directly
+		file, err := os.Open(srcPath)
+		if err != nil {
+			return "", fmt.Errorf("failed to open file: %w", err)
+		}
+		defer file.Close()
+
+		// Create a header for the file
+		header, err := zip.FileInfoHeader(fileInfo)
+		if err != nil {
+			return "", fmt.Errorf("failed to create file header: %w", err)
+		}
+
+		// Use the file name as the zip entry name
+		header.Name = filepath.Base(srcPath)
+		header.Method = zip.Deflate
+
+		// Create a writer for the file in the zip
+		writer, err := zipWriter.CreateHeader(header)
+		if err != nil {
+			return "", fmt.Errorf("failed to create file in zip: %w", err)
+		}
+
+		// Copy the file contents to the zip
+		_, err = io.Copy(writer, file)
+		if err != nil {
+			return "", fmt.Errorf("failed to write file to zip: %w", err)
+		}
+	}
+
+	return tempFile.Name(), nil
+}
+
+// isPythonProject checks if a directory is a Python project
+func isPythonProject(dirPath string) bool {
+	// Common Python project files
+	pythonProjectFiles := []string{
+		"setup.py",
+		"requirements.txt",
+		"pyproject.toml",
+		"setup.cfg",
+		"Pipfile",
+		"poetry.lock",
+		"__init__.py",
+	}
+
+	// Check for presence of any of the Python project files
+	for _, file := range pythonProjectFiles {
+		if _, err := os.Stat(filepath.Join(dirPath, file)); err == nil {
+			return true
+		}
+	}
+
+	// Count Python files
+	count := 0
+	filepath.Walk(dirPath, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil
+		}
+		if !info.IsDir() && filepath.Ext(path) == ".py" {
+			count++
+		}
+		return nil
+	})
+
+	// If more than 2 Python files found, consider it a Python project
+	return count > 2
+}
+
+// isPythonFile checks if a file is a Python file
+func isPythonFile(path string) bool {
+	ext := filepath.Ext(path)
+	return ext == ".py" || ext == ".pyi" || ext == ".pyx" || ext == ".pxd"
+}
+
+// isPythonProjectFile checks if a file is a Python project file
+func isPythonProjectFile(path string) bool {
+	// Common Python project file patterns
+	pythonProjectFiles := []string{
+		"requirements.txt",
+		"setup.py",
+		"setup.cfg",
+		"pyproject.toml",
+		"Pipfile",
+		"Pipfile.lock",
+		"poetry.lock",
+		"tox.ini",
+		".flake8",
+		"pytest.ini",
+		"conftest.py",
+		"__init__.py",
+		"README.md",
+		"README.rst",
+		"LICENSE",
+	}
+
+	filename := filepath.Base(path)
+	for _, projectFile := range pythonProjectFiles {
+		if filename == projectFile {
+			return true
+		}
+	}
+
+	// Also include YAML and JSON files as they might be config files
+	ext := filepath.Ext(path)
+	return ext == ".yaml" || ext == ".yml" || ext == ".json"
 }
