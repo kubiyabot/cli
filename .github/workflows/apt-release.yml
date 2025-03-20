@@ -33,14 +33,11 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y devscripts debhelper dh-make gnupg
 
-      - name: Setup GPG
-        run: |
-          mkdir -p ~/.gnupg
-          chmod 700 ~/.gnupg
-          echo "pinentry-mode loopback" > ~/.gnupg/gpg.conf
-          chmod 600 ~/.gnupg/gpg.conf
-          echo "${{ secrets.GPG_PRIVATE_KEY }}" | gpg --import
-          echo "${{ secrets.GPG_PASSPHRASE }}" | gpg --batch --yes --passphrase-fd 0 --sign-key $(gpg --list-secret-keys --keyid-format=long | grep -A 1 "sec" | tail -n 1 | awk '{print $1}')
+      - name: Import GPG key
+        uses: crazy-max/ghaction-import-gpg@v6
+        with:
+          gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
+          passphrase: ${{ secrets.GPG_PASSPHRASE }}
 
       - name: Create Debian package structure
         run: |
