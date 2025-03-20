@@ -54,15 +54,13 @@ jobs:
           Maintainer: Kubiya <support@kubiya.ai>
           Build-Depends: debhelper-compat (= 13), dh-golang, golang-go
           Standards-Version: 4.5.1
+          XS-Go-Import-Path: github.com/kubiyabot/cli
 
           Package: kubiya-cli
           Architecture: any
           Depends: \${shlibs:Depends}, \${misc:Depends}
           Description: Kubiya CLI
            Command line interface for Kubiya AI platform.
-
-          # Go package information
-          XS-Go-Import-Path: github.com/kubiyabot/cli
           EOF
 
           cat > debian/rules << EOF
