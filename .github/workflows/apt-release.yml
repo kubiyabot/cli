@@ -35,6 +35,7 @@ jobs:
 
       - name: Setup GPG
         run: |
+          echo "pinentry-mode loopback" >> ~/.gnupg/gpg.conf
           echo "${{ secrets.GPG_PRIVATE_KEY }}" | gpg --import
           echo "${{ secrets.GPG_PASSPHRASE }}" | gpg --batch --yes --passphrase-fd 0 --sign-key $(gpg --list-secret-keys --keyid-format=long | grep -A 1 "sec" | tail -n 1 | awk '{print $1}')
 
