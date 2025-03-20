@@ -36,10 +36,7 @@ jobs:
       - name: Setup GPG
         run: |
           echo "${{ secrets.GPG_PRIVATE_KEY }}" | gpg --import
-          # Get the key ID of the imported key
-          KEY_ID=$(gpg --list-secret-keys --keyid-format=long | grep -B 1 "costa@kubiya.ai" | head -n 1 | awk '{print $2}' | cut -d'/' -f2)
-          # Trust the key ultimately
-          echo -e "5\ny\n" | gpg --command-fd 0 --expert --edit-key $KEY_ID trust
+          echo "${{ secrets.GPG_PASSPHRASE }}" | gpg --batch --yes --passphrase-fd 0 --sign-key $(gpg --list-secret-keys --keyid-format=long | grep -A 1 "sec" | tail -n 1 | awk '{print $1}')
 
       - name: Create Debian package structure
         run: |
@@ -73,21 +70,22 @@ jobs:
 
       - name: Setup APT repository
         run: |
-          mkdir -p apt-repo/apt/dists/stable/main/binary-amd64
-          cp ../kubiya-cli_*_amd64.deb apt-repo/apt/pool/main/
-          cd apt-repo/apt
-          dpkg-scanpackages pool/main /dev/null > dists/stable/main/binary-amd64/Packages
-          gzip -9 > dists/stable/main/binary-amd64/Packages.gz < dists/stable/main/binary-amd64/Packages
+          mkdir -p apt-repo/dists/stable/main/binary-amd64
+          cp ../kubiya-cli_*_amd64.deb apt-repo/
+          cd apt-repo
+          dpkg-scanpackages . /dev/null > dists/stable/main/binary-amd64/Packages
+          gzip -9 dists/stable/main/binary-amd64/Packages
 
       - name: Create Release file
         run: |
-          cd apt-repo/apt/dists/stable
+          cd apt-repo/dists/stable
           cat > Release << EOF
           Origin: Kubiya
           Label: Kubiya APT Repository
           Suite: stable
-          Codename: stable
           Version: 1.0
+          Codename: stable
+          Date: $(date -u +"%a, %d %b %Y %H:%M:%S UTC")
           Architectures: amd64
           Components: main
           Description: APT repository for Kubiya CLI
@@ -95,10 +93,9 @@ jobs:
 
       - name: Sign Release file
         run: |
-          cd apt-repo/apt/dists/stable
-          KEY_ID=$(gpg --list-secret-keys --keyid-format=long | grep -B 1 "costa@kubiya.ai" | head -n 1 | awk '{print $2}' | cut -d'/' -f2)
-          echo "${{ secrets.GPG_PASSPHRASE }}" | gpg --batch --yes --pinentry-mode loopback --passphrase-fd 0 --default-key $KEY_ID --clearsign -o InRelease Release
-          echo "${{ secrets.GPG_PASSPHRASE }}" | gpg --batch --yes --pinentry-mode loopback --passphrase-fd 0 --default-key $KEY_ID -abs -o Release.gpg Release
+          cd apt-repo/dists/stable
+          echo "${{ secrets.GPG_PASSPHRASE }}" | gpg --batch --yes --passphrase-fd 0 --clearsign -o InRelease Release
+          echo "${{ secrets.GPG_PASSPHRASE }}" | gpg --batch --yes --passphrase-fd 0 -abs -o Release.gpg Release
 
       - name: Deploy to GitHub Pages
         uses: peaceiris/actions-gh-pages@v3
