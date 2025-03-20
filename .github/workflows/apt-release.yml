@@ -65,6 +65,16 @@ jobs:
 
           chmod +x debian/rules
 
+          # Create changelog with version from git tag
+          VERSION=$(git describe --tags --abbrev=0 | sed 's/^v//')
+          cat > debian/changelog << EOF
+          kubiya-cli (${VERSION}) stable; urgency=medium
+
+            * Initial release.
+
+           -- Kubiya <support@kubiya.ai>  $(date -R)
+          EOF
+
       - name: Build Debian package
         run: |
           dpkg-buildpackage -us -uc -b
