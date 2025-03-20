@@ -33,7 +33,7 @@
         <p>To install Kubiya CLI using APT, run the following commands:</p>
         <pre><code># Add Kubiya's APT repository
 curl -fsSL https://kubiyabot.github.io/cli/apt-key.gpg | sudo gpg --dearmor -o /usr/share/keyrings/kubiya-archive-keyring.gpg
-echo "deb [signed-by=/usr/share/keyrings/kubiya-archive-keyring.gpg] https://kubiyabot.github.io/cli/apt stable main" | sudo tee /etc/apt/sources.list.d/kubiya.list
+echo "deb [signed-by=/usr/share/keyrings/kubiya-archive-keyring.gpg] https://kubiyabot.github.io/cli/apt/dists/stable stable main" | sudo tee /etc/apt/sources.list.d/kubiya.list
 
 # Update package list and install Kubiya CLI
 sudo apt update
