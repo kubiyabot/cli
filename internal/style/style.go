@@ -172,6 +172,15 @@ var (
 	HelpTextStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#94A3B8")).
 			Italic(true)
+
+	// Additional styles for improved UX
+	BoldStyle = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color("#FFFFFF"))
+
+	NumberStyle = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color("#F59E0B"))
 )
 
 // DisableColors disables all color styling for non-TTY environments
@@ -221,6 +230,8 @@ func DisableColors() {
 	HeadingStyle = noStyle
 	BulletStyle = noStyle
 	HelpTextStyle = noStyle
+	BoldStyle = noStyle
+	NumberStyle = noStyle
 }
 
 // Add this function to check if colors should be enabled

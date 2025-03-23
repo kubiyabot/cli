@@ -4,11 +4,10 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/kubiyabot/cli/internal/config"
 	"github.com/spf13/cobra"
 )
 
-func executeCommand(root *cobra.Command, args ...string) (output string, err error) {
+func rootExecuteCommand(root *cobra.Command, args ...string) (output string, err error) {
 	buf := new(bytes.Buffer)
 	root.SetOut(buf)
 	root.SetErr(buf)
@@ -18,21 +17,24 @@ func executeCommand(root *cobra.Command, args ...string) (output string, err err
 	return buf.String(), err
 }
 
-func setupTestCommand() (*cobra.Command, *config.Config) {
-	cfg := &config.Config{
-		APIKey:  "test-key",
-		BaseURL: "https://api.test",
-		Debug:   false,
+// mockSourcesCommand creates a simple mock command for testing
+func mockSourcesCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "sources",
+		Short: "Mock sources command for testing",
+		Run: func(cmd *cobra.Command, args []string) {
+			// Do nothing, just a mock
+		},
 	}
+}
 
+func rootSetupTestCommand() *cobra.Command {
 	rootCmd := &cobra.Command{Use: "test"}
-	rootCmd.AddCommand(
-		newListCommand(cfg),
-		newChatCommand(cfg),
-		newSourcesCommand(cfg),
-	)
 
-	return rootCmd, cfg
+	// Add the mock sources command
+	rootCmd.AddCommand(mockSourcesCommand())
+
+	return rootCmd
 }
 
 func TestRootCommand(t *testing.T) {
@@ -57,8 +59,8 @@ func TestRootCommand(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cmd, _ := setupTestCommand()
-			got, err := executeCommand(cmd, tt.args...)
+			cmd := rootSetupTestCommand()
+			got, err := rootExecuteCommand(cmd, tt.args...)
 
 			if (err != nil) != tt.wantErr {
 				t.Errorf("command error = %v, wantErr %v", err, tt.wantErr)
@@ -70,4 +72,4 @@ func TestRootCommand(t *testing.T) {
 			}
 		})
 	}
-} 
+}

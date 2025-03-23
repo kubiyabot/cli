@@ -187,12 +187,22 @@ func (c *Client) LoadSource(ctx context.Context, path string, options ...SourceO
 
 	// Handle local paths differently
 	if path == "." || !strings.Contains(path, "://") {
-		// Check if this is a directory or a Python file
+		// Check if this is a directory or a Python/YAML file
 		fileInfo, err := os.Stat(path)
-		if err == nil && (fileInfo.IsDir() || (filepath.Ext(path) == ".py")) {
-			// It's a directory or Python file, need to zip it
+		ext := filepath.Ext(path)
+		isYamlFile := ext == ".yaml" || ext == ".yml"
+
+		if err == nil && (fileInfo.IsDir() ||
+			(filepath.Ext(path) == ".py") ||
+			isYamlFile) {
 			if c.debug {
-				fmt.Printf("Path is a directory or Python file, creating zip: %s\n", path)
+				if isYamlFile {
+					fmt.Printf("URL is a YAML file, creating as zip source: %s\n", path)
+				} else if filepath.Ext(path) == ".py" {
+					fmt.Printf("URL is a Python file, creating as zip source: %s\n", path)
+				} else {
+					fmt.Printf("URL is a directory, creating as zip source: %s\n", path)
+				}
 			}
 
 			// Create a temporary zip file
@@ -381,12 +391,23 @@ func (c *Client) CreateSource(ctx context.Context, url string, opts ...SourceOpt
 		source.Type = "inline"
 	}
 
-	// Check if the URL is a local path and it's a directory or Python file
+	// Check if the URL is a local path and it's a directory or Python/YAML file
 	if url != "" && (url == "." || !strings.Contains(url, "://")) {
 		fileInfo, err := os.Stat(url)
-		if err == nil && (fileInfo.IsDir() || (filepath.Ext(url) == ".py")) {
+		ext := filepath.Ext(url)
+		isYamlFile := ext == ".yaml" || ext == ".yml"
+
+		if err == nil && (fileInfo.IsDir() ||
+			(filepath.Ext(url) == ".py") ||
+			isYamlFile) {
 			if c.debug {
-				fmt.Printf("URL is a directory or Python file, creating as zip source: %s\n", url)
+				if isYamlFile {
+					fmt.Printf("URL is a YAML file, creating as zip source: %s\n", url)
+				} else if filepath.Ext(url) == ".py" {
+					fmt.Printf("URL is a Python file, creating as zip source: %s\n", url)
+				} else {
+					fmt.Printf("URL is a directory, creating as zip source: %s\n", url)
+				}
 			}
 
 			// Create a temporary zip file
@@ -805,6 +826,9 @@ func createTempZip(srcPath string) (string, error) {
 		// Check if the directory is a Python project
 		isPythonProject := isPythonProject(srcPath)
 
+		// Check if the directory contains YAML files
+		hasYamlFiles := hasYamlFiles(srcPath)
+
 		// Walk through the directory
 		err = filepath.Walk(srcPath, func(path string, info os.FileInfo, err error) error {
 			if err != nil {
@@ -827,11 +851,27 @@ func createTempZip(srcPath string) (string, error) {
 				return nil
 			}
 
-			// For Python projects, filter only Python-related files
+			// Determine if we should include this file
+			shouldInclude := false
+
+			ext := filepath.Ext(relPath)
+			isYaml := ext == ".yaml" || ext == ".yml"
+
+			// For Python projects, filter Python-related files
 			if isPythonProject {
-				if !isPythonFile(relPath) && !isPythonProjectFile(relPath) {
-					return nil
+				if isPythonFile(relPath) || isPythonProjectFile(relPath) {
+					shouldInclude = true
 				}
+			} else if hasYamlFiles && isYaml {
+				// Include YAML files if that's what we're targeting
+				shouldInclude = true
+			} else if !isPythonProject && !hasYamlFiles {
+				// If not specifically a Python or YAML project, include all files
+				shouldInclude = true
+			}
+
+			if !shouldInclude {
+				return nil
 			}
 
 			// Create a new file in the zip
@@ -923,20 +963,29 @@ func isPythonProject(dirPath string) bool {
 		}
 	}
 
-	// Count Python files
-	count := 0
+	// Count Python files and YAML files
+	pythonCount := 0
+	yamlCount := 0
+
 	filepath.Walk(dirPath, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return nil
 		}
-		if !info.IsDir() && filepath.Ext(path) == ".py" {
-			count++
+		if info.IsDir() {
+			return nil
+		}
+
+		ext := filepath.Ext(path)
+		if ext == ".py" {
+			pythonCount++
+		} else if ext == ".yaml" || ext == ".yml" {
+			yamlCount++
 		}
 		return nil
 	})
 
-	// If more than 2 Python files found, consider it a Python project
-	return count > 2
+	// If more than 2 Python files found, or any YAML files, consider it a relevant project
+	return pythonCount > 2 || yamlCount > 0
 }
 
 // isPythonFile checks if a file is a Python file
@@ -976,4 +1025,26 @@ func isPythonProjectFile(path string) bool {
 	// Also include YAML and JSON files as they might be config files
 	ext := filepath.Ext(path)
 	return ext == ".yaml" || ext == ".yml" || ext == ".json"
+}
+
+// hasYamlFiles checks if a directory contains YAML files
+func hasYamlFiles(dirPath string) bool {
+	foundYaml := false
+
+	filepath.Walk(dirPath, func(path string, info os.FileInfo, err error) error {
+		if err != nil || foundYaml {
+			return nil
+		}
+
+		if !info.IsDir() {
+			ext := filepath.Ext(path)
+			if ext == ".yaml" || ext == ".yml" {
+				foundYaml = true
+				return filepath.SkipDir // Skip the rest of the directory
+			}
+		}
+		return nil
+	})
+
+	return foundYaml
 }

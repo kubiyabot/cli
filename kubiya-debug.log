@@ -1,0 +1,288 @@
+Starting generation with description: tool to echo hello world
+Created content accumulator
+📡 Response status: 200 OK
+🔔 Starting SSE read loop
+📨 Received line: {"generated_tool_content":[]}
+
+📨 Received line: {"generated_tool_content":[{"content":"","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kub","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import Tool","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import Tool,","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import Tool, Arg","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import Tool, Arg\n","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import Tool, Arg\nfrom","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import Tool, Arg\nfrom kub","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import Tool, Arg\nfrom kubiya","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import Tool, Arg\nfrom kubiya_sdk","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import Tool, Arg\nfrom kubiya_sdk.tools","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import Tool, Arg\nfrom kubiya_sdk.tools.registry","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import Tool, Arg\nfrom kubiya_sdk.tools.registry import","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import Tool, Arg\nfrom kubiya_sdk.tools.registry import tool","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import Tool, Arg\nfrom kubiya_sdk.tools.registry import tool_registry","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import Tool, Arg\nfrom kubiya_sdk.tools.registry import tool_registry\n","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import Tool, Arg\nfrom kubiya_sdk.tools.registry import tool_registry\n\n","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import Tool, Arg\nfrom kubiya_sdk.tools.registry import tool_registry\n\nclass","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import Tool, Arg\nfrom kubiya_sdk.tools.registry import tool_registry\n\nclass Say","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import Tool, Arg\nfrom kubiya_sdk.tools.registry import tool_registry\n\nclass SayHello","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import Tool, Arg\nfrom kubiya_sdk.tools.registry import tool_registry\n\nclass SayHelloPython","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import Tool, Arg\nfrom kubiya_sdk.tools.registry import tool_registry\n\nclass SayHelloPythonTool","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import Tool, Arg\nfrom kubiya_sdk.tools.registry import tool_registry\n\nclass SayHelloPythonTool(T","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import Tool, Arg\nfrom kubiya_sdk.tools.registry import tool_registry\n\nclass SayHelloPythonTool(Tool","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import Tool, Arg\nfrom kubiya_sdk.tools.registry import tool_registry\n\nclass SayHelloPythonTool(Tool):","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import Tool, Arg\nfrom kubiya_sdk.tools.registry import tool_registry\n\nclass SayHelloPythonTool(Tool):\n","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import Tool, Arg\nfrom kubiya_sdk.tools.registry import tool_registry\n\nclass SayHelloPythonTool(Tool):\n    def","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import Tool, Arg\nfrom kubiya_sdk.tools.registry import tool_registry\n\nclass SayHelloPythonTool(Tool):\n    def __","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import Tool, Arg\nfrom kubiya_sdk.tools.registry import tool_registry\n\nclass SayHelloPythonTool(Tool):\n    def __init","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import Tool, Arg\nfrom kubiya_sdk.tools.registry import tool_registry\n\nclass SayHelloPythonTool(Tool):\n    def __init__(","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import Tool, Arg\nfrom kubiya_sdk.tools.registry import tool_registry\n\nclass SayHelloPythonTool(Tool):\n    def __init__(self","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import Tool, Arg\nfrom kubiya_sdk.tools.registry import tool_registry\n\nclass SayHelloPythonTool(Tool):\n    def __init__(self):","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import Tool, Arg\nfrom kubiya_sdk.tools.registry import tool_registry\n\nclass SayHelloPythonTool(Tool):\n    def __init__(self):\n","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import Tool, Arg\nfrom kubiya_sdk.tools.registry import tool_registry\n\nclass SayHelloPythonTool(Tool):\n    def __init__(self):\n        super","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import Tool, Arg\nfrom kubiya_sdk.tools.registry import tool_registry\n\nclass SayHelloPythonTool(Tool):\n    def __init__(self):\n        super().__","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import Tool, Arg\nfrom kubiya_sdk.tools.registry import tool_registry\n\nclass SayHelloPythonTool(Tool):\n    def __init__(self):\n        super().__init","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import Tool, Arg\nfrom kubiya_sdk.tools.registry import tool_registry\n\nclass SayHelloPythonTool(Tool):\n    def __init__(self):\n        super().__init__(","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import Tool, Arg\nfrom kubiya_sdk.tools.registry import tool_registry\n\nclass SayHelloPythonTool(Tool):\n    def __init__(self):\n        super().__init__(\n","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import Tool, Arg\nfrom kubiya_sdk.tools.registry import tool_registry\n\nclass SayHelloPythonTool(Tool):\n    def __init__(self):\n        super().__init__(\n            name","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import Tool, Arg\nfrom kubiya_sdk.tools.registry import tool_registry\n\nclass SayHelloPythonTool(Tool):\n    def __init__(self):\n        super().__init__(\n            name=\"","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import Tool, Arg\nfrom kubiya_sdk.tools.registry import tool_registry\n\nclass SayHelloPythonTool(Tool):\n    def __init__(self):\n        super().__init__(\n            name=\"say","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import Tool, Arg\nfrom kubiya_sdk.tools.registry import tool_registry\n\nclass SayHelloPythonTool(Tool):\n    def __init__(self):\n        super().__init__(\n            name=\"say_","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import Tool, Arg\nfrom kubiya_sdk.tools.registry import tool_registry\n\nclass SayHelloPythonTool(Tool):\n    def __init__(self):\n        super().__init__(\n            name=\"say_hello","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import Tool, Arg\nfrom kubiya_sdk.tools.registry import tool_registry\n\nclass SayHelloPythonTool(Tool):\n    def __init__(self):\n        super().__init__(\n            name=\"say_hello\",\n","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import Tool, Arg\nfrom kubiya_sdk.tools.registry import tool_registry\n\nclass SayHelloPythonTool(Tool):\n    def __init__(self):\n        super().__init__(\n            name=\"say_hello\",\n            description","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import Tool, Arg\nfrom kubiya_sdk.tools.registry import tool_registry\n\nclass SayHelloPythonTool(Tool):\n    def __init__(self):\n        super().__init__(\n            name=\"say_hello\",\n            description=\"","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import Tool, Arg\nfrom kubiya_sdk.tools.registry import tool_registry\n\nclass SayHelloPythonTool(Tool):\n    def __init__(self):\n        super().__init__(\n            name=\"say_hello\",\n            description=\"Print","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import Tool, Arg\nfrom kubiya_sdk.tools.registry import tool_registry\n\nclass SayHelloPythonTool(Tool):\n    def __init__(self):\n        super().__init__(\n            name=\"say_hello\",\n            description=\"Prints","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import Tool, Arg\nfrom kubiya_sdk.tools.registry import tool_registry\n\nclass SayHelloPythonTool(Tool):\n    def __init__(self):\n        super().__init__(\n            name=\"say_hello\",\n            description=\"Prints hello","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import Tool, Arg\nfrom kubiya_sdk.tools.registry import tool_registry\n\nclass SayHelloPythonTool(Tool):\n    def __init__(self):\n        super().__init__(\n            name=\"say_hello\",\n            description=\"Prints hello <","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import Tool, Arg\nfrom kubiya_sdk.tools.registry import tool_registry\n\nclass SayHelloPythonTool(Tool):\n    def __init__(self):\n        super().__init__(\n            name=\"say_hello\",\n            description=\"Prints hello <name","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import Tool, Arg\nfrom kubiya_sdk.tools.registry import tool_registry\n\nclass SayHelloPythonTool(Tool):\n    def __init__(self):\n        super().__init__(\n            name=\"say_hello\",\n            description=\"Prints hello <name>\",","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import Tool, Arg\nfrom kubiya_sdk.tools.registry import tool_registry\n\nclass SayHelloPythonTool(Tool):\n    def __init__(self):\n        super().__init__(\n            name=\"say_hello\",\n            description=\"Prints hello <name>\",\n","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import Tool, Arg\nfrom kubiya_sdk.tools.registry import tool_registry\n\nclass SayHelloPythonTool(Tool):\n    def __init__(self):\n        super().__init__(\n            name=\"say_hello\",\n            description=\"Prints hello <name>\",\n            content","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[]}
+
+📫 SSE stream ended (EOF)
+Generation completed
+Starting generation with description: tool to echo hello world
+Created content accumulator
+📡 Response status: 200 OK
+🔔 Starting SSE read loop
+📨 Received line: {"generated_tool_content":[]}
+
+📨 Received line: {"generated_tool_content":[{"content":"","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kub","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import Tool","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import Tool,","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import Tool, Arg","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import Tool, Arg\n","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import Tool, Arg\nfrom","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import Tool, Arg\nfrom kub","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import Tool, Arg\nfrom kubiya","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import Tool, Arg\nfrom kubiya_sdk","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import Tool, Arg\nfrom kubiya_sdk.tools","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import Tool, Arg\nfrom kubiya_sdk.tools.registry","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import Tool, Arg\nfrom kubiya_sdk.tools.registry import","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import Tool, Arg\nfrom kubiya_sdk.tools.registry import tool","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import Tool, Arg\nfrom kubiya_sdk.tools.registry import tool_registry","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import Tool, Arg\nfrom kubiya_sdk.tools.registry import tool_registry\n","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import Tool, Arg\nfrom kubiya_sdk.tools.registry import tool_registry\n\n","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import Tool, Arg\nfrom kubiya_sdk.tools.registry import tool_registry\n\nclass","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import Tool, Arg\nfrom kubiya_sdk.tools.registry import tool_registry\n\nclass Say","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import Tool, Arg\nfrom kubiya_sdk.tools.registry import tool_registry\n\nclass SayHello","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import Tool, Arg\nfrom kubiya_sdk.tools.registry import tool_registry\n\nclass SayHelloPython","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import Tool, Arg\nfrom kubiya_sdk.tools.registry import tool_registry\n\nclass SayHelloPythonTool","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import Tool, Arg\nfrom kubiya_sdk.tools.registry import tool_registry\n\nclass SayHelloPythonTool(T","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import Tool, Arg\nfrom kubiya_sdk.tools.registry import tool_registry\n\nclass SayHelloPythonTool(Tool","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import Tool, Arg\nfrom kubiya_sdk.tools.registry import tool_registry\n\nclass SayHelloPythonTool(Tool):","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import Tool, Arg\nfrom kubiya_sdk.tools.registry import tool_registry\n\nclass SayHelloPythonTool(Tool):\n","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import Tool, Arg\nfrom kubiya_sdk.tools.registry import tool_registry\n\nclass SayHelloPythonTool(Tool):\n    def","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import Tool, Arg\nfrom kubiya_sdk.tools.registry import tool_registry\n\nclass SayHelloPythonTool(Tool):\n    def __","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import Tool, Arg\nfrom kubiya_sdk.tools.registry import tool_registry\n\nclass SayHelloPythonTool(Tool):\n    def __init","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import Tool, Arg\nfrom kubiya_sdk.tools.registry import tool_registry\n\nclass SayHelloPythonTool(Tool):\n    def __init__(","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import Tool, Arg\nfrom kubiya_sdk.tools.registry import tool_registry\n\nclass SayHelloPythonTool(Tool):\n    def __init__(self","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import Tool, Arg\nfrom kubiya_sdk.tools.registry import tool_registry\n\nclass SayHelloPythonTool(Tool):\n    def __init__(self):","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import Tool, Arg\nfrom kubiya_sdk.tools.registry import tool_registry\n\nclass SayHelloPythonTool(Tool):\n    def __init__(self):\n","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import Tool, Arg\nfrom kubiya_sdk.tools.registry import tool_registry\n\nclass SayHelloPythonTool(Tool):\n    def __init__(self):\n        super","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import Tool, Arg\nfrom kubiya_sdk.tools.registry import tool_registry\n\nclass SayHelloPythonTool(Tool):\n    def __init__(self):\n        super().__","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import Tool, Arg\nfrom kubiya_sdk.tools.registry import tool_registry\n\nclass SayHelloPythonTool(Tool):\n    def __init__(self):\n        super().__init","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import Tool, Arg\nfrom kubiya_sdk.tools.registry import tool_registry\n\nclass SayHelloPythonTool(Tool):\n    def __init__(self):\n        super().__init__(","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import Tool, Arg\nfrom kubiya_sdk.tools.registry import tool_registry\n\nclass SayHelloPythonTool(Tool):\n    def __init__(self):\n        super().__init__(\n","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import Tool, Arg\nfrom kubiya_sdk.tools.registry import tool_registry\n\nclass SayHelloPythonTool(Tool):\n    def __init__(self):\n        super().__init__(\n            name","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import Tool, Arg\nfrom kubiya_sdk.tools.registry import tool_registry\n\nclass SayHelloPythonTool(Tool):\n    def __init__(self):\n        super().__init__(\n            name=\"","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import Tool, Arg\nfrom kubiya_sdk.tools.registry import tool_registry\n\nclass SayHelloPythonTool(Tool):\n    def __init__(self):\n        super().__init__(\n            name=\"say","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import Tool, Arg\nfrom kubiya_sdk.tools.registry import tool_registry\n\nclass SayHelloPythonTool(Tool):\n    def __init__(self):\n        super().__init__(\n            name=\"say_","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import Tool, Arg\nfrom kubiya_sdk.tools.registry import tool_registry\n\nclass SayHelloPythonTool(Tool):\n    def __init__(self):\n        super().__init__(\n            name=\"say_hello","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import Tool, Arg\nfrom kubiya_sdk.tools.registry import tool_registry\n\nclass SayHelloPythonTool(Tool):\n    def __init__(self):\n        super().__init__(\n            name=\"say_hello\",\n","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import Tool, Arg\nfrom kubiya_sdk.tools.registry import tool_registry\n\nclass SayHelloPythonTool(Tool):\n    def __init__(self):\n        super().__init__(\n            name=\"say_hello\",\n            description","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import Tool, Arg\nfrom kubiya_sdk.tools.registry import tool_registry\n\nclass SayHelloPythonTool(Tool):\n    def __init__(self):\n        super().__init__(\n            name=\"say_hello\",\n            description=\"","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import Tool, Arg\nfrom kubiya_sdk.tools.registry import tool_registry\n\nclass SayHelloPythonTool(Tool):\n    def __init__(self):\n        super().__init__(\n            name=\"say_hello\",\n            description=\"Print","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import Tool, Arg\nfrom kubiya_sdk.tools.registry import tool_registry\n\nclass SayHelloPythonTool(Tool):\n    def __init__(self):\n        super().__init__(\n            name=\"say_hello\",\n            description=\"Prints","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import Tool, Arg\nfrom kubiya_sdk.tools.registry import tool_registry\n\nclass SayHelloPythonTool(Tool):\n    def __init__(self):\n        super().__init__(\n            name=\"say_hello\",\n            description=\"Prints hello","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import Tool, Arg\nfrom kubiya_sdk.tools.registry import tool_registry\n\nclass SayHelloPythonTool(Tool):\n    def __init__(self):\n        super().__init__(\n            name=\"say_hello\",\n            description=\"Prints hello <","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import Tool, Arg\nfrom kubiya_sdk.tools.registry import tool_registry\n\nclass SayHelloPythonTool(Tool):\n    def __init__(self):\n        super().__init__(\n            name=\"say_hello\",\n            description=\"Prints hello <name","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import Tool, Arg\nfrom kubiya_sdk.tools.registry import tool_registry\n\nclass SayHelloPythonTool(Tool):\n    def __init__(self):\n        super().__init__(\n            name=\"say_hello\",\n            description=\"Prints hello <name>\",","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import Tool, Arg\nfrom kubiya_sdk.tools.registry import tool_registry\n\nclass SayHelloPythonTool(Tool):\n    def __init__(self):\n        super().__init__(\n            name=\"say_hello\",\n            description=\"Prints hello <name>\",\n","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"from kubiya_sdk.tools import Tool, Arg\nfrom kubiya_sdk.tools.registry import tool_registry\n\nclass SayHelloPythonTool(Tool):\n    def __init__(self):\n        super().__init__(\n            name=\"say_hello\",\n            description=\"Prints hello <name>\",\n            content","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[{"content":"","file_name":""}]}
+
+📨 Received line: {"generated_tool_content":[]}
+
+📫 SSE stream ended (EOF)
+Generation completed
+Starting generation with description: tool to echo hello world
+❌ Generation error: unexpected status code: 404, body: 
+Starting generation with description: tool to echo hello world
+❌ Generation error: unexpected status code: 404, body: 
