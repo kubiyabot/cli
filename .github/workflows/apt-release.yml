@@ -86,6 +86,10 @@ jobs:
           EOF
 
       - name: Build Debian package
+        env:
+          GOFLAGS: -mod=readonly
+          GOCACHE: /tmp/.gocache
+          GOMODCACHE: ${{ github.workspace }}/.gomodcache
         run: |
           dpkg-buildpackage -us -uc -b
 
