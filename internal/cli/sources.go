@@ -743,9 +743,11 @@ When scanning a local directory:
 						style.TitleStyle.Render(" TOOLS FOUND "),
 						strings.Repeat("─", 45))
 
-					// Display explanation to help user understand what they're looking at
+					// Display explanation with enhanced platform information
 					fmt.Printf("│ %s\n",
-						style.DimStyle.Render("These tools can be added to your workspace and invoked with the Kubiya CLI"))
+						style.DimStyle.Render("These tools can be used by Kubiya teammates, LLM agents, and MCP servers"))
+					fmt.Printf("│ %s\n",
+						style.DimStyle.Render("once you've added this source to your workspace using the commands below"))
 					fmt.Printf("│\n")
 
 					// Display tools in a more structured format
@@ -862,9 +864,9 @@ When scanning a local directory:
 						style.TitleStyle.Render(" WHAT TO DO NEXT "),
 						strings.Repeat("─", 44))
 
-					// Explanation of what happens next
+					// Enhanced explanation of what happens next, clarifying the source creation
 					fmt.Printf("│ %s\n",
-						style.DimStyle.Render("Follow these steps to start using these tools in your Kubiya environment"))
+						style.DimStyle.Render("Follow these steps to create a source and make these tools available across platforms"))
 					fmt.Printf("│\n")
 
 					// Build the add command
@@ -876,33 +878,50 @@ When scanning a local directory:
 						addCmd += fmt.Sprintf(" --runner %s", runnerName)
 					}
 
-					// Display commands with numbered steps and explanations
+					// Display commands with numbered steps and enhanced explanations
 					fmt.Printf("│ %s %s\n",
 						style.NumberStyle.Render("Step 1:"),
-						style.SubtitleStyle.Render("Add this source to your workspace"))
+						style.SubtitleStyle.Render("Create this source in your workspace"))
 					fmt.Printf("│   %s\n", style.CommandStyle.Render(addCmd))
 					fmt.Printf("│   %s\n",
-						style.DimStyle.Render("This will make all tools in this source available to your Kubiya CLI"))
+						style.DimStyle.Render("This creates the source and enables the tools for Kubiya, LLMs, and MCP servers"))
 					fmt.Printf("│\n")
 
-					// Example for running first tool
+					// Example for running first tool with enhanced explanation
 					if len(discovered.Tools) > 0 {
 						fmt.Printf("│ %s %s\n",
 							style.NumberStyle.Render("Step 2:"),
 							style.SubtitleStyle.Render("Run your first tool from this source"))
 						fmt.Printf("│   %s\n", style.CommandStyle.Render(fmt.Sprintf("kubiya run %s", discovered.Tools[0].Name)))
 						fmt.Printf("│   %s\n",
-							style.DimStyle.Render("This executes the tool with required input parameters"))
+							style.DimStyle.Render("Once created, tools can be run directly or accessed by other Kubiya services"))
 						fmt.Printf("│\n")
 					}
 
-					// Example for listing tools
+					// Example for listing tools with enhanced explanation
 					fmt.Printf("│ %s %s\n",
 						style.NumberStyle.Render("Step 3:"),
 						style.SubtitleStyle.Render("Explore all tools in this source"))
 					fmt.Printf("│   %s\n", style.CommandStyle.Render("kubiya tool list --filter <sourceName>"))
 					fmt.Printf("│   %s\n",
-						style.DimStyle.Render("Lists all tools with descriptions and usage information"))
+						style.DimStyle.Render("View all tools in this source with their descriptions and usage information"))
+
+					// Add platform integration explanation
+					fmt.Printf("│\n")
+					fmt.Printf("│ %s %s\n",
+						style.BulletStyle.Render("•"),
+						style.SubtitleStyle.Render("Platform Integration"))
+					fmt.Printf("│   %s\n",
+						style.DimStyle.Render("After source creation, tools will be available to:"))
+					fmt.Printf("│   %s %s\n",
+						style.DimStyle.Render("-"),
+						style.DimStyle.Render("Kubiya teammates through the CLI and web interfaces"))
+					fmt.Printf("│   %s %s\n",
+						style.DimStyle.Render("-"),
+						style.DimStyle.Render("AI assistants and LLM agents for automated workflows"))
+					fmt.Printf("│   %s %s\n",
+						style.DimStyle.Render("-"),
+						style.DimStyle.Render("MCP servers for enterprise integrations"))
 
 					fmt.Printf("╰%s\n", strings.Repeat("─", maxNameLen+70))
 				} else {
