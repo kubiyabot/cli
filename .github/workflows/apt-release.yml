@@ -69,6 +69,7 @@ jobs:
           export GOPROXY=direct
           export DH_GOPKG=github.com/kubiyabot/cli
           export DH_GOLANG_EXCLUDES=obj-x86_64-linux-gnu
+          export DH_GOLANG_EXCLUDES := std
           %:
           	dh \$@ --with golang
           EOF
