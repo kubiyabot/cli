@@ -1,0 +1,137 @@
+tools:
+  - name: request_infra_resources
+    image: python:3.11
+    description: "Create one or more infrastructure resources (eg. AWS) based on a natural language request. If the request exceeds the budget, it will be automatically sent for approval based on the approval rules"
+    alias: request-infra-resources
+    long_running: true
+    content: |
+      # Set default values for environment variables
+      REPO_URL="${REPO_URL:-https://github.com/kubiyabot/terraform-modules}"
+      REPO_NAME="${REPO_NAME:-terraform-modules}"
+      SOURCE_CODE_DIR="${SOURCE_CODE_DIR:-resource-lifecycle/src}"
+      REPO_BRANCH="${REPO_BRANCH:-main}"
+      REPO_DIR="${REPO_DIR:-$REPO_NAME}"
+      BIN_DIR="${BIN_DIR:-/usr/local/bin}"
+      APT_CACHE_DIR="${APT_CACHE_DIR:-/var/cache/apt/archives}"
+      PIP_CACHE_DIR="${PIP_CACHE_DIR:-/var/cache/pip}"
+
+      # Create cache directories
+      mkdir -p "$APT_CACHE_DIR"
+      mkdir -p "$BIN_DIR"
+      mkdir -p "$PIP_CACHE_DIR"
+
+      # Function to install Terraform if not cached
+      install_terraform() {
+        if [ ! -f "$BIN_DIR/terraform" ]; then
+          apt-get update -qq > /dev/null && apt-get install -y -qq gnupg software-properties-common > /dev/null
+          wget -qO- https://apt.releases.hashicorp.com/gpg | \
+          gpg --dearmor | \
+          tee /usr/share/keyrings/hashicorp-archive-keyring.gpg > /dev/null
+          gpg --no-default-keyring \
+          --keyring /usr/share/keyrings/hashicorp-archive-keyring.gpg \
+          --fingerprint > /dev/null
+          echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] \
+          https://apt.releases.hashicorp.com $(lsb_release -cs) main" | \
+          tee /etc/apt/sources.list.d/hashicorp.list > /dev/null
+          apt update -qq > /dev/null
+          apt-get install -qq terraform -y > /dev/null
+          cp /usr/bin/terraform "$BIN_DIR/terraform"
+        fi
+        ln -sf "$BIN_DIR/terraform" /usr/local/bin/terraform
+      }
+
+      # Function to install Infracost if not cached
+      install_infracost() {
+        if [ ! -f "$BIN_DIR/infracost" ]; then
+          curl -fsSL https://raw.githubusercontent.com/infracost/infracost/master/scripts/install.sh | sh > /dev/null
+          cp "$(which infracost)" "$BIN_DIR/infracost"
+        fi
+        ln -sf "$BIN_DIR/infracost" /usr/local/bin/infracost
+      }
+
+      install_git() {
+        apt-get update -qq > /dev/null && apt-get install -y -qq git > /dev/null
+      }
+
+      # Function to install pip dependencies if not cached
+      install_pip_dependencies() {
+        export PIP_CACHE_DIR="$PIP_CACHE_DIR"
+        pip install -r requirements.txt --cache-dir "$PIP_CACHE_DIR" --quiet > /dev/null
+      }
+
+      # Function to install dot and graphviz
+      install_dot_graphviz() {
+        apt-get update -qq > /dev/null && apt-get install -y -qq graphviz > /dev/null
+      }
+
+      # Install git
+      install_git
+
+      # Install Terraform
+      install_terraform
+
+      # Install Infracost
+      install_infracost
+
+      # Install dot and graphviz
+      install_dot_graphviz
+
+      # Clone repository if not already cloned
+      if [ ! -d "$REPO_DIR" ]; then
+        if [ -n "$GH_TOKEN" ]; then
+          GIT_ASKPASS_ENV=$(mktemp)
+          chmod +x "$GIT_ASKPASS_ENV"
+          echo -e "#!/bin/sh\nexec echo \$GH_TOKEN" > "$GIT_ASKPASS_ENV"
+          GIT_ASKPASS="$GIT_ASKPASS_ENV" git clone --branch "$REPO_BRANCH" "https://$GH_TOKEN@$(echo $REPO_URL | sed 's|https://||')" "$REPO_DIR" > /dev/null
+          rm "$GIT_ASKPASS_ENV"
+        else
+          git clone --branch "$REPO_BRANCH" "$REPO_URL" "$REPO_DIR" > /dev/null
+        fi
+      fi
+
+      # cd into the cloned repo
+      cd "${REPO_DIR}/${SOURCE_CODE_DIR}"
+
+      # Install pip dependencies
+      install_pip_dependencies
+
+      # Run the script
+      export PYTHONPATH="${PYTHONPATH}:/${REPO_DIR}/${SOURCE_CODE_DIR}"
+      exec python approval/resource_request.py "{{ .natural_language_statement }}" --purpose "{{ .purpose }}" --ttl "{{ .ttl }}"
+    args:
+      - name: natural_language_statement
+        description: 'The natural language statement describing the infrastructure resources to be created. Can also include specific requirements like region, instance type, etc. Need to validate with the user if the request is not clear.'
+        required: true
+      - name: purpose
+        description: 'The purpose of the request - why the resources are needed - eg. development, testing, production, etc.'
+        required: true
+      - name: ttl
+        description: 'For how long the resources are needed. Can be in hours, days, weeks, or months. User can define it as "for 2 weeks", "for 1 month", etc but the expected format to be passed is "2h", "1d", "2w", "1m" etc.'
+        required: true
+    env:
+      - KUBIYA_USER_EMAIL # Email of the user making the request
+      - AWS_PROFILE # AWS profile to use for the operation
+      - OPENAI_API_KEY # API key for OpenAI
+      - OPENAI_API_BASE # API base for OpenAI
+      - KUBIYA_USER_ORG # Organization of the user
+      - KUBIYA_AGENT_UUID # UUID of the Kubiya agent
+      - KUBIYA_API_KEY # API key for Kubiya
+      - SLACK_CHANNEL_ID # Slack channel ID for notifications
+      - SLACK_THREAD_TS # Slack thread timestamp for notifications
+      - SLACK_API_TOKEN # Slack API token, injected by Kubiya
+      - APPROVAL_SLACK_CHANNEL # Slack channel for approval notifications
+      - APPROVING_USERS # List of users who can approve requests
+      - MAX_TTL # Maximum TTL for a request
+      - EXTENSION_PERIOD # Extension period for resource TTL
+      - GRACE_PERIOD # Grace period for nagging reminders
+      - INFRACOST_API_KEY # API key for Infracost
+      - GH_TOKEN # GitHub token for cloning private repositories
+    with_volumes:
+      # SQLite data directory for persistent storage
+      - name: sqlite_data
+        path: /sqlite_data
+      # AWS credentials for Terraform operations
+      # Add more mounts for other cloud providers
+    with_files:
+      - source: $HOME/.aws/credentials
+        destination: /root/.aws/credentials

@@ -1,0 +1,179 @@
+[2025-03-17 20:23:34.040] [Client] get: Making request to https://api.kubiya.ai/api/v1/usecases/L2NpX2NkX21haW50YWluZXJzL3RlcnJhZm9ybQ== (original path: /usecases/L2NpX2NkX21haW50YWluZXJzL3RlcnJhZm9ybQ==)
+[2025-03-17 20:23:47.821] [Client] get: Making request to https://api.kubiya.ai/api/v1/usecases?repoUrl=https%3A%2F%2Fgithub.com%2Fkubiyabot%2Fterraform-modules%2Ftree%2Fmain%2F (original path: /usecases?repoUrl=https%3A%2F%2Fgithub.com%2Fkubiyabot%2Fterraform-modules%2Ftree%2Fmain%2F)
+[2025-03-17 20:23:49.779] [Client] get: Making request to https://api.kubiya.ai/api/v1/usecases/L2NpX2NkX21haW50YWluZXJzL3RlcnJhZm9ybQ== (original path: /usecases/L2NpX2NkX21haW50YWluZXJzL3RlcnJhZm9ybQ==)
+[2025-03-17 20:26:49.756] [Client] get: Making request to https://api.kubiya.ai/api/v1/usecases?repoUrl=https%3A%2F%2Fgithub.com%2Fkubiyabot%2Fterraform-modules%2Ftree%2Fmain%2F (original path: /usecases?repoUrl=https%3A%2F%2Fgithub.com%2Fkubiyabot%2Fterraform-modules%2Ftree%2Fmain%2F)
+[2025-03-17 20:26:52.007] [Client] get: Making request to https://api.kubiya.ai/api/v1/usecases/L2NpX2NkX21haW50YWluZXJzL3RlcnJhZm9ybQ== (original path: /usecases/L2NpX2NkX21haW50YWluZXJzL3RlcnJhZm9ybQ==)
+[2025-03-17 20:28:34.839] [Client] get: Making request to https://api.kubiya.ai/api/v1/usecases?repoUrl=https%3A%2F%2Fgithub.com%2Fkubiyabot%2Fterraform-modules%2Ftree%2Fmain%2F (original path: /usecases?repoUrl=https%3A%2F%2Fgithub.com%2Fkubiyabot%2Fterraform-modules%2Ftree%2Fmain%2F)
+[2025-03-17 20:28:38.881] [Client] get: Making request to https://api.kubiya.ai/api/v1/usecases/L2NpX2NkX21haW50YWluZXJzL3RlcnJhZm9ybQ== (original path: /usecases/L2NpX2NkX21haW50YWluZXJzL3RlcnJhZm9ybQ==)
+[2025-03-17 20:28:50.923] StartPlan: Returning initial progress message
+[2025-03-17 20:28:50.923] StartPlan PANIC: runtime error: invalid memory address or nil pointer dereference
+[2025-03-17 20:28:50.923] PlanSubscription: Starting plan subscription process
+[2025-03-17 20:30:47.156] [Client] get: Making request to https://api.kubiya.ai/api/v1/usecases?repoUrl=https%3A%2F%2Fgithub.com%2Fkubiyabot%2Fterraform-modules%2Ftree%2Fmain%2F (original path: /usecases?repoUrl=https%3A%2F%2Fgithub.com%2Fkubiyabot%2Fterraform-modules%2Ftree%2Fmain%2F)
+[2025-03-17 20:30:51.671] [Client] get: Making request to https://api.kubiya.ai/api/v1/usecases/L2NpX2NkX21haW50YWluZXJzL3RlcnJhZm9ybQ== (original path: /usecases/L2NpX2NkX21haW50YWluZXJzL3RlcnJhZm9ybQ==)
+[2025-03-17 20:31:11.799] PlanSubscription: Starting plan subscription process
+[2025-03-17 20:32:14.026] [Client] get: Making request to https://api.kubiya.ai/api/v1/usecases?repoUrl=https%3A%2F%2Fgithub.com%2Fkubiyabot%2Fterraform-modules%2Ftree%2Fmain%2F (original path: /usecases?repoUrl=https%3A%2F%2Fgithub.com%2Fkubiyabot%2Fterraform-modules%2Ftree%2Fmain%2F)
+[2025-03-17 20:32:16.000] [Client] get: Making request to https://api.kubiya.ai/api/v1/usecases/L2NpX2NkX21haW50YWluZXJzL3RlcnJhZm9ybQ== (original path: /usecases/L2NpX2NkX21haW50YWluZXJzL3RlcnJhZm9ybQ==)
+[2025-03-17 20:32:25.037] PlanSubscription: Starting plan subscription process at 2025-03-17T20:32:25+02:00
+[2025-03-17 20:32:25.037] PlanSubscription: Form state: Name=ffdfdfds, Description=fdsfdsfds, SelectedUseCaseID=L2NpX2NkX21haW50YWluZXJzL3RlcnJhZm9ybQ==
+[2025-03-17 20:32:25.038] PlanSubscription: UseCase is nil? false
+[2025-03-17 20:32:25.038] PlanSubscription DEBUG: f.Name="ffdfdfds"
+[2025-03-17 20:32:25.038] PlanSubscription DEBUG: f.Description="fdsfdsfds"
+[2025-03-17 20:32:25.038] PlanSubscription DEBUG: f.SelectedUseCaseID="L2NpX2NkX21haW50YWluZXJzL3RlcnJhZm9ybQ=="
+[2025-03-17 20:32:25.038] PlanSubscription DEBUG: f.UseCase.ID="L2NpX2NkX21haW50YWluZXJzL3RlcnJhZm9ybQ=="
+[2025-03-17 20:32:25.039] PlanSubscription DEBUG: f.UseCase.Name="CI/CD Maintainers Crew"
+[2025-03-17 20:33:37.785] [Client] get: Making request to https://api.kubiya.ai/api/v1/usecases?repoUrl=https%3A%2F%2Fgithub.com%2Fkubiyabot%2Fterraform-modules%2Ftree%2Fmain%2F (original path: /usecases?repoUrl=https%3A%2F%2Fgithub.com%2Fkubiyabot%2Fterraform-modules%2Ftree%2Fmain%2F)
+[2025-03-17 20:33:39.796] [Client] get: Making request to https://api.kubiya.ai/api/v1/usecases/L2NpX2NkX21haW50YWluZXJzL3RlcnJhZm9ybQ== (original path: /usecases/L2NpX2NkX21haW50YWluZXJzL3RlcnJhZm9ybQ==)
+[2025-03-17 20:33:47.506] PlanSubscription: Starting plan subscription process at 2025-03-17T20:33:47+02:00
+[2025-03-17 20:33:47.506] PlanSubscription: Form state: Name=dfsdfds, Description=fdsfdsfds, SelectedUseCaseID=L2NpX2NkX21haW50YWluZXJzL3RlcnJhZm9ybQ==
+[2025-03-17 20:33:47.507] PlanSubscription: UseCase is nil? false
+[2025-03-17 20:33:47.507] PlanSubscription DEBUG: f.Name="dfsdfds"
+[2025-03-17 20:33:47.507] PlanSubscription DEBUG: f.Description="fdsfdsfds"
+[2025-03-17 20:33:47.507] PlanSubscription DEBUG: f.SelectedUseCaseID="L2NpX2NkX21haW50YWluZXJzL3RlcnJhZm9ybQ=="
+[2025-03-17 20:33:47.507] PlanSubscription DEBUG: f.UseCase.ID="L2NpX2NkX21haW50YWluZXJzL3RlcnJhZm9ybQ=="
+[2025-03-17 20:33:47.507] PlanSubscription DEBUG: f.UseCase.Name="CI/CD Maintainers Crew"
+[2025-03-17 20:35:17.162] [Client] get: Making request to https://api.kubiya.ai/api/v1/usecases?repoUrl=https%3A%2F%2Fgithub.com%2Fkubiyabot%2Fterraform-modules%2Ftree%2Fmain%2F (original path: /usecases?repoUrl=https%3A%2F%2Fgithub.com%2Fkubiyabot%2Fterraform-modules%2Ftree%2Fmain%2F)
+[2025-03-17 20:35:19.581] [Client] get: Making request to https://api.kubiya.ai/api/v1/usecases/L2NpX2NkX21haW50YWluZXJzL3RlcnJhZm9ybQ== (original path: /usecases/L2NpX2NkX21haW50YWluZXJzL3RlcnJhZm9ybQ==)
+[2025-03-17 20:35:25.033] startPlanCmd: Creating new planSub and starting plan process
+[2025-03-17 20:35:25.036] DEBUG: Client is initialized in startPlanCmd
+[2025-03-17 20:35:25.036] PlanSubscription: Starting plan subscription process at 2025-03-17T20:35:25+02:00
+[2025-03-17 20:35:25.037] PlanSubscription: Form state: Name=gfdgfdgdf, Description=fdsfds, SelectedUseCaseID=L2NpX2NkX21haW50YWluZXJzL3RlcnJhZm9ybQ==
+[2025-03-17 20:35:25.037] PlanSubscription: UseCase is nil? false
+[2025-03-17 20:35:25.037] PlanSubscription DEBUG: Current Project field: <nil>
+[2025-03-17 20:35:25.037] PlanSubscription DEBUG: f.Name="gfdgfdgdf"
+[2025-03-17 20:35:25.037] PlanSubscription DEBUG: f.Description="fdsfds"
+[2025-03-17 20:35:25.037] PlanSubscription DEBUG: f.SelectedUseCaseID="L2NpX2NkX21haW50YWluZXJzL3RlcnJhZm9ybQ=="
+[2025-03-17 20:35:25.038] PlanSubscription DEBUG: f.UseCase.ID="L2NpX2NkX21haW50YWluZXJzL3RlcnJhZm9ybQ=="
+[2025-03-17 20:35:25.038] PlanSubscription DEBUG: f.UseCase.Name="CI/CD Maintainers Crew"
+[2025-03-17 20:36:16.945] [Client] get: Making request to https://api.kubiya.ai/api/v1/usecases?repoUrl=https%3A%2F%2Fgithub.com%2Fkubiyabot%2Fterraform-modules%2Ftree%2Fmain%2F (original path: /usecases?repoUrl=https%3A%2F%2Fgithub.com%2Fkubiyabot%2Fterraform-modules%2Ftree%2Fmain%2F)
+[2025-03-17 20:36:18.852] [Client] get: Making request to https://api.kubiya.ai/api/v1/usecases/L2NpX2NkX21haW50YWluZXJzL3RlcnJhZm9ybQ== (original path: /usecases/L2NpX2NkX21haW50YWluZXJzL3RlcnJhZm9ybQ==)
+[2025-03-17 20:36:22.547] Update: Starting plan process, Client nil? false, UseCase nil? false
+[2025-03-17 20:36:22.548] startPlanCmd: Creating new planSub and starting plan process
+[2025-03-17 20:36:22.549] DEBUG: Client is initialized in startPlanCmd
+[2025-03-17 20:36:22.549] PlanSubscription: Starting plan subscription process at 2025-03-17T20:36:22+02:00
+[2025-03-17 20:36:22.549] PlanSubscription: Form state: Name=fdsfdsfds, Description=, SelectedUseCaseID=L2NpX2NkX21haW50YWluZXJzL3RlcnJhZm9ybQ==
+[2025-03-17 20:36:22.550] PlanSubscription: UseCase is nil? false
+[2025-03-17 20:36:22.550] PlanSubscription DEBUG: Current Project field: <nil>
+[2025-03-17 20:36:22.550] PlanSubscription DEBUG: f.Name="fdsfdsfds"
+[2025-03-17 20:36:22.550] PlanSubscription DEBUG: f.Description=""
+[2025-03-17 20:36:22.550] PlanSubscription DEBUG: f.SelectedUseCaseID="L2NpX2NkX21haW50YWluZXJzL3RlcnJhZm9ybQ=="
+[2025-03-17 20:36:22.550] PlanSubscription DEBUG: f.UseCase.ID="L2NpX2NkX21haW50YWluZXJzL3RlcnJhZm9ybQ=="
+[2025-03-17 20:36:22.551] PlanSubscription DEBUG: f.UseCase.Name="CI/CD Maintainers Crew"
+[2025-03-17 20:38:43.227] [Client] get: Making request to https://api.kubiya.ai/api/v1/usecases?repoUrl=https%3A%2F%2Fgithub.com%2Fkubiyabot%2Fterraform-modules%2Ftree%2Fmain%2F (original path: /usecases?repoUrl=https%3A%2F%2Fgithub.com%2Fkubiyabot%2Fterraform-modules%2Ftree%2Fmain%2F)
+[2025-03-17 20:38:45.208] [Client] get: Making request to https://api.kubiya.ai/api/v1/usecases/L2NpX2NkX21haW50YWluZXJzL3RlcnJhZm9ybQ== (original path: /usecases/L2NpX2NkX21haW50YWluZXJzL3RlcnJhZm9ybQ==)
+[2025-03-17 20:38:49.237] Update: Starting plan process, Client nil? false, UseCase nil? false
+[2025-03-17 20:38:49.237] startPlanCmd: Creating new planSub and starting plan process
+[2025-03-17 20:38:49.238] DEBUG: Client is initialized in startPlanCmd
+[2025-03-17 20:38:49.239] startPlanCmd: Created project with UseCaseID="L2NpX2NkX21haW50YWluZXJzL3RlcnJhZm9ybQ=="
+[2025-03-17 20:38:49.239] PlanSubscription: Starting plan subscription process at 2025-03-17T20:38:49+02:00
+[2025-03-17 20:38:49.240] PlanSubscription: Form state: Name=tetete, Description=, SelectedUseCaseID=L2NpX2NkX21haW50YWluZXJzL3RlcnJhZm9ybQ==
+[2025-03-17 20:38:49.241] PlanSubscription: UseCase is nil? false
+[2025-03-17 20:38:49.241] PlanSubscription DEBUG: Current Project field: &{UUID: Name:tetete Description: Status: UseCase:L2NpX2NkX21haW50YWluZXJzL3RlcnJhZm9ybQ== UseCaseID:L2NpX2NkX21haW50YWluZXJzL3RlcnJhZm9ybQ== UseCaseRepoURL: Icons:[] Variables:[] Resources:[] ExecutionStatus: InternalStatus: RunID: Email: Org: WorkspaceID: Error:}
+[2025-03-17 20:38:49.241] PlanSubscription DEBUG: f.Name="tetete"
+[2025-03-17 20:38:49.241] PlanSubscription DEBUG: f.Description=""
+[2025-03-17 20:38:49.241] PlanSubscription DEBUG: f.SelectedUseCaseID="L2NpX2NkX21haW50YWluZXJzL3RlcnJhZm9ybQ=="
+[2025-03-17 20:38:49.241] PlanSubscription DEBUG: f.UseCase.ID="L2NpX2NkX21haW50YWluZXJzL3RlcnJhZm9ybQ=="
+[2025-03-17 20:38:49.241] PlanSubscription DEBUG: f.UseCase.Name="CI/CD Maintainers Crew"
+[2025-03-17 21:13:30.781] [Client] get: Making request to https://api.kubiya.ai/api/v1/usecases?repoUrl=https%3A%2F%2Fgithub.com%2Fkubiyabot%2Fterraform-modules%2Ftree%2Fmain%2F (original path: /usecases?repoUrl=https%3A%2F%2Fgithub.com%2Fkubiyabot%2Fterraform-modules%2Ftree%2Fmain%2F)
+[2025-03-17 21:13:33.077] [Client] get: Making request to https://api.kubiya.ai/api/v1/usecases/L2NpX2NkX21haW50YWluZXJzL3RlcnJhZm9ybQ== (original path: /usecases/L2NpX2NkX21haW50YWluZXJzL3RlcnJhZm9ybQ==)
+[2025-03-17 21:13:39.487] PlanSubscription: Starting plan subscription process at 2025-03-17T21:13:39+02:00
+[2025-03-17 21:13:39.488] PlanSubscription: Form state: Name=fdsfdsfsd, Description=fdsfds, SelectedUseCaseID=L2NpX2NkX21haW50YWluZXJzL3RlcnJhZm9ybQ==
+[2025-03-17 21:13:39.488] PlanSubscription: UseCase is nil? false
+[2025-03-17 21:13:39.488] PlanSubscription DEBUG: f.Name="fdsfdsfsd"
+[2025-03-17 21:13:39.488] PlanSubscription DEBUG: f.Description="fdsfds"
+[2025-03-17 21:13:39.489] PlanSubscription DEBUG: f.SelectedUseCaseID="L2NpX2NkX21haW50YWluZXJzL3RlcnJhZm9ybQ=="
+[2025-03-17 21:13:39.489] PlanSubscription DEBUG: f.UseCase.ID="L2NpX2NkX21haW50YWluZXJzL3RlcnJhZm9ybQ=="
+[2025-03-17 21:13:39.489] PlanSubscription DEBUG: f.UseCase.Name="CI/CD Maintainers Crew"
+[2025-03-17 21:22:27.668] [Client] get: Making request to https://api.kubiya.ai/api/v1/usecases?repoUrl=https%3A%2F%2Fgithub.com%2Fkubiyabot%2Fterraform-modules%2Ftree%2Fmain%2F (original path: /usecases?repoUrl=https%3A%2F%2Fgithub.com%2Fkubiyabot%2Fterraform-modules%2Ftree%2Fmain%2F)
+[2025-03-17 21:22:30.144] [Client] get: Making request to https://api.kubiya.ai/api/v1/usecases/L2NpX2NkX21haW50YWluZXJzL3RlcnJhZm9ybQ== (original path: /usecases/L2NpX2NkX21haW50YWluZXJzL3RlcnJhZm9ybQ==)
+[2025-03-17 21:22:36.061] PlanSubscription: Starting plan subscription process at 2025-03-17T21:22:36+02:00
+[2025-03-17 21:22:36.062] PlanSubscription: Form state: Name=fdfdssdf, Description=fdsfds, SelectedUseCaseID=L2NpX2NkX21haW50YWluZXJzL3RlcnJhZm9ybQ==
+[2025-03-17 21:22:36.062] PlanSubscription: UseCase is nil? false
+[2025-03-17 21:22:36.062] PlanSubscription DEBUG: f.Name="fdfdssdf"
+[2025-03-17 21:22:36.062] PlanSubscription DEBUG: f.Description="fdsfds"
+[2025-03-17 21:22:36.062] PlanSubscription DEBUG: f.SelectedUseCaseID="L2NpX2NkX21haW50YWluZXJzL3RlcnJhZm9ybQ=="
+[2025-03-17 21:22:36.063] PlanSubscription DEBUG: f.UseCase.ID="L2NpX2NkX21haW50YWluZXJzL3RlcnJhZm9ybQ=="
+[2025-03-17 21:22:36.063] PlanSubscription DEBUG: f.UseCase.Name="CI/CD Maintainers Crew"
+[2025-03-17 21:26:35.429] [Client] get: Making request to https://api.kubiya.ai/api/v1/usecases?repoUrl=https%3A%2F%2Fgithub.com%2Fkubiyabot%2Fterraform-modules%2Ftree%2Fmain%2F (original path: /usecases?repoUrl=https%3A%2F%2Fgithub.com%2Fkubiyabot%2Fterraform-modules%2Ftree%2Fmain%2F)
+[2025-03-17 21:26:37.614] [Client] get: Making request to https://api.kubiya.ai/api/v1/usecases/L2NpX2NkX21haW50YWluZXJzL3RlcnJhZm9ybQ== (original path: /usecases/L2NpX2NkX21haW50YWluZXJzL3RlcnJhZm9ybQ==)
+[2025-03-17 21:26:41.052] PlanSubscription: Starting plan subscription process at 2025-03-17T21:26:41+02:00
+[2025-03-17 21:26:41.052] PlanSubscription: Form state: Name=fdsfdsfds, Description=, SelectedUseCaseID=L2NpX2NkX21haW50YWluZXJzL3RlcnJhZm9ybQ==
+[2025-03-17 21:26:41.053] PlanSubscription: UseCase is nil? false
+[2025-03-17 21:26:41.055] PlanSubscription DEBUG: f.Name="fdsfdsfds"
+[2025-03-17 21:26:41.055] PlanSubscription DEBUG: f.Description=""
+[2025-03-17 21:26:41.055] PlanSubscription DEBUG: f.SelectedUseCaseID="L2NpX2NkX21haW50YWluZXJzL3RlcnJhZm9ybQ=="
+[2025-03-17 21:26:41.055] PlanSubscription DEBUG: f.UseCase.ID="L2NpX2NkX21haW50YWluZXJzL3RlcnJhZm9ybQ=="
+[2025-03-17 21:26:41.055] PlanSubscription DEBUG: f.UseCase.Name="CI/CD Maintainers Crew"
+[2025-03-17 21:45:11.960] createForm: Creating new project form
+[2025-03-17 21:45:11.961] createForm: Config BaseURL=https://api.kubiya.ai/api/v1, Debug=true
+[2025-03-17 21:45:11.961] createForm: API key is present (length: 521)
+[2025-03-17 21:45:11.961] createForm: Client initialized with BaseURL=https://api.kubiya.ai/api/v1
+[2025-03-17 21:45:11.961] createForm: Form instance created successfully
+[2025-03-17 21:45:16.529] createForm: Creating new project form
+[2025-03-17 21:45:16.530] createForm: Config BaseURL=https://api.kubiya.ai/api/v1, Debug=true
+[2025-03-17 21:45:16.530] createForm: API key is present (length: 521)
+[2025-03-17 21:45:16.531] createForm: Client initialized with BaseURL=https://api.kubiya.ai/api/v1
+[2025-03-17 21:45:16.531] createForm: Form instance created successfully
+[2025-03-17 21:47:40.951] createForm: Creating new project form
+[2025-03-17 21:47:40.952] createForm: Config BaseURL=https://api.kubiya.ai/api/v1, Debug=true
+[2025-03-17 21:47:40.953] createForm: API key is present (length: 521)
+[2025-03-17 21:47:40.953] createForm: Client initialized with BaseURL=https://api.kubiya.ai/api/v1
+[2025-03-17 21:47:40.954] createForm: Form instance created successfully
+[2025-03-18 10:33:50.486] createForm: Creating new project form
+[2025-03-18 10:33:50.487] createForm: Config BaseURL=https://api.kubiya.ai/api/v1, Debug=true
+[2025-03-18 10:33:50.488] createForm: API key is present (length: 521)
+[2025-03-18 10:33:50.488] createForm: Client initialized with BaseURL=https://api.kubiya.ai/api/v1
+[2025-03-18 10:33:50.488] createForm: Form instance created successfully
+[2025-03-18 10:34:26.139] [Client] get: Making request to https://api.kubiya.ai/api/v1/usecases?repoUrl=https%3A%2F%2Fgithub.com%2Fkubiyabot%2Fterraform-modules%2Ftree%2Fmain%2F (original path: /usecases?repoUrl=https%3A%2F%2Fgithub.com%2Fkubiyabot%2Fterraform-modules%2Ftree%2Fmain%2F)
+[2025-03-18 10:34:36.819] [Client] get: Making request to https://api.kubiya.ai/api/v1/usecases/L2NpX2NkX21haW50YWluZXJzL3RlcnJhZm9ybQ== (original path: /usecases/L2NpX2NkX21haW50YWluZXJzL3RlcnJhZm9ybQ==)
+[2025-03-18 10:35:06.472] PlanSubscription: Starting plan subscription process at 2025-03-18T10:35:06+02:00
+[2025-03-18 10:35:06.472] PlanSubscription: Form state: Name=hgfdgfdgfd, Description=fsdfsdfsdfsd, SelectedUseCaseID=L2NpX2NkX21haW50YWluZXJzL3RlcnJhZm9ybQ==
+[2025-03-18 10:35:06.473] PlanSubscription: UseCase is nil? false
+[2025-03-18 10:35:06.473] PlanSubscription DEBUG: f.Name="hgfdgfdgfd"
+[2025-03-18 10:35:06.473] PlanSubscription DEBUG: f.Description="fsdfsdfsdfsd"
+[2025-03-18 10:35:06.473] PlanSubscription DEBUG: f.SelectedUseCaseID="L2NpX2NkX21haW50YWluZXJzL3RlcnJhZm9ybQ=="
+[2025-03-18 10:35:06.473] PlanSubscription DEBUG: f.UseCase.ID="L2NpX2NkX21haW50YWluZXJzL3RlcnJhZm9ybQ=="
+[2025-03-18 10:35:06.474] PlanSubscription DEBUG: f.UseCase.Name="CI/CD Maintainers Crew"
+[2025-03-18 12:17:18.144] [Client] get: Making request to https://api.kubiya.ai/api/v1/usecases?repoUrl=https%3A%2F%2Fgithub.com%2Fkubiyabot%2Fterraform-modules%2Ftree%2Fmain%2F (original path: /usecases?repoUrl=https%3A%2F%2Fgithub.com%2Fkubiyabot%2Fterraform-modules%2Ftree%2Fmain%2F)
+[2025-03-18 12:17:20.733] [Client] get: Making request to https://api.kubiya.ai/api/v1/usecases/L2NpX2NkX21haW50YWluZXJzL3RlcnJhZm9ybQ== (original path: /usecases/L2NpX2NkX21haW50YWluZXJzL3RlcnJhZm9ybQ==)
+[2025-03-18 12:17:43.282] PlanSubscription: Starting plan subscription process at 2025-03-18T12:17:43+02:00
+[2025-03-18 12:17:43.284] PlanSubscription: Form state: Name=ghrfgfdfd, Description=vdsffdsfdsa, SelectedUseCaseID=L2NpX2NkX21haW50YWluZXJzL3RlcnJhZm9ybQ==
+[2025-03-18 12:17:43.285] PlanSubscription: UseCase is nil? false
+[2025-03-18 12:17:43.285] PlanSubscription DEBUG: f.Name="ghrfgfdfd"
+[2025-03-18 12:17:43.286] PlanSubscription DEBUG: f.Description="vdsffdsfdsa"
+[2025-03-18 12:17:43.286] PlanSubscription DEBUG: f.SelectedUseCaseID="L2NpX2NkX21haW50YWluZXJzL3RlcnJhZm9ybQ=="
+[2025-03-18 12:17:43.287] PlanSubscription DEBUG: f.UseCase.ID="L2NpX2NkX21haW50YWluZXJzL3RlcnJhZm9ybQ=="
+[2025-03-18 12:17:43.287] PlanSubscription DEBUG: f.UseCase.Name="CI/CD Maintainers Crew"
+[2025-03-18 13:27:10.511] [Client] get: Making request to https://api.kubiya.ai/api/v1/usecases?repoUrl=https%3A%2F%2Fgithub.com%2Fkubiyabot%2Fterraform-modules%2Ftree%2Fmain%2F (original path: /usecases?repoUrl=https%3A%2F%2Fgithub.com%2Fkubiyabot%2Fterraform-modules%2Ftree%2Fmain%2F)
+[2025-03-18 13:27:13.257] [Client] get: Making request to https://api.kubiya.ai/api/v1/usecases/L2NpX2NkX21haW50YWluZXJzL3RlcnJhZm9ybQ== (original path: /usecases/L2NpX2NkX21haW50YWluZXJzL3RlcnJhZm9ybQ==)
+[2025-03-18 13:27:20.104] PlanSubscription: Starting plan subscription process at 2025-03-18T13:27:20+02:00
+[2025-03-18 13:27:20.105] PlanSubscription: Form state: Name=dfdfdfd, Description=fdsfdsfds, SelectedUseCaseID=L2NpX2NkX21haW50YWluZXJzL3RlcnJhZm9ybQ==
+[2025-03-18 13:27:20.105] PlanSubscription: UseCase is nil? false
+[2025-03-18 13:27:20.105] PlanSubscription DEBUG: f.Name="dfdfdfd"
+[2025-03-18 13:27:20.105] PlanSubscription DEBUG: f.Description="fdsfdsfds"
+[2025-03-18 13:27:20.106] PlanSubscription DEBUG: f.SelectedUseCaseID="L2NpX2NkX21haW50YWluZXJzL3RlcnJhZm9ybQ=="
+[2025-03-18 13:27:20.106] PlanSubscription DEBUG: f.UseCase.ID="L2NpX2NkX21haW50YWluZXJzL3RlcnJhZm9ybQ=="
+[2025-03-18 13:27:20.106] PlanSubscription DEBUG: f.UseCase.Name="CI/CD Maintainers Crew"
+[2025-03-18 13:32:32.848] [Client] get: Making request to https://api.kubiya.ai/api/v1/usecases?repoUrl=https%3A%2F%2Fgithub.com%2Fkubiyabot%2Fterraform-modules%2Ftree%2Fmain%2F (original path: /usecases?repoUrl=https%3A%2F%2Fgithub.com%2Fkubiyabot%2Fterraform-modules%2Ftree%2Fmain%2F)
+[2025-03-18 13:32:35.033] [Client] get: Making request to https://api.kubiya.ai/api/v1/usecases/L2NpX2NkX21haW50YWluZXJzL3RlcnJhZm9ybQ== (original path: /usecases/L2NpX2NkX21haW50YWluZXJzL3RlcnJhZm9ybQ==)
+[2025-03-18 13:32:44.765] PlanSubscription: Starting plan subscription process at 2025-03-18T13:32:44+02:00
+[2025-03-18 13:32:44.766] PlanSubscription: Form state: Name=fdsdfsfdsfds, Description=fdsfdsfds, SelectedUseCaseID=L2NpX2NkX21haW50YWluZXJzL3RlcnJhZm9ybQ==
+[2025-03-18 13:32:44.768] PlanSubscription: UseCase is nil? false
+[2025-03-18 13:32:44.768] PlanSubscription DEBUG: f.Name="fdsdfsfdsfds"
+[2025-03-18 13:32:44.768] PlanSubscription DEBUG: f.Description="fdsfdsfds"
+[2025-03-18 13:32:44.768] PlanSubscription DEBUG: f.SelectedUseCaseID="L2NpX2NkX21haW50YWluZXJzL3RlcnJhZm9ybQ=="
+[2025-03-18 13:32:44.769] PlanSubscription DEBUG: f.UseCase.ID="L2NpX2NkX21haW50YWluZXJzL3RlcnJhZm9ybQ=="
+[2025-03-18 13:32:44.769] PlanSubscription DEBUG: f.UseCase.Name="CI/CD Maintainers Crew"
+[2025-03-18 13:35:42.139] [Client] get: Making request to https://api.kubiya.ai/api/v1/usecases?repoUrl=https%3A%2F%2Fgithub.com%2Fkubiyabot%2Fterraform-modules%2Ftree%2Fmain%2F (original path: /usecases?repoUrl=https%3A%2F%2Fgithub.com%2Fkubiyabot%2Fterraform-modules%2Ftree%2Fmain%2F)
+[2025-03-18 13:48:58.724] [Client] get: Making request to https://api.kubiya.ai/api/v1/usecases/L2NpX2NkX21haW50YWluZXJzL3RlcnJhZm9ybQ== (original path: /usecases/L2NpX2NkX21haW50YWluZXJzL3RlcnJhZm9ybQ==)
+[2025-03-18 13:49:05.005] ---------------------------------------------------
+[2025-03-18 13:49:05.006] PlanSubscription: STARTING NEW PROCESS - Adding critical debug
+[2025-03-18 13:49:05.006] PlanSubscription: Starting plan subscription process at 2025-03-18T13:49:05+02:00
+[2025-03-18 13:49:05.007] PlanSubscription: Form state: Name=FDFDSFDS, Description=, SelectedUseCaseID=L2NpX2NkX21haW50YWluZXJzL3RlcnJhZm9ybQ==
+[2025-03-18 13:49:05.007] PlanSubscription: UseCase is nil? false
+[2025-03-18 13:49:05.007] PlanSubscription: Client is nil? false
+[2025-03-18 13:49:05.007] PlanSubscription: Client BaseURL=https://api.kubiya.ai/api/v1
+[2025-03-18 13:49:05.007] PlanSubscription DEBUG: f.Name="FDFDSFDS"
+[2025-03-18 13:49:05.007] PlanSubscription DEBUG: f.Description=""
+[2025-03-18 13:49:05.007] PlanSubscription DEBUG: f.SelectedUseCaseID="L2NpX2NkX21haW50YWluZXJzL3RlcnJhZm9ybQ=="
+[2025-03-18 13:49:05.008] PlanSubscription DEBUG: f.UseCase.ID="L2NpX2NkX21haW50YWluZXJzL3RlcnJhZm9ybQ=="
+[2025-03-18 13:49:05.008] PlanSubscription DEBUG: f.UseCase.Name="CI/CD Maintainers Crew"

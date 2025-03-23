@@ -44,6 +44,7 @@ func newExecuteCommand(cfg *config.Config) *cobra.Command {
 		sourceUUID string
 
 		teammateID     string
+		runnerName     string
 		kubeContext    string
 		async          bool
 		follow         bool
@@ -338,38 +339,27 @@ func newExecuteCommand(cfg *config.Config) *cobra.Command {
 			}
 			defer resp.Body.Close()
 
-			var execResp OperationResponse
-			if err := json.NewDecoder(resp.Body).Decode(&execResp); err != nil {
-				return fmt.Errorf("failed to decode response: %w", err)
-			}
-
-			if execResp.Error != "" {
-				return fmt.Errorf("execution failed: %s", execResp.Error)
-			}
-
-			// Always follow execution if we have an execution ID, unless explicitly asked not to
-			if execResp.ExecutionID != "" && !nonInteractive {
-				if execResp.LongRunning {
-					fmt.Printf("⏳ Long-running tool detected (ID: %s)\n", execResp.ExecutionID)
+			if resp.StatusCode == http.StatusOK {
+				var response OperationResponse
+				if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+					return fmt.Errorf("failed to parse response: %w", err)
 				}
-				if follow || !nonInteractive {
-					fmt.Println("📝 Following execution:")
-					if err := followExecution(client, execResp.ExecutionID, rawOutput); err != nil {
-						return fmt.Errorf("failed to follow execution: %w", err)
+
+				fmt.Printf("Execution ID: %s\n", response.ExecutionID)
+
+				if response.LongRunning && follow {
+					fmt.Printf("Following execution...\n")
+					return followExecution(client, response.ExecutionID, runnerName, rawOutput)
+				}
+
+				if response.Status == "success" {
+					fmt.Printf("✅ Tool execution succeeded\n")
+					if response.Output != "" {
+						fmt.Println(response.Output)
 					}
 					return nil
 				} else {
-					fmt.Printf("Use 'kubiya tool status %s' to check status\n", execResp.ExecutionID)
-					return nil
-				}
-			}
-
-			// Handle immediate response
-			if execResp.Output != "" {
-				if rawOutput {
-					fmt.Print(execResp.Output)
-				} else {
-					fmt.Printf("\n📝 Output:\n%s\n", execResp.Output)
+					return fmt.Errorf("tool execution failed: %s", response.Error)
 				}
 			}
 
@@ -379,6 +369,7 @@ func newExecuteCommand(cfg *config.Config) *cobra.Command {
 
 	cmd.Flags().StringVarP(&sourceUUID, "source", "s", "", "Source UUID")
 	cmd.Flags().StringVarP(&teammateID, "teammate", "t", "", "Teammate ID")
+	cmd.Flags().StringVarP(&runnerName, "runner", "r", "", "Runner name")
 	cmd.Flags().StringVarP(&kubeContext, "context", "c", "", "Kubernetes context")
 	cmd.Flags().BoolVarP(&async, "async", "a", false, "Execute asynchronously")
 	cmd.Flags().BoolVarP(&follow, "follow", "f", false, "Follow async execution")
@@ -396,8 +387,8 @@ func newExecuteCommand(cfg *config.Config) *cobra.Command {
 	return cmd
 }
 
-// followExecution follows the output of an async execution
-func followExecution(client *kubiya.Client, executionID string, rawOutput bool) error {
+// followExecution follows the execution status
+func followExecution(client *kubiya.Client, executionID string, runnerName string, rawOutput bool) error {
 	spinner := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
 	spinnerIdx := 0
 	lastEventCount := 0

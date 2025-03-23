@@ -14,6 +14,9 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"archive/zip"
+
+	"github.com/briandowns/spinner"
 	"github.com/kubiyabot/cli/internal/config"
 	"github.com/kubiyabot/cli/internal/kubiya"
 	"github.com/kubiyabot/cli/internal/style"
@@ -355,6 +358,7 @@ func newScanSourceCommand(cfg *config.Config) *cobra.Command {
 		outputFormat  string
 		dynamicConfig string
 		local         bool
+		localOnly     bool // New flag to force local-only scanning
 		repo          string
 		branch        string
 		path          string
@@ -369,23 +373,33 @@ func newScanSourceCommand(cfg *config.Config) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "scan [url|path]",
 		Short: "🔍 Scan a source URL or local directory for available tools",
-		Example: `  # Scan current directory (uses current branch)
+		Long: `Scan a source URL or local directory for available tools.
+
+When scanning a local directory:
+- If the directory is within a Git repository, the command uses the repository URL and branch
+- To scan purely local files without Git, use --local-only flag or an absolute path outside any Git repository
+- Use --force to continue scanning with uncommitted changes in a Git repository`,
+		Example: `  # Scan current directory (uses Git repository URL if in a Git repo)
   kubiya source scan .
 
   # Scan with specific runner
   kubiya source scan . --runner enforcer
 
-  # Scan and automatically stage, commit and push changes
-  kubiya source scan . --add --push --commit-msg "feat: update tools"
+  # Scan and continue despite uncommitted changes
+  kubiya source scan . --force
 
-  # Stage specific files and push
-  kubiya source scan . --add "tools/*,README.md" --push`,
+  # Scan directory contents directly (bypass Git)
+  kubiya source scan . --local-only
+
+  # Scan and automatically stage, commit and push changes
+  kubiya source scan . --add --push --commit-msg "feat: update tools"`,
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			client := kubiya.NewClient(cfg)
 			sourceURL := ""
+			isLocalOnlyScan := false // Flag to track if we're doing a local-only scan
 
-			// Handle different input methods
+			// Check if we're scanning a local directory
 			if len(args) > 0 {
 				sourceURL = args[0]
 			} else if repo != "" {
@@ -403,71 +417,104 @@ func newScanSourceCommand(cfg *config.Config) *cobra.Command {
 				local = true
 			}
 
+			// Auto-select runner if none specified
+			if runnerName == "" {
+				activeRunner, err := getFirstHealthyRunner(cmd.Context(), client)
+				if err != nil {
+					// If we can't get a healthy runner, continue with default runner
+					fmt.Printf("%s No runner specified - using default runner\n\n",
+						style.WarningStyle.Render("⚠️"))
+				} else {
+					runnerName = activeRunner
+					fmt.Printf("%s Auto-selected healthy runner: %s\n\n",
+						style.SuccessStyle.Render("✅"),
+						style.HighlightStyle.Render(runnerName))
+				}
+			} else {
+				fmt.Printf("Runner: %s\n\n", style.HighlightStyle.Render(runnerName))
+			}
+
 			if local {
-				fmt.Printf("\n%s\n", style.SubtitleStyle.Render("📂 Local Directory Scan"))
-
-				// Check Git status before proceeding
-				status, err := getGitStatus(sourceURL)
-				if err != nil {
-					return err
-				}
-
-				if status.HasChanges() {
-					fmt.Printf("\n%s\n", style.WarningStyle.Render("⚠️ Uncommitted Changes"))
-					if len(status.Unstaged) > 0 {
-						fmt.Printf("\nUnstaged changes:\n")
-						for _, file := range status.Unstaged {
-							fmt.Printf("  • %s\n", file)
-						}
+				// Check if we should use local-only mode
+				if localOnly {
+					isLocalOnlyScan = true
+					fmt.Printf("\n%s\n", style.SubtitleStyle.Render("📂 Local-Only Directory Scan"))
+					fmt.Printf("Scanning local directory: %s\n", sourceURL)
+					// Convert to absolute path for clarity
+					absPath, err := filepath.Abs(sourceURL)
+					if err == nil {
+						sourceURL = absPath
 					}
-					if len(status.Staged) > 0 {
-						fmt.Printf("\nStaged changes:\n")
-						for _, file := range status.Staged {
-							fmt.Printf("  • %s\n", file)
-						}
+				} else {
+					fmt.Printf("\n%s\n", style.SubtitleStyle.Render("📂 Local Directory Scan"))
+
+					// Check Git status before proceeding
+					status, err := getGitStatus(sourceURL)
+					if err != nil {
+						return err
 					}
 
-					// Handle changes based on flags
-					if addAll || push {
-						if err := handleGitChanges(sourceURL, status, addAll, push, commitMsg); err != nil {
-							return err
+					if status.HasChanges() {
+						fmt.Printf("\n%s\n", style.WarningStyle.Render("⚠️ Uncommitted Changes"))
+						if len(status.Unstaged) > 0 {
+							fmt.Printf("\nUnstaged changes:\n")
+							for _, file := range status.Unstaged {
+								fmt.Printf("  • %s\n", file)
+							}
 						}
-					} else {
-						fmt.Printf("\n%s\n", style.SubtitleStyle.Render("Available Actions:"))
-						fmt.Println("• Stage and commit changes: --add --commit-msg \"your message\"")
-						fmt.Println("• Push to remote: --push")
-						fmt.Println("• Continue without committing: --force")
-						return fmt.Errorf("uncommitted changes found")
+						if len(status.Staged) > 0 {
+							fmt.Printf("\nStaged changes:\n")
+							for _, file := range status.Staged {
+								fmt.Printf("  • %s\n", file)
+							}
+						}
+
+						// Handle changes based on flags
+						if addAll || push || force {
+							if err := handleGitChanges(sourceURL, status, addAll, push, commitMsg); err != nil {
+								return err
+							}
+						} else {
+							fmt.Printf("\n%s\n", style.SubtitleStyle.Render("Available Actions:"))
+							fmt.Println("• Stage and commit changes: --add --commit-msg \"your message\"")
+							fmt.Println("• Push to remote: --push")
+							fmt.Println("• Continue without committing: --force")
+							return fmt.Errorf("uncommitted changes found")
+						}
 					}
-				}
 
-				// Get git info with enhanced options
-				gitInfo, err := getGitInfo(sourceURL, remote, branch, force)
-				if err != nil {
-					fmt.Printf("%s\n", style.ErrorStyle.Render(err.Error()))
-					fmt.Printf("\n%s\n", style.SubtitleStyle.Render("Common Solutions:"))
-					fmt.Println("• Ensure you're in a git repository")
-					fmt.Println("• Set up a remote with: git remote add origin <url>")
-					fmt.Println("• Push your changes to the remote repository")
-					return nil
-				}
+					// Get git info with enhanced options
+					gitInfo, err := getGitInfo(sourceURL, remote, branch, force)
+					if err != nil {
+						fmt.Printf("%s\n", style.ErrorStyle.Render(err.Error()))
+						fmt.Printf("\n%s\n", style.SubtitleStyle.Render("Common Solutions:"))
+						fmt.Println("• Ensure you're in a git repository")
+						fmt.Println("• Set up a remote with: git remote add origin <url>")
+						fmt.Println("• Push your changes to the remote repository")
+						return nil
+					}
 
-				// Show git info
-				fmt.Printf("Repository: %s\n", style.HighlightStyle.Render(gitInfo.RepoURL))
-				if gitInfo.Remote != "origin" {
-					fmt.Printf("Remote: %s\n", gitInfo.Remote)
-				}
-				fmt.Printf("Branch: %s", gitInfo.Branch)
-				if gitInfo.IsCurrentBranch {
-					fmt.Printf(" (current)")
-				}
-				fmt.Println()
-				if gitInfo.RelativePath != "" {
-					fmt.Printf("Path: %s\n", gitInfo.RelativePath)
-				}
-				fmt.Println()
+					// Show git info with clarification that we're using Git
+					fmt.Printf("\n%s\n", style.SubtitleStyle.Render("ℹ️ Using Git Repository Information"))
+					fmt.Printf("Note: When scanning a directory within a Git repository, Kubiya automatically uses the repository URL and branch.\n")
+					fmt.Printf("To scan purely local files without Git, use --local-only flag.\n\n")
 
-				sourceURL = gitInfo.FullURL
+					fmt.Printf("Repository: %s\n", style.HighlightStyle.Render(gitInfo.RepoURL))
+					if gitInfo.Remote != "origin" {
+						fmt.Printf("Remote: %s\n", gitInfo.Remote)
+					}
+					fmt.Printf("Branch: %s", gitInfo.Branch)
+					if gitInfo.IsCurrentBranch {
+						fmt.Printf(" (current)")
+					}
+					fmt.Println()
+					if gitInfo.RelativePath != "" {
+						fmt.Printf("Path: %s\n", gitInfo.RelativePath)
+					}
+					fmt.Println()
+
+					sourceURL = gitInfo.FullURL
+				}
 			}
 
 			// Handle dynamic configuration
@@ -494,69 +541,333 @@ func newScanSourceCommand(cfg *config.Config) *cobra.Command {
 					style.WarningStyle.Render("⚠️"))
 			}
 
-			// Use the discovery API endpoint instead of LoadSource
-			discovered, err := client.DiscoverSource(cmd.Context(), sourceURL, dynConfig, runnerName, nil)
-			if err != nil {
-				if discovery, ok := err.(*kubiya.SourceDiscoveryResponse); ok && len(discovery.Errors) > 0 {
-					// Show a clean error output with source context
-					fmt.Printf("\n%s\n", style.ErrorStyle.Render("❌ Scan failed"))
-					fmt.Printf("\n%s\n", style.SubtitleStyle.Render("Source Information:"))
-					fmt.Printf("Name: %s\n", discovery.Name)
-					fmt.Printf("Branch: %s\n", discovery.Source.Branch)
-					fmt.Printf("Commit: %s\n", discovery.Source.Commit)
-					fmt.Printf("Committer: %s\n\n", discovery.Source.Committer)
+			var discovered *kubiya.SourceDiscoveryResponse
+			var err error
 
-					fmt.Printf("%s\n", style.SubtitleStyle.Render("Error Details:"))
-					for _, e := range discovery.Errors {
-						fmt.Printf("• %s: %s\n", e.Type, e.Error)
-						if e.Details != "" {
-							fmt.Printf("  Details: %s\n", e.Details)
+			if isLocalOnlyScan {
+				// For local-only scanning, we can use either createTempZip or a different API endpoint
+				// Let's try to list files in the directory first
+				absPath, _ := filepath.Abs(sourceURL)
+
+				// Create a temporary zip of the local directory
+				fmt.Printf("\n%s\n", style.SubtitleStyle.Render("📦 Creating Archive"))
+
+				// Show a spinner while creating the temporary directory and zip file
+				spinnerChars := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+				spinnerIdx := 0
+				spinnerDone := make(chan bool)
+
+				// Start the spinner in a goroutine
+				go func() {
+					for {
+						select {
+						case <-spinnerDone:
+							fmt.Print("\r                                          \r") // Clear spinner line
+							return
+						default:
+							fmt.Printf("\r%s Preparing directory archive... ", spinnerChars[spinnerIdx])
+							spinnerIdx = (spinnerIdx + 1) % len(spinnerChars)
+							time.Sleep(100 * time.Millisecond)
 						}
 					}
+				}()
 
-					fmt.Printf("\n%s\n", style.SubtitleStyle.Render("Common Solutions:"))
-					fmt.Println("• Check if the source code is valid and can be imported")
-					fmt.Println("• Ensure all required dependencies are available")
-					fmt.Println("• Check for syntax errors in tool definitions")
-					fmt.Println("• Verify the branch and file paths are correct")
+				// Create temporary directory
+				tempDir, err := os.MkdirTemp("", "kubiya-scan-*")
+				if err != nil {
+					close(spinnerDone) // Stop spinner
+					fmt.Printf("\n%s\n", style.ErrorStyle.Render("❌ Scan failed"))
+					fmt.Printf("%s\n", style.ErrorStyle.Render(fmt.Sprintf("Failed to create temp directory: %v", err)))
+					return nil
+				}
+				defer os.RemoveAll(tempDir)
+
+				// Create zip file
+				tempZipPath := filepath.Join(tempDir, "source.zip")
+				err = zipDirectory(absPath, tempZipPath)
+
+				// Stop spinner regardless of outcome
+				close(spinnerDone)
+
+				if err != nil {
+					fmt.Printf("\n%s\n", style.ErrorStyle.Render("❌ Scan failed"))
+					fmt.Printf("%s\n", style.ErrorStyle.Render(fmt.Sprintf("Failed to create zip: %v", err)))
+					return nil
+				}
+
+				// Get zip file size for user information
+				zipInfo, err := os.Stat(tempZipPath)
+				if err == nil {
+					zipSize := float64(zipInfo.Size())
+					var sizeStr string
+					if zipSize < 1024 {
+						sizeStr = fmt.Sprintf("%.0f B", zipSize)
+					} else if zipSize < 1024*1024 {
+						sizeStr = fmt.Sprintf("%.1f KB", zipSize/1024)
+					} else {
+						sizeStr = fmt.Sprintf("%.1f MB", zipSize/(1024*1024))
+					}
+					fmt.Printf("%s Archive created successfully (%s)\n", style.SuccessStyle.Render("✅"), sizeStr)
 				} else {
-					// Simple error output for non-discovery errors
+					fmt.Printf("%s Archive created successfully\n", style.SuccessStyle.Render("✅"))
+				}
+
+				// Use the LoadZipSource method to scan the directory contents
+				sourceName := filepath.Base(sourceURL)
+				fmt.Printf("\n%s\n", style.SubtitleStyle.Render("🚀 Uploading to Kubiya"))
+
+				// Start another spinner for the upload and scan process
+				uploadSpinnerDone := make(chan bool)
+				spinnerIdx = 0
+				go func() {
+					for {
+						select {
+						case <-uploadSpinnerDone:
+							fmt.Print("\r                                          \r") // Clear spinner line
+							return
+						default:
+							fmt.Printf("\r%s Scanning with %s... ",
+								spinnerChars[spinnerIdx],
+								style.HighlightStyle.Render(runnerName))
+							spinnerIdx = (spinnerIdx + 1) % len(spinnerChars)
+							time.Sleep(100 * time.Millisecond)
+						}
+					}
+				}()
+
+				source, err := client.LoadZipSource(cmd.Context(), tempZipPath, sourceName, runnerName)
+
+				// Stop spinner regardless of outcome
+				close(uploadSpinnerDone)
+
+				if err != nil {
 					fmt.Printf("\n%s\n", style.ErrorStyle.Render("❌ Scan failed"))
 					fmt.Printf("%s\n", style.ErrorStyle.Render(err.Error()))
+
+					fmt.Printf("\n%s\n", style.SubtitleStyle.Render("Common Solutions:"))
+					fmt.Println("• Ensure the directory contains valid tool definitions")
+					fmt.Println("• Check that tool files are properly formatted (YAML or Python)")
+					fmt.Println("• Make sure the directory is readable")
+					fmt.Println("• Try specifying a Python runner with --runner python")
+					return nil
 				}
-				return nil // Don't propagate the error since we handled it
+
+				// Convert the result to match the discovery response format
+				discovered = &kubiya.SourceDiscoveryResponse{
+					Name: filepath.Base(sourceURL),
+					Source: struct {
+						ID        string `json:"id"`
+						URL       string `json:"url"`
+						Commit    string `json:"commit"`
+						Committer string `json:"committer"`
+						Branch    string `json:"branch"`
+					}{
+						URL: sourceURL,
+					},
+					Tools: source.Tools,
+				}
+			} else {
+				// Use the regular discovery API endpoint
+				discovered, err = client.DiscoverSource(cmd.Context(), sourceURL, dynConfig, runnerName, nil)
+				if err != nil {
+					if discovery, ok := err.(*kubiya.SourceDiscoveryResponse); ok && len(discovery.Errors) > 0 {
+						// Show a clean error output with source context
+						fmt.Printf("\n%s\n", style.ErrorStyle.Render("❌ Scan failed"))
+						fmt.Printf("\n%s\n", style.SubtitleStyle.Render("Source Information:"))
+						fmt.Printf("Name: %s\n", discovery.Name)
+						fmt.Printf("Branch: %s\n", discovery.Source.Branch)
+						fmt.Printf("Commit: %s\n", discovery.Source.Commit)
+						fmt.Printf("Committer: %s\n\n", discovery.Source.Committer)
+
+						fmt.Printf("%s\n", style.SubtitleStyle.Render("Error Details:"))
+						for _, e := range discovery.Errors {
+							fmt.Printf("• %s: %s\n", e.Type, e.Error)
+							if e.Details != "" {
+								fmt.Printf("  Details: %s\n", e.Details)
+							}
+						}
+
+						fmt.Printf("\n%s\n", style.SubtitleStyle.Render("Common Solutions:"))
+						fmt.Println("• Check if the source code is valid and can be imported")
+						fmt.Println("• Ensure all required dependencies are available")
+						fmt.Println("• Check for syntax errors in tool definitions")
+						fmt.Println("• Verify the branch and file paths are correct")
+					} else {
+						// Simple error output for non-discovery errors
+						fmt.Printf("\n%s\n", style.ErrorStyle.Render("❌ Scan failed"))
+						fmt.Printf("%s\n", style.ErrorStyle.Render(err.Error()))
+					}
+					return nil // Don't propagate the error since we handled it
+				}
 			}
 
 			switch outputFormat {
 			case "json":
 				return json.NewEncoder(os.Stdout).Encode(discovered)
 			default:
-				fmt.Printf("%s\n\n", style.SuccessStyle.Render("✅ Scan completed"))
-				fmt.Printf("URL: %s\n", discovered.Source.URL)
-				if discovered.Name != "" {
-					fmt.Printf("Name: %s\n", discovered.Name)
+				fmt.Printf("\n%s\n", style.SuccessStyle.Render("✅ Scan completed successfully"))
+
+				// Display a visually separated section for source info
+				fmt.Printf("\n%s\n", style.SubtitleStyle.Render("📄 Source Information"))
+				fmt.Printf("  %-12s %s\n", "URL:", style.HighlightStyle.Render(discovered.Source.URL))
+				fmt.Printf("  %-12s %s\n", "Name:", style.HighlightStyle.Render(discovered.Name))
+
+				// If available, show additional source details
+				if discovered.Source.Branch != "" {
+					fmt.Printf("  %-12s %s\n", "Branch:", discovered.Source.Branch)
+				}
+				if discovered.Source.Commit != "" {
+					commitShort := discovered.Source.Commit
+					if len(commitShort) > 12 {
+						commitShort = commitShort[:12]
+					}
+					fmt.Printf("  %-12s %s\n", "Commit:", commitShort)
+				}
+				if discovered.Source.Committer != "" {
+					fmt.Printf("  %-12s %s\n", "Committer:", discovered.Source.Committer)
 				}
 
-				if len(discovered.Tools) > 0 {
-					fmt.Printf("\n%s Found %s tools\n",
-						style.SuccessStyle.Render("✅"),
-						style.HighlightStyle.Render(fmt.Sprintf("%d", len(discovered.Tools))))
+				// Clear visual separation between sections
+				fmt.Println()
 
-					fmt.Printf("\n%s\n", style.SubtitleStyle.Render("Available Tools:"))
+				// Tools section with improved visual display
+				if len(discovered.Tools) > 0 {
+					// Main success header
+					fmt.Printf("%s %s %s\n\n",
+						style.SuccessStyle.Render("✓"),
+						style.TitleStyle.Render("SCAN SUCCESSFUL:"),
+						style.HighlightStyle.Render(fmt.Sprintf("Found %d tools ready to use", len(discovered.Tools))))
+
+					// SECTION 1: Tools List with better categorization
+					fmt.Printf("╭────────────────────────%s%s\n",
+						style.TitleStyle.Render(" TOOLS FOUND "),
+						strings.Repeat("─", 45))
+
+					// Display explanation to help user understand what they're looking at
+					fmt.Printf("│ %s\n",
+						style.DimStyle.Render("These tools can be used by Kubiya teammates, LLM agents, and MCP servers"))
+					fmt.Printf("│\n")
+
+					// Display tools in a more structured format
+					maxNameLen := 20 // Default max name length
 					for _, tool := range discovered.Tools {
-						fmt.Printf("• %s\n", style.HighlightStyle.Render(tool.Name))
-						if tool.Description != "" {
-							fmt.Printf("  %s\n", tool.Description)
-						}
-						if len(tool.Args) > 0 {
-							fmt.Printf("  Arguments: %d required, %d optional\n",
-								util.CountRequiredArgs(tool.Args),
-								len(tool.Args)-util.CountRequiredArgs(tool.Args))
+						if len(tool.Name) > maxNameLen {
+							maxNameLen = len(tool.Name)
 						}
 					}
 
-					// Show add command
-					fmt.Printf("\n%s\n", style.SubtitleStyle.Render("Add this source:"))
+					// Add some padding
+					maxNameLen += 2
+
+					// Header for tools table
+					fmt.Printf("│ %-*s %-15s %s\n",
+						maxNameLen,
+						style.SubtitleStyle.Render("TOOL NAME"),
+						style.SubtitleStyle.Render("TYPE"),
+						style.SubtitleStyle.Render("DESCRIPTION"))
+					fmt.Printf("├%s\n", strings.Repeat("─", maxNameLen+70))
+
+					// Tools listing
+					for _, tool := range discovered.Tools {
+						// Default type if not specified
+						toolType := "function"
+						if tool.Type != "" {
+							toolType = tool.Type
+						}
+
+						// Format description
+						description := tool.Description
+						if len(description) > 40 {
+							description = description[:37] + "..."
+						}
+
+						fmt.Printf("│ %-*s %-15s %s\n",
+							maxNameLen,
+							style.HighlightStyle.Render(tool.Name),
+							toolType,
+							description)
+
+						// Show arguments if available (with improved visualization)
+						if len(tool.Args) > 0 {
+							required := util.CountRequiredArgs(tool.Args)
+							optional := len(tool.Args) - required
+
+							// Create a visual representation of required vs optional with explanation
+							if required > 0 || optional > 0 {
+								fmt.Printf("│ %s %s Required: ",
+									style.DimStyle.Render("├─"),
+									style.BoldStyle.Render("Arguments:"))
+
+								// Visual representation of required args
+								if required > 0 {
+									fmt.Printf("%s (%d) ",
+										style.BoldStyle.Render(strings.Repeat("■ ", required)),
+										required)
+								} else {
+									fmt.Printf("%s ", style.DimStyle.Render("None"))
+								}
+
+								// Visual representation of optional args
+								fmt.Printf("%s Optional: ", style.DimStyle.Render("|"))
+								if optional > 0 {
+									fmt.Printf("%s (%d)",
+										style.DimStyle.Render(strings.Repeat("□ ", optional)),
+										optional)
+								} else {
+									fmt.Printf("%s", style.DimStyle.Render("None"))
+								}
+								fmt.Println()
+							}
+
+							// Display a few argument names as a preview with clear labels
+							if len(tool.Args) > 0 {
+								previewCount := Min(3, len(tool.Args))
+
+								// Create a clearer arg list with required/optional labels
+								fmt.Printf("│ %s ", style.DimStyle.Render("└─"))
+
+								// Print a sample of the arguments
+								for i := 0; i < previewCount; i++ {
+									argName := tool.Args[i].Name
+									if i > 0 {
+										fmt.Printf(" | ")
+									}
+
+									if tool.Args[i].Required {
+										fmt.Printf("%s: %s",
+											style.DimStyle.Render("Required"),
+											style.BoldStyle.Render(argName))
+									} else {
+										fmt.Printf("%s: %s",
+											style.DimStyle.Render("Optional"),
+											style.DimStyle.Render(argName))
+									}
+								}
+
+								// Indicate if there are more arguments
+								if len(tool.Args) > previewCount {
+									fmt.Printf(" | %s",
+										style.DimStyle.Render(fmt.Sprintf("+%d more args", len(tool.Args)-previewCount)))
+								}
+								fmt.Println()
+							}
+						}
+						// Add a separator between tools
+						fmt.Printf("│\n")
+					}
+					fmt.Printf("╰%s\n", strings.Repeat("─", maxNameLen+70))
+
+					// SECTION 2: What To Do Next - Step by Step Guide
+					fmt.Printf("\n╭────────────────────────%s%s\n",
+						style.TitleStyle.Render(" WHAT TO DO NEXT "),
+						strings.Repeat("─", 44))
+
+					// Explanation of what happens next
+					fmt.Printf("│ %s\n",
+						style.DimStyle.Render("Follow these steps to integrate these tools into your Kubiya ecosystem"))
+					fmt.Printf("│\n")
+
+					// Build the add command
 					addCmd := fmt.Sprintf("kubiya source add %s", sourceURL)
 					if dynamicConfig != "" {
 						addCmd += fmt.Sprintf(" --config %s", dynamicConfig)
@@ -564,24 +875,143 @@ func newScanSourceCommand(cfg *config.Config) *cobra.Command {
 					if runnerName != "" {
 						addCmd += fmt.Sprintf(" --runner %s", runnerName)
 					}
-					fmt.Printf("%s\n", style.CommandStyle.Render(addCmd))
-				} else {
-					fmt.Printf("\n%s No tools found in source\n",
-						style.WarningStyle.Render("⚠️"))
-					fmt.Printf("\n%s\n", style.SubtitleStyle.Render("Possible reasons:"))
-					fmt.Println("• The source doesn't contain any tool definitions")
-					fmt.Println("• Tools are in a different branch or directory")
-					fmt.Println("• Tool definitions might be invalid")
-					fmt.Println("• Runner might not support the tool format")
 
-					// Show directory contents if local
+					// Display commands with numbered steps and explanations
+					fmt.Printf("│ %s %s\n",
+						style.NumberStyle.Render("Step 1:"),
+						style.SubtitleStyle.Render("Add this source to your workspace"))
+					fmt.Printf("│   %s\n", style.CommandStyle.Render(addCmd))
+					fmt.Printf("│   %s\n",
+						style.DimStyle.Render("Makes tools available to Kubiya teammates, LLM agents, and MCP servers"))
+					fmt.Printf("│\n")
+
+					// Example for running first tool
+					if len(discovered.Tools) > 0 {
+						fmt.Printf("│ %s %s\n",
+							style.NumberStyle.Render("Step 2:"),
+							style.SubtitleStyle.Render("Run your first tool from this source"))
+						fmt.Printf("│   %s\n", style.CommandStyle.Render(fmt.Sprintf("kubiya run %s", discovered.Tools[0].Name)))
+						fmt.Printf("│   %s\n",
+							style.DimStyle.Render("Test the tool directly before teammates and agents use it"))
+						fmt.Printf("│\n")
+					}
+
+					// Example for listing tools
+					fmt.Printf("│ %s %s\n",
+						style.NumberStyle.Render("Step 3:"),
+						style.SubtitleStyle.Render("Explore all tools in this source"))
+					fmt.Printf("│   %s\n", style.CommandStyle.Render("kubiya tool list --filter <sourceName>"))
+					fmt.Printf("│   %s\n",
+						style.DimStyle.Render("View all tools that teammates, LLM agents, and MCP servers can access"))
+
+					fmt.Printf("╰%s\n", strings.Repeat("─", maxNameLen+70))
+				} else {
+					// No tools found case with improved explanation
+					fmt.Printf("\n%s %s\n\n",
+						style.WarningStyle.Render("!"),
+						style.TitleStyle.Render("NO TOOLS FOUND IN THIS SOURCE"))
+
+					// Set a default value for maxNameLen since we don't have tools to measure
+					maxNameLen := 70 // Default width for consistent layout
+
+					// Enhanced no-tools section with better explanation
+					fmt.Printf("╭────────────────────────%s%s\n",
+						style.TitleStyle.Render(" WHY NO TOOLS WERE FOUND "),
+						strings.Repeat("─", 40))
+
+					fmt.Printf("│ %s\n",
+						style.DimStyle.Render("Here are some possible reasons why no tools were detected:"))
+					fmt.Printf("│\n")
+
+					fmt.Printf("│ %s %s\n",
+						style.BulletStyle.Render("•"),
+						"This source doesn't contain any tool definition files")
+					fmt.Printf("│ %s %s\n",
+						style.BulletStyle.Render("•"),
+						"Tool definitions might be in a different branch or directory")
+					fmt.Printf("│ %s %s\n",
+						style.BulletStyle.Render("•"),
+						"Tool formats might be incompatible with this runner")
+					fmt.Printf("│ %s %s\n",
+						style.BulletStyle.Render("•"),
+						"You might need to specify a different runner")
+					fmt.Printf("╰%s\n", strings.Repeat("─", maxNameLen+70))
+
+					// Show directory contents if local, with better formatting
 					if local {
-						fmt.Printf("\n%s\n", style.SubtitleStyle.Render("Directory contents:"))
+						fmt.Printf("\n╭────────────────────────%s%s\n",
+							style.TitleStyle.Render(" SOURCE CONTENTS "),
+							strings.Repeat("─", 43))
+
+						fmt.Printf("│ %s\n",
+							style.DimStyle.Render("These files were found in the source directory:"))
+						fmt.Printf("│\n")
+
 						if files, err := os.ReadDir(args[0]); err == nil {
-							for _, file := range files {
-								fmt.Printf("• %s\n", file.Name())
+							if len(files) == 0 {
+								fmt.Printf("│ %s\n", style.DimStyle.Render("(empty directory)"))
+							} else {
+								for i, file := range files {
+									fileType := "📄"
+									if file.IsDir() {
+										fileType = "📁"
+									}
+									fmt.Printf("│ %s %s\n", fileType, file.Name())
+
+									// Only show first 8 files to avoid overwhelming output
+									if i >= 7 && len(files) > 8 {
+										fmt.Printf("│ %s\n",
+											style.DimStyle.Render(fmt.Sprintf("... and %d more files (not shown)", len(files)-8)))
+										break
+									}
+								}
 							}
+						} else {
+							fmt.Printf("│ %s\n", style.DimStyle.Render("(could not read directory contents)"))
 						}
+						fmt.Printf("╰%s\n", strings.Repeat("─", maxNameLen+70))
+
+						// Actionable suggestions with clear next steps
+						fmt.Printf("\n╭────────────────────────%s%s\n",
+							style.TitleStyle.Render(" SUGGESTED NEXT STEPS "),
+							strings.Repeat("─", 40))
+
+						fmt.Printf("│ %s\n",
+							style.DimStyle.Render("Try these commands to troubleshoot:"))
+						fmt.Printf("│\n")
+
+						if isLocalOnlyScan {
+							fmt.Printf("│ %s %s\n",
+								style.NumberStyle.Render("1."),
+								"Try with a Python runner:")
+							fmt.Printf("│   %s\n",
+								style.CommandStyle.Render(fmt.Sprintf("kubiya source scan %s --local-only --runner python", sourceURL)))
+							fmt.Printf("│\n")
+							fmt.Printf("│ %s %s\n",
+								style.NumberStyle.Render("2."),
+								"If this is a Git repository, try without --local-only:")
+							fmt.Printf("│   %s\n",
+								style.CommandStyle.Render(fmt.Sprintf("kubiya source scan %s", sourceURL)))
+							fmt.Printf("│\n")
+							fmt.Printf("│ %s %s\n",
+								style.NumberStyle.Render("3."),
+								"Explore documentation for creating tool definitions:")
+							fmt.Printf("│   %s\n",
+								style.CommandStyle.Render("kubiya docs tools"))
+						} else {
+							fmt.Printf("│ %s %s\n",
+								style.NumberStyle.Render("1."),
+								"Try scanning with a different runner:")
+							fmt.Printf("│   %s\n",
+								style.CommandStyle.Render(fmt.Sprintf("kubiya source scan %s --runner python", sourceURL)))
+							fmt.Printf("│\n")
+							fmt.Printf("│ %s %s\n",
+								style.NumberStyle.Render("2."),
+								"Specify a different branch if tools might be elsewhere:")
+							fmt.Printf("│   %s\n",
+								style.CommandStyle.Render(fmt.Sprintf("kubiya source scan %s --branch main", sourceURL)))
+						}
+						fmt.Printf("╰%s\n", strings.Repeat("─", maxNameLen+70))
 					}
 				}
 				return nil
@@ -594,7 +1024,8 @@ func newScanSourceCommand(cfg *config.Config) *cobra.Command {
 	cmd.Flags().StringVarP(&branch, "branch", "b", "", "Branch name")
 	cmd.Flags().StringVarP(&path, "path", "p", "", "Path within repository")
 	cmd.Flags().StringVar(&remote, "remote", "origin", "Git remote to use")
-	cmd.Flags().BoolVarP(&force, "force", "f", false, "Force branch switch for local repositories")
+	cmd.Flags().BoolVarP(&force, "force", "f", false, "Force continuing with uncommitted changes or branch switching")
+	cmd.Flags().BoolVar(&localOnly, "local-only", false, "Force local directory scan, ignoring Git repository information and scanning files directly")
 	cmd.Flags().StringVarP(&dynamicConfig, "config", "c", "", "Dynamic configuration file (JSON)")
 	cmd.Flags().StringVarP(&outputFormat, "output", "o", "text", "Output format (text|json)")
 	cmd.Flags().BoolVarP(&interactive, "interactive", "i", false, "Interactive mode")
@@ -604,6 +1035,56 @@ func newScanSourceCommand(cfg *config.Config) *cobra.Command {
 	cmd.Flags().StringVar(&runnerName, "runner", "", "Runner name to use for loading the source")
 
 	return cmd
+}
+
+// getFirstHealthyRunner tries to find the first healthy runner
+// Returns the name of the first healthy runner, or an empty string if none found
+func getFirstHealthyRunner(ctx context.Context, client *kubiya.Client) (string, error) {
+	// Start by listing all available runners
+	spinner := spinner.New(spinner.CharSets[26], 60*time.Millisecond)
+	spinner.Suffix = " Looking for available runners..."
+	spinner.Start()
+	defer spinner.Stop()
+
+	runners, err := client.ListRunners(ctx)
+	if err != nil {
+		fmt.Printf("%s Could not list runners: %s\n",
+			style.ErrorStyle.Render("✗"),
+			err.Error())
+		return "", err
+	}
+
+	if len(runners) == 0 {
+		fmt.Printf("%s No runners available\n",
+			style.WarningStyle.Render("⚠️"))
+		return "", fmt.Errorf("no runners available")
+	}
+
+	// Try to find a healthy runner
+	for _, runner := range runners {
+		// Skip runners that are not healthy
+		if runner.RunnerHealth.Status != "Healthy" && runner.RunnerHealth.Status != "healthy" {
+			continue
+		}
+
+		// Skip runners that are explicitly marked as non-responsive
+		if strings.Contains(strings.ToLower(runner.RunnerHealth.Status), "non-responsive") {
+			continue
+		}
+
+		// We found a healthy runner!
+		spinner.Stop()
+		fmt.Printf("%s Auto-selected runner: %s\n",
+			style.SuccessStyle.Render("✓"),
+			style.HighlightStyle.Render(runner.Name))
+		return runner.Name, nil
+	}
+
+	// No healthy runner found
+	spinner.Stop()
+	fmt.Printf("%s No healthy runners found\n",
+		style.WarningStyle.Render("⚠️"))
+	return "", fmt.Errorf("no healthy runners found")
 }
 
 // GitInfo holds information about a Git repository
@@ -1158,12 +1639,38 @@ func parseToolsData(data []byte, filename string) ([]kubiya.Tool, error) {
 				}
 			}
 
-			// If we made it here, we couldn't parse the YAML in any of our supported formats
-			if len(data) < 100 {
-				return nil, fmt.Errorf("failed to parse data as tools: %s", string(data))
-			} else {
-				return nil, fmt.Errorf("failed to parse YAML data as tools: %w", err)
+			// If we made it here with an empty tools slice, try a last-resort approach
+			if len(tools) == 0 && !isJSON {
+				// The data might be a single tool file, but YAML unmarshaler is strict about types
+				// Let's create a single tool with the content from the file
+				var toolName string
+				if filename != "" {
+					baseName := filepath.Base(filename)
+					ext := filepath.Ext(baseName)
+					if ext != "" {
+						baseName = baseName[:len(baseName)-len(ext)]
+					}
+					toolName = baseName
+				} else {
+					toolName = "tool-from-content"
+				}
+
+				// Create a tool with the content as is
+				tool := kubiya.Tool{
+					Name:    toolName,
+					Content: string(data),
+				}
+
+				// Try to extract description from the first line if it looks like a comment
+				lines := strings.Split(string(data), "\n")
+				if len(lines) > 0 && (strings.HasPrefix(lines[0], "#") || strings.HasPrefix(lines[0], "//")) {
+					tool.Description = strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(lines[0], "#"), "//"))
+				}
+
+				return []kubiya.Tool{tool}, nil
 			}
+
+			return nil, fmt.Errorf("failed to parse YAML data as tools: %w", err)
 		}
 	}
 
@@ -1523,6 +2030,14 @@ func handleGitChanges(path string, status *GitStatus, add, push bool, commitMsg 
 	gitRoot, err := findGitRoot(path)
 	if err != nil {
 		return err
+	}
+
+	// Check if we're continuing with uncommitted changes
+	if !add && !push {
+		fmt.Printf("\n%s %s\n",
+			style.SubtitleStyle.Render("🚀"),
+			style.SubtitleStyle.Render("Continuing with uncommitted changes"))
+		return nil
 	}
 
 	if add {
@@ -2088,4 +2603,85 @@ func Min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// zipDirectory zips the contents of a directory into a zip file
+func zipDirectory(sourceDir, targetFile string) error {
+	fmt.Printf("Creating ZIP archive of %s (including ALL files for proper tool detection)\n", sourceDir)
+
+	// Create the ZIP file
+	zipfile, err := os.Create(targetFile)
+	if err != nil {
+		return fmt.Errorf("failed to create zip file: %w", err)
+	}
+	defer zipfile.Close()
+
+	// Create a new ZIP archive
+	archive := zip.NewWriter(zipfile)
+	defer archive.Close()
+
+	// Walk through the source directory and add ALL files to the archive
+	return filepath.Walk(sourceDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+
+		// Skip the root directory itself
+		relPath, err := filepath.Rel(sourceDir, path)
+		if err != nil {
+			return err
+		}
+		if relPath == "." {
+			return nil
+		}
+
+		// Skip git directories and other VCS
+		if strings.Contains(relPath, ".git/") ||
+			strings.Contains(relPath, ".svn/") ||
+			strings.Contains(relPath, ".hg/") {
+			return nil
+		}
+
+		// Create a header based on file info
+		header, err := zip.FileInfoHeader(info)
+		if err != nil {
+			return err
+		}
+
+		// Ensure the path in the ZIP file uses forward slashes
+		header.Name = relPath
+		if info.IsDir() {
+			header.Name += "/"
+		}
+
+		// Set the compression method
+		if info.IsDir() {
+			header.Method = zip.Store
+		} else {
+			header.Method = zip.Deflate
+		}
+
+		// Create a new header entry in the ZIP file
+		writer, err := archive.CreateHeader(header)
+		if err != nil {
+			return err
+		}
+
+		// If it's a directory, there's no content to write
+		if info.IsDir() {
+			return nil
+		}
+
+		// Open the file for reading
+		file, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		defer file.Close()
+
+		// Copy the file contents to the ZIP archive
+		_, err = io.Copy(writer, file)
+		fmt.Printf("  - Added: %s\n", relPath)
+		return err
+	})
 }
