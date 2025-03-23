@@ -745,7 +745,7 @@ When scanning a local directory:
 
 					// Display explanation to help user understand what they're looking at
 					fmt.Printf("│ %s\n",
-						style.DimStyle.Render("These tools can be used by Kubiya teammates, LLM agents, and MCP servers"))
+						style.DimStyle.Render("These tools can be added to your workspace and invoked with the Kubiya CLI"))
 					fmt.Printf("│\n")
 
 					// Display tools in a more structured format
@@ -864,7 +864,7 @@ When scanning a local directory:
 
 					// Explanation of what happens next
 					fmt.Printf("│ %s\n",
-						style.DimStyle.Render("Follow these steps to integrate these tools into your Kubiya ecosystem"))
+						style.DimStyle.Render("Follow these steps to start using these tools in your Kubiya environment"))
 					fmt.Printf("│\n")
 
 					// Build the add command
@@ -882,7 +882,7 @@ When scanning a local directory:
 						style.SubtitleStyle.Render("Add this source to your workspace"))
 					fmt.Printf("│   %s\n", style.CommandStyle.Render(addCmd))
 					fmt.Printf("│   %s\n",
-						style.DimStyle.Render("Makes tools available to Kubiya teammates, LLM agents, and MCP servers"))
+						style.DimStyle.Render("This will make all tools in this source available to your Kubiya CLI"))
 					fmt.Printf("│\n")
 
 					// Example for running first tool
@@ -892,7 +892,7 @@ When scanning a local directory:
 							style.SubtitleStyle.Render("Run your first tool from this source"))
 						fmt.Printf("│   %s\n", style.CommandStyle.Render(fmt.Sprintf("kubiya run %s", discovered.Tools[0].Name)))
 						fmt.Printf("│   %s\n",
-							style.DimStyle.Render("Test the tool directly before teammates and agents use it"))
+							style.DimStyle.Render("This executes the tool with required input parameters"))
 						fmt.Printf("│\n")
 					}
 
@@ -902,7 +902,7 @@ When scanning a local directory:
 						style.SubtitleStyle.Render("Explore all tools in this source"))
 					fmt.Printf("│   %s\n", style.CommandStyle.Render("kubiya tool list --filter <sourceName>"))
 					fmt.Printf("│   %s\n",
-						style.DimStyle.Render("View all tools that teammates, LLM agents, and MCP servers can access"))
+						style.DimStyle.Render("Lists all tools with descriptions and usage information"))
 
 					fmt.Printf("╰%s\n", strings.Repeat("─", maxNameLen+70))
 				} else {
