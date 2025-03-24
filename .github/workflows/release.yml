@@ -71,15 +71,21 @@ jobs:
 
       - name: Setup APT repository
         run: |
-          mkdir -p apt-repo/dists/stable/main/binary-amd64
-          cp dist/*.deb apt-repo/
-          cd apt-repo
-          dpkg-scanpackages . /dev/null > dists/stable/main/binary-amd64/Packages
+          # Create the correct directory structure
+          mkdir -p apt/dists/stable/main/binary-amd64
+          mkdir -p apt/pool/main
+          
+          # Copy the Debian package to the pool
+          cp dist/*.deb apt/pool/main/
+          
+          # Create Packages file
+          cd apt
+          dpkg-scanpackages pool/main /dev/null > dists/stable/main/binary-amd64/Packages
           gzip -9 dists/stable/main/binary-amd64/Packages
 
       - name: Create Release file
         run: |
-          cd apt-repo/dists/stable
+          cd apt/dists/stable
           cat > Release << EOF
           Origin: Kubiya
           Label: Kubiya APT Repository
@@ -94,14 +100,43 @@ jobs:
 
       - name: Sign Release file
         run: |
-          cd apt-repo/dists/stable
+          cd apt/dists/stable
           echo "${{ secrets.GPG_PASSPHRASE }}" | gpg --batch --yes --passphrase-fd 0 --clearsign -o InRelease Release
           echo "${{ secrets.GPG_PASSPHRASE }}" | gpg --batch --yes --passphrase-fd 0 -abs -o Release.gpg Release
+
+      - name: Export GPG key
+        run: |
+          gpg --export --armor > apt/apt-key.gpg
+
+      - name: Create index.html
+        run: |
+          cat > index.html << EOF
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <title>Kubiya CLI APT Repository</title>
+          </head>
+          <body>
+            <h1>Kubiya CLI APT Repository</h1>
+            <p>This is the APT repository for the Kubiya CLI package.</p>
+            <h2>Installation Instructions</h2>
+            <pre>
+# Add Kubiya's APT repository
+curl -fsSL https://kubiyabot.github.io/cli/apt-key.gpg | sudo gpg --dearmor -o /usr/share/keyrings/kubiya-archive-keyring.gpg
+echo "deb [signed-by=/usr/share/keyrings/kubiya-archive-keyring.gpg] https://kubiyabot.github.io/cli/apt/dists/stable stable main" | sudo tee /etc/apt/sources.list.d/kubiya.list
+
+# Update package list and install Kubiya CLI
+sudo apt update
+sudo apt install kubiya-cli
+            </pre>
+          </body>
+          </html>
+          EOF
 
       - name: Deploy to GitHub Pages
         uses: peaceiris/actions-gh-pages@v3
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./apt-repo
+          publish_dir: .
           publish_branch: gh-pages
           force_orphan: true 
