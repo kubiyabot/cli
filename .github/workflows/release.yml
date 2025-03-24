@@ -4,9 +4,21 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      snapshot:
+        description: 'Create a snapshot release'
+        required: true
+        type: boolean
+        default: true
+      version:
+        description: 'Version to release (e.g., v1.0.5)'
+        required: false
+        type: string
 
 permissions:
   contents: write
+  packages: write
 
 jobs:
   goreleaser:
@@ -23,11 +35,105 @@ jobs:
           go-version: '1.22'
           cache: true
 
+      - name: Get previous tag
+        id: get_previous_tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            # For manual runs, get the latest tag
+            PREVIOUS_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+          else
+            # For tag pushes, get the previous tag
+            PREVIOUS_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          fi
+          echo "previous_tag=$PREVIOUS_TAG" >> $GITHUB_OUTPUT
+
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v5
         with:
           distribution: goreleaser
           version: latest
-          args: release --clean
+          args: >-
+            --clean
+            ${{ github.event_name == 'workflow_dispatch' && inputs.snapshot == 'true' && '--snapshot' || '' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GORELEASER_CURRENT_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.version != '' && inputs.version || github.ref_name }}
+          GORELEASER_PREVIOUS_TAG: ${{ steps.get_previous_tag.outputs.previous_tag }}
+
+      - name: Import GPG key
+        uses: crazy-max/ghaction-import-gpg@v6
+        with:
+          gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
+          passphrase: ${{ secrets.GPG_PASSPHRASE }}
+
+      - name: Setup APT repository
+        run: |
+          # Create the correct directory structure
+          mkdir -p apt/dists/stable/main/binary-amd64
+          mkdir -p apt/pool/main
+          
+          # Copy the Debian package to the pool
+          cp dist/*.deb apt/pool/main/
+          
+          # Create Packages file
+          cd apt
+          dpkg-scanpackages pool/main /dev/null > dists/stable/main/binary-amd64/Packages
+          gzip -9 dists/stable/main/binary-amd64/Packages
+
+      - name: Create Release file
+        run: |
+          cd apt/dists/stable
+          cat > Release << EOF
+          Origin: Kubiya
+          Label: Kubiya APT Repository
+          Suite: stable
+          Version: 1.0
+          Codename: stable
+          Date: $(date -u +"%a, %d %b %Y %H:%M:%S UTC")
+          Architectures: amd64
+          Components: main
+          Description: APT repository for Kubiya CLI
+          EOF
+
+      - name: Sign Release file
+        run: |
+          cd apt/dists/stable
+          echo "${{ secrets.GPG_PASSPHRASE }}" | gpg --batch --yes --passphrase-fd 0 --clearsign -o InRelease Release
+          echo "${{ secrets.GPG_PASSPHRASE }}" | gpg --batch --yes --passphrase-fd 0 -abs -o Release.gpg Release
+
+      - name: Export GPG key
+        run: |
+          gpg --export --armor > apt/apt-key.gpg
+
+      - name: Create index.html
+        run: |
+          cat > index.html << EOF
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <title>Kubiya CLI APT Repository</title>
+          </head>
+          <body>
+            <h1>Kubiya CLI APT Repository</h1>
+            <p>This is the APT repository for the Kubiya CLI package.</p>
+            <h2>Installation Instructions</h2>
+            <pre>
+# Add Kubiya's APT repository
+curl -fsSL https://kubiyabot.github.io/cli/apt-key.gpg | sudo gpg --dearmor -o /usr/share/keyrings/kubiya-archive-keyring.gpg
+echo "deb [signed-by=/usr/share/keyrings/kubiya-archive-keyring.gpg] https://kubiyabot.github.io/cli/apt/dists/stable stable main" | sudo tee /etc/apt/sources.list.d/kubiya.list
+
+# Update package list and install Kubiya CLI
+sudo apt update
+sudo apt install kubiya-cli
+            </pre>
+          </body>
+          </html>
+          EOF
+
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: .
+          publish_branch: gh-pages
+          force_orphan: true 
