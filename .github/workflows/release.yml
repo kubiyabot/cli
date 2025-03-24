@@ -7,6 +7,13 @@ on:
       - stable
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      snapshot:
+        description: 'Create a snapshot release'
+        required: true
+        type: boolean
+        default: true
 
 permissions:
   contents: write
@@ -26,6 +33,8 @@ jobs:
         with:
           distribution: goreleaser
           version: latest
-          args: release --clean
+          args: >-
+            --clean
+            ${{ github.event_name == 'workflow_dispatch' && inputs.snapshot == 'true' && '--snapshot' || '' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
