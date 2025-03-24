@@ -2,8 +2,11 @@ name: Release CLI
 
 on:
   push:
+    branches-ignore:
+      - main
+      - stable
     tags:
-      - 'v*'
+      - 'v**'
   workflow_dispatch:
     inputs:
       snapshot:
