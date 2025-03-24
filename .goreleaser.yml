@@ -59,7 +59,7 @@ nfpms:
     formats:
       - deb
     contents:
-      - src: ./kubiya-cli-{{ .Os }}-{{ .Arch }}
+      - src: ./dist/cli_{{ .Os }}_{{ .Arch }}/kubiya-cli-{{ .Os }}-{{ .Arch }}
         dst: /usr/local/bin/kubiya-cli
     scripts:
       postinstall: ./scripts/postinstall.sh
