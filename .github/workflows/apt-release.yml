@@ -1,14 +1,16 @@
 name: Build and Publish APT Package
 
 on:
-  push:
-    branches-ignore:
-      - main
-      - stable
-    paths-ignore:
-      - '.git/**'
-    tags:
-      - 'v*'
+  workflow_dispatch:
+    
+  # push:
+  #   branches-ignore:
+  #     - main
+  #     - stable
+  #   # paths-ignore:
+  #   #   - '.git/**'
+  #   tags:
+  #     - 'v*'
 
 permissions:
   contents: write
