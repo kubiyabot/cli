@@ -44,4 +44,24 @@ changelog:
       - '^ci:'
       - '^chore:'
       - Merge pull request
-      - Merge branch 
+      - Merge branch
+
+nfpms:
+  - id: kubiya-cli
+    package_name: kubiya-cli
+    file_name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    maintainer: Kubiya <support@kubiya.ai>
+    vendor: Kubiya
+    homepage: https://github.com/kubiyabot/cli
+    license: MIT
+    description: Command line interface for Kubiya AI platform
+    formats:
+      - deb
+    contents:
+      - src: ./kubiya-cli-{{ .Os }}-{{ .Arch }}
+        dst: /usr/local/bin/kubiya-cli
+    scripts:
+      postinstall: ./scripts/postinstall.sh
+    deb:
+      compression: gzip
