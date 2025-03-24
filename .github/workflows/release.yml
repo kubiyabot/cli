@@ -39,6 +39,18 @@ jobs:
           go-version: '1.22'
           cache: true
 
+      - name: Get previous tag
+        id: get_previous_tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            # For manual runs, get the latest tag
+            PREVIOUS_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+          else
+            # For tag pushes, get the previous tag
+            PREVIOUS_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          fi
+          echo "previous_tag=$PREVIOUS_TAG" >> $GITHUB_OUTPUT
+
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v5
         with:
@@ -50,4 +62,4 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GORELEASER_CURRENT_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.version != '' && inputs.version || github.ref_name }}
-          GORELEASER_PREVIOUS_TAG: ${{ github.event_name == 'workflow_dispatch' && 'v1.0.4' || '' }}
+          GORELEASER_PREVIOUS_TAG: ${{ steps.get_previous_tag.outputs.previous_tag || '' }} 
