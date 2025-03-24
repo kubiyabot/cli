@@ -14,6 +14,11 @@ on:
         required: true
         type: boolean
         default: true
+      version:
+        description: 'Version to release (e.g., v1.0.5)'
+        required: false
+        type: string
+        default: 'v1.0.5'
 
 permissions:
   contents: write
@@ -28,6 +33,12 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: true
+
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v5
         with:
@@ -38,3 +49,5 @@ jobs:
             ${{ github.event_name == 'workflow_dispatch' && inputs.snapshot == 'true' && '--snapshot' || '' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GORELEASER_CURRENT_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.version != '' && inputs.version || github.ref_name }}
+          GORELEASER_PREVIOUS_TAG: ${{ github.event_name == 'workflow_dispatch' && 'v1.0.4' || '' }}
