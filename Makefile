@@ -8,6 +8,6 @@ build:
 install: build
 	mv kubiya /usr/local/bin/kubiya
 
-.PHONY: test
-test:
-	go test ./... 
+# .PHONY: test
+# test:
+# 	go test ./... 

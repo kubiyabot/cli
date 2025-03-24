@@ -2,7 +2,7 @@ Origin: Kubiya
 Label: Kubiya APT Repository
 Suite: stable
 Codename: stable
-Version: 1.0
+Version: v1.0.4
 Architectures: amd64
 Components: main
 Description: APT repository for Kubiya CLI 

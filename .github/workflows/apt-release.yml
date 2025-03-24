@@ -1,9 +1,16 @@
 name: Build and Publish APT Package
 
 on:
-  push:
-    tags:
-      - 'v*'
+  workflow_dispatch:
+    
+  # push:
+  #   branches-ignore:
+  #     - main
+  #     - stable
+  #   # paths-ignore:
+  #   #   - '.git/**'
+  #   tags:
+  #     - 'v*'
 
 permissions:
   contents: write
@@ -23,15 +30,21 @@ jobs:
           go-version: '1.22'
           cache: true
 
+      - name: Configure Go environment
+        run: |
+          go env -w GOPROXY=direct
+          go env -w GO111MODULE=on
+
       - name: Install required packages
         run: |
           sudo apt-get update
-          sudo apt-get install -y devscripts debhelper dh-make gnupg
+          sudo apt-get install -y devscripts debhelper dh-make gnupg build-essential dh-golang golang-go golang-1.22-go
 
-      - name: Setup GPG
-        run: |
-          echo "${{ secrets.GPG_PRIVATE_KEY }}" | gpg --import
-          echo "${{ secrets.GPG_PASSPHRASE }}" | gpg --batch --yes --passphrase-fd 0 --sign-key $(gpg --list-secret-keys --keyid-format=long | grep -A 1 "sec" | tail -n 1 | awk '{print $1}')
+      - name: Import GPG key
+        uses: crazy-max/ghaction-import-gpg@v6
+        with:
+          gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
+          passphrase: ${{ secrets.GPG_PASSPHRASE }}
 
       - name: Create Debian package structure
         run: |
@@ -41,8 +54,9 @@ jobs:
           Section: utils
           Priority: optional
           Maintainer: Kubiya <support@kubiya.ai>
-          Build-Depends: debhelper-compat (= 13), dh-golang, golang-go
+          Build-Depends: debhelper-compat (= 13), dh-golang, golang-go, golang-1.22-go
           Standards-Version: 4.5.1
+          XS-Go-Import-Path: github.com/kubiyabot/cli
 
           Package: kubiya-cli
           Architecture: any
@@ -53,13 +67,34 @@ jobs:
 
           cat > debian/rules << EOF
           #!/usr/bin/make -f
+          export GO111MODULE=on
+          export GOPROXY=direct
+          export DH_GOPKG=github.com/kubiyabot/cli
+          export DH_GOLANG_EXCLUDES=obj-x86_64-linux-gnu
+          export DH_GOLANG_EXCLUDES := std vendor
+          export DH_GOLANG_INSTALL_ALL := 1
+
           %:
           	dh \$@ --with golang
           EOF
 
           chmod +x debian/rules
 
+          # Create changelog with version from git tag
+          VERSION=$(git describe --tags --abbrev=0 | sed 's/^v//')
+          cat > debian/changelog << EOF
+          kubiya-cli (${VERSION}) stable; urgency=medium
+
+            * Initial release.
+
+           -- Kubiya <support@kubiya.ai>  $(date -R)
+          EOF
+
       - name: Build Debian package
+        env:
+          GOFLAGS: -mod=readonly
+          GOCACHE: /tmp/.gocache
+          GOMODCACHE: ${{ github.workspace }}/.gomodcache
         run: |
           dpkg-buildpackage -us -uc -b
 
