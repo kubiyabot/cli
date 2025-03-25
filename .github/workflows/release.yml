@@ -80,13 +80,13 @@ jobs:
           mkdir -p apt-repo/apt/pool/main
           cp dist/kubiya-cli_*.deb apt-repo/apt/pool/main/
 
-      # Regenerate Packages.gz
       - name: Generate Packages.gz
         run: |
           mkdir -p apt-repo/apt/dists/stable/main/binary-amd64
           cd apt-repo/apt
-          dpkg-scanpackages -m path-prefix=apt pool/main /dev/null > dists/stable/main/binary-amd64/Packages
+          dpkg-scanpackages -m . /dev/null | sed 's|Filename: \./pool/|Filename: apt/pool/|' > dists/stable/main/binary-amd64/Packages
           gzip -9 -f dists/stable/main/binary-amd64/Packages
+        
 
       # - name: Setup APT repository
       #   run: |
