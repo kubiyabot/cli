@@ -80,7 +80,7 @@ jobs:
 
           # # Copy .deb files to pool
           # cp dist/*.deb apt-repo/apt/pool/main/
-          cp dist/*_linux_amd64.deb apt-repo/apt/pool/main/
+          cp dist/kubiya-cli_${version}_amd64.deb apt-repo/apt/pool/main/
 
 
           echo "=== Tree ==="
