@@ -234,18 +234,34 @@ func newRunCommand(cfg *config.Config) *cobra.Command {
 				toolOutput = "tool_output"
 			)
 
+			// Progress spinner characters
+			spinnerChars := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+			spinnerIndex := 0
+
 			// Create a map to track seen messages and prevent duplicates
 			seenMessages := make(map[string]bool)
 			var finalOutput strings.Builder
 			var isProcessing bool
+			var lastToolOutput string
 
 			// Handle messages
 			for msg := range msgChan {
+				// Debug logging
 				if debug {
-					fmt.Printf("📥 Received message: Type=%s, Error=%q, SessionID=%s\n", msg.Type, msg.Error, msg.SessionID)
+					fmt.Printf("\n📥 Debug: Received message: Type=%s, Error=%q, SessionID=%s\n", msg.Type, msg.Error, msg.SessionID)
+					if msg.Content != "" {
+						fmt.Printf("📄 Debug: Content: %s\n", msg.Content)
+					}
 				}
 
 				if msg.Error != "" {
+					// Clear processing indicator if active
+					if isProcessing {
+						fmt.Print("\r" + strings.Repeat(" ", 50) + "\r")
+					}
+					if debug {
+						fmt.Printf("\n❌ Debug: Error received: %s\n", msg.Error)
+					}
 					fmt.Print(style.ErrorStyle.Render("\n❌ Error: " + msg.Error + "\n"))
 					return fmt.Errorf("error from server: %s", msg.Error)
 				}
@@ -255,9 +271,12 @@ func newRunCommand(cfg *config.Config) *cobra.Command {
 					sessionID = msg.SessionID
 					if cfg.AutoSession {
 						if err := os.WriteFile(sessionFile, []byte(sessionID), 0644); err != nil {
+							if debug {
+								fmt.Printf("\n⚠️ Debug: Failed to save session ID: %v\n", err)
+							}
 							fmt.Printf("Warning: failed to save session ID: %v\n", err)
 						} else if debug {
-							fmt.Printf("💾 Saved session ID to file: %s\n", sessionID)
+							fmt.Printf("\n💾 Debug: Saved session ID to file: %s\n", sessionID)
 						}
 					}
 				}
@@ -270,6 +289,9 @@ func newRunCommand(cfg *config.Config) *cobra.Command {
 				// Generate a key for deduplication
 				msgKey := fmt.Sprintf("%s:%s", msg.Type, msg.Content)
 				if seenMessages[msgKey] {
+					if debug {
+						fmt.Printf("\n🔄 Debug: Skipping duplicate message: %s\n", msgKey)
+					}
 					continue // Skip duplicate messages
 				}
 				seenMessages[msgKey] = true
@@ -277,48 +299,86 @@ func newRunCommand(cfg *config.Config) *cobra.Command {
 				// Handle different message types
 				switch msg.Type {
 				case systemMsg:
-					// Show processing indicator
+					// Show processing indicator with spinner
 					if !isProcessing {
+						if debug {
+							fmt.Printf("\n🔄 Debug: Starting processing indicator\n")
+						}
 						fmt.Print(style.SystemStyle.Render("\r🔄 Processing..."))
 						isProcessing = true
 					}
+					// Update spinner
+					spinnerIndex = (spinnerIndex + 1) % len(spinnerChars)
+					fmt.Printf("\r%s %s", spinnerChars[spinnerIndex], style.SystemStyle.Render("Processing..."))
+
 				case toolOutput:
 					// Clear processing indicator
 					if isProcessing {
+						if debug {
+							fmt.Printf("\n🛠️ Debug: Clearing processing indicator\n")
+						}
 						fmt.Print("\r" + strings.Repeat(" ", 50) + "\r")
 						isProcessing = false
 					}
 
-					// Store the output
-					finalOutput.WriteString(msg.Content)
+					// Only store if it's different from the last output
+					if msg.Content != lastToolOutput {
+						if debug {
+							fmt.Printf("\n📤 Debug: New tool output received\n")
+						}
+						lastToolOutput = msg.Content
+						finalOutput.WriteString(msg.Content)
+					} else if debug {
+						fmt.Printf("\n🔄 Debug: Skipping duplicate tool output\n")
+					}
+
 				case chatMsg:
 					// Clear processing indicator
 					if isProcessing {
+						if debug {
+							fmt.Printf("\n💬 Debug: Clearing processing indicator\n")
+						}
 						fmt.Print("\r" + strings.Repeat(" ", 50) + "\r")
 						isProcessing = false
 					}
 
-					// Store chat messages
+					// Store chat messages with emoji
+					if debug {
+						fmt.Printf("\n💬 Debug: New chat message received\n")
+					}
 					finalOutput.WriteString(style.ChatStyle.Render("\n💬 " + msg.Content + "\n"))
+
 				case toolMsg:
 					// Clear processing indicator
 					if isProcessing {
+						if debug {
+							fmt.Printf("\n🔧 Debug: Clearing processing indicator\n")
+						}
 						fmt.Print("\r" + strings.Repeat(" ", 50) + "\r")
 						isProcessing = false
 					}
 
-					// Store tool messages
+					// Store tool messages with emoji
+					if debug {
+						fmt.Printf("\n🔧 Debug: New tool message received\n")
+					}
 					finalOutput.WriteString(style.ToolStyle.Render("\n🔧 " + msg.Content + "\n"))
 				}
 			}
 
 			// Clear any remaining processing indicator
 			if isProcessing {
+				if debug {
+					fmt.Printf("\n🔄 Debug: Clearing final processing indicator\n")
+				}
 				fmt.Print("\r" + strings.Repeat(" ", 50) + "\r")
 			}
 
 			// Print the final output
 			if finalOutput.Len() > 0 {
+				if debug {
+					fmt.Printf("\n📤 Debug: Printing final output\n")
+				}
 				fmt.Print(finalOutput.String())
 			}
 
