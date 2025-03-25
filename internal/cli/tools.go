@@ -60,7 +60,6 @@ func newToolsCommand(cfg *config.Config) *cobra.Command {
 		newListToolsCommand(cfg),
 		newSearchToolsCommand(cfg),
 		newDescribeToolCommand(cfg),
-		newExecuteCommand(cfg),
 		newGenerateToolCommand(cfg),
 	)
 

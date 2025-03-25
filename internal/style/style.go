@@ -29,19 +29,19 @@ var (
 			Foreground(lipgloss.Color("241"))
 
 	ErrorStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("196")).
+			Foreground(lipgloss.Color("9")).
 			Bold(true)
 
 	SuccessStyle = lipgloss.NewStyle().
-			Bold(true).
-			Foreground(lipgloss.Color("#00FF00"))
+			Foreground(lipgloss.Color("10")).
+			Bold(true)
 
 	WarningStyle = lipgloss.NewStyle().
-			Bold(true).
-			Foreground(lipgloss.Color("#FFAA00"))
+			Foreground(lipgloss.Color("11")).
+			Bold(true)
 
 	ToolStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#F59E0B")).
+			Foreground(lipgloss.Color("12")).
 			Bold(true).
 			Border(lipgloss.NormalBorder()).
 			BorderForeground(lipgloss.Color("#F59E0B")).
@@ -70,7 +70,7 @@ var (
 			Bold(true)
 
 	SystemStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#6B7280")).
+			Foreground(lipgloss.Color("14")).
 			Italic(true)
 
 	TeammateNameStyle = lipgloss.NewStyle().
@@ -181,6 +181,10 @@ var (
 	NumberStyle = lipgloss.NewStyle().
 			Bold(true).
 			Foreground(lipgloss.Color("#F59E0B"))
+
+	ChatStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("13")).
+			Bold(true)
 )
 
 // DisableColors disables all color styling for non-TTY environments
@@ -232,6 +236,7 @@ func DisableColors() {
 	HelpTextStyle = noStyle
 	BoldStyle = noStyle
 	NumberStyle = noStyle
+	ChatStyle = noStyle
 }
 
 // Add this function to check if colors should be enabled
