@@ -71,33 +71,39 @@ jobs:
 
       - name: Setup APT repository
         run: |
-          # Create the correct directory structure
-          mkdir -p apt/dists/stable/main/binary-amd64
-          mkdir -p apt/pool/main
-          
-          # Copy the Debian package to the pool
-          cp dist/*.deb apt/pool/main/
-          
-          # Create Packages file
-          cd apt
+          # Set u p directory structure inside apt-repo
+          mkdir -p apt-repo/apt/dists/stable/main/binary-amd64
+          mkdir -p apt-repo/apt/pool/main
+
+          # Copy .deb packages into the pool
+          cp dist/*.deb apt-repo/apt/pool/main/
+
+          # Generate Packages and compress it
+          cd apt-repo/apt
           dpkg-scanpackages pool/main /dev/null > dists/stable/main/binary-amd64/Packages
-          gzip -9 dists/stable/main/binary-amd64/Packages
+          gzip -9 -f dists/stable/main/binary-amd64/Packages
 
       - name: Create Release file
         run: |
-          cd apt/dists/stable
+          cd apt-repo/apt/dists/stable
           cat > Release << EOF
           Origin: Kubiya
           Label: Kubiya APT Repository
           Suite: stable
-          Version: 1.0
+          Version: ${{ github.ref_name }}
           Codename: stable
           Date: $(date -u +"%a, %d %b %Y %H:%M:%S UTC")
           Architectures: amd64
           Components: main
           Description: APT repository for Kubiya CLI
+          MD5Sum:
+            $(md5sum dist/*.deb | awk '{print $1}')
+          SHA1:
+            $(sha1sum dist/*.deb | awk '{print $1}')
+          SHA256:
+            $(sha256sum dist/*.deb | awk '{print $1}')
           EOF
-
+  
       - name: Sign Release file
         run: |
           cd apt-repo/apt/dists/stable
