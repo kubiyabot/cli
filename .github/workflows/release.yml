@@ -83,27 +83,29 @@ jobs:
           dpkg-scanpackages pool/main /dev/null > dists/stable/main/binary-amd64/Packages
           gzip -9 -f dists/stable/main/binary-amd64/Packages
 
-      - name: Create Release file
+      - name: Generate Release file with hashes
         run: |
-          cd apt-repo/apt/dists/stable
-          cat > Release << EOF
-          Origin: Kubiya
-          Label: Kubiya APT Repository
-          Suite: stable
-          Version: ${{ github.ref_name }}
-          Codename: stable
-          Date: $(date -u +"%a, %d %b %Y %H:%M:%S UTC")
-          Architectures: amd64
-          Components: main
-          Description: APT repository for Kubiya CLI
-          MD5Sum:
-            $(find main/binary-amd64 -type f -name '*.deb' -exec md5sum {} \; | awk '{print $1}')
-          SHA1:
-            $(find main/binary-amd64 -type f -name '*.deb' -exec sha1sum {} \; | awk '{print $1}')
-          SHA256:
-            $(find main/binary-amd64 -type f -name '*.deb' -exec sha256sum {} \; | awk '{print $1}')
+          sudo apt-get update
+          sudo apt-get install -y dpkg-dev gnupg
+          cd apt-repo/apt
+      
+          # Create apt-ftparchive config
+          cat > config.txt <<EOF
+          APT::FTPArchive::Release {
+              Origin "Kubiya";
+              Label "Kubiya APT Repository";
+              Suite "stable";
+              Version "${{ github.ref_name }}";
+              Codename "stable";
+              Architectures "amd64";
+              Components "main";
+              Description "APT repository for Kubiya CLI";
+          };
           EOF
-  
+      
+          # Generate the Release file
+          apt-ftparchive release dists/stable > dists/stable/Release
+
       - name: Sign Release file
         run: |
           cd apt-repo/apt/dists/stable
