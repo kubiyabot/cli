@@ -42,10 +42,8 @@ jobs:
         id: get_previous_tag
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            # For manual runs, get the latest tag
             PREVIOUS_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
           else
-            # For tag pushes, get the previous tag
             PREVIOUS_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
           fi
           echo "previous_tag=$PREVIOUS_TAG" >> $GITHUB_OUTPUT
@@ -71,12 +69,16 @@ jobs:
 
       - name: Setup APT repository
         run: |
-          # Set up directory structure inside apt-repo
           mkdir -p apt-repo/apt/dists/stable/main/binary-amd64
           mkdir -p apt-repo/apt/pool/main
 
-          # Copy .deb packages into the pool
+          # Copy .deb files to pool
           cp dist/*.deb apt-repo/apt/pool/main/
+
+          # Verify .deb file(s) are present and inspect
+          echo "=== Copied .deb files ==="
+          ls -lh apt-repo/apt/pool/main/
+          dpkg-deb -I dist/*.deb | grep -E '^ Package|^ Version|^ Architecture'
 
           # Generate Packages and compress it
           cd apt-repo/apt
@@ -87,24 +89,42 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y dpkg-dev gnupg
+
           cd apt-repo/apt
-      
+
           # Create apt-ftparchive config
           cat > config.txt <<EOF
-          APT::FTPArchive::Release {
-              Origin "Kubiya";
-              Label "Kubiya APT Repository";
-              Suite "stable";
-              Version "${{ github.ref_name }}";
-              Codename "stable";
-              Architectures "amd64";
-              Components "main";
-              Description "APT repository for Kubiya CLI";
+          Dir {
+            ArchiveDir ".";
           };
-          EOF
-      
+
+          Default {
+            Packages::Compress ". gzip";
+            Contents::Compress ". gzip";
+          };
+
+          TreeDefault {
+            BinCacheDB "packages.db";
+            Directory "pool";
+            Packages "dists/stable/main/binary-amd64/Packages";
+            Components "main";
+            Architectures "amd64";
+          };
+
+          APT::FTPArchive::Release {
+            Origin "Kubiya";
+            Label "Kubiya APT Repository";
+            Suite "stable";
+            Version "${{ github.ref_name }}";
+            Codename "stable";
+            Architectures "amd64";
+            Components "main";
+            Description "APT repository for Kubiya CLI";
+          };
+        EOF
+
           # Generate the Release file
-          apt-ftparchive release dists/stable | grep -v 'Release$' >> dists/stable/Release
+          apt-ftparchive -c config.txt release dists/stable > dists/stable/Release
 
       - name: Sign Release file
         run: |
@@ -151,4 +171,4 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./apt-repo
           publish_branch: gh-pages
-          force_orphan: true  
+          force_orphan: true
