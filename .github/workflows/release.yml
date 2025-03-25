@@ -109,33 +109,30 @@ jobs:
           mkdir -p apt-repo/apt
           gpg --export --armor > apt-repo/apt/apt-key.gpg
 
-          - name: Create index.html
-          run: |
-            cat > apt-repo/index.html << 'EOF'
-            <!DOCTYPE html>
-            <html>
-            <head>
-              <title>Kubiya CLI APT Repository</title>
-            </head>
-            <body>
-              <h1>Kubiya CLI APT Repository</h1>
-              <p>This is the APT repository for the Kubiya CLI package.</p>
-              <h2>Installation Instructions</h2>
-              <pre>
-                # Add Kubiya's APT repository
-                curl -fsSL https://kubiyabot.github.io/cli/apt/apt-key.gpg | sudo gpg --dearmor -o /usr/share/keyrings/kubiya-archive-keyring.gpg
-                echo "deb [signed-by=/usr/share/keyrings/kubiya-archive-keyring.gpg] https://kubiyabot.github.io/cli/apt stable main" | sudo tee /etc/apt/sources.list.d/kubiya.list
+      - name: Create index.html
+        run: |
+          cat > apt-repo/index.html << 'EOF'
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <title>Kubiya CLI APT Repository</title>
+          </head>
+          <body>
+            <h1>Kubiya CLI APT Repository</h1>
+            <p>This is the APT repository for the Kubiya CLI package.</p>
+            <h2>Installation Instructions</h2>
+            <pre>
+              # Add Kubiya's APT repository
+              curl -fsSL https://kubiyabot.github.io/cli/apt/apt-key.gpg | sudo gpg --dearmor -o /usr/share/keyrings/kubiya-archive-keyring.gpg
+              echo "deb [signed-by=/usr/share/keyrings/kubiya-archive-keyring.gpg] https://kubiyabot.github.io/cli/apt stable main" | sudo tee /etc/apt/sources.list.d/kubiya.list
 
-                # Update package list and install Kubiya CLI
-                sudo apt update
-                sudo apt install kubiya-cli
-              </pre>
-      sudo apt update
-      sudo apt install kubiya-cli
-                </pre>
-              </body>
-              </html>
-      EOF
+              # Update package list and install Kubiya CLI
+              sudo apt update
+              sudo apt install kubiya-cli
+            </pre>
+          </body>
+          </html>
+          EOF
 
       - name: Add .nojekyll
         run: touch apt-repo/.nojekyll
