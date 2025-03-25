@@ -78,7 +78,10 @@ jobs:
           # Verify .deb file(s) are present and inspect
           echo "=== Copied .deb files ==="
           ls -lh apt-repo/apt/pool/main/
-          dpkg-deb -I dist/*.deb | grep -E '^ Package|^ Version|^ Architecture'
+          for deb in dist/*.deb; do
+            echo "Inspecting $deb"
+            dpkg-deb -I "$deb" | grep -E '^ Package|^ Version|^ Architecture'
+          done
 
           # Generate Packages and compress it
           cd apt-repo/apt
