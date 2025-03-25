@@ -120,10 +120,14 @@ jobs:
             Architectures "amd64";
             Components "main";
             Description "APT repository for Kubiya CLI";
+            Date "$(date -Ru)"
           };
           EOF
 
-          # Generate the Release file
+          # Set env var to avoid locale issues with date formatting
+          export LC_ALL=C
+
+          # Generate the Release file with proper config and timestamp
           apt-ftparchive -c config.txt release dists/stable > dists/stable/Release
 
       - name: Sign Release file
