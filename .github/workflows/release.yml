@@ -72,8 +72,10 @@ jobs:
           mkdir -p apt-repo/apt/dists/stable/main/binary-amd64
           mkdir -p apt-repo/apt/pool/main
 
-          # Copy .deb files to pool
-          cp dist/*.deb apt-repo/apt/pool/main/
+          # # Copy .deb files to pool
+          # cp dist/*.deb apt-repo/apt/pool/main/
+          cp dist/*_linux_amd64.deb apt-repo/apt/pool/main/
+
 
           echo "=== Tree ==="
           tree 
@@ -89,7 +91,7 @@ jobs:
           # Generate Packages and compress it
           cd apt-repo/apt
           dpkg-scanpackages pool/main /dev/null > dists/stable/main/binary-amd64/Packages
-          gzip -9 -f dists/stable/main/binary-amd64/Package
+          gzip -9 -f dists/stable/main/binary-amd64/Packages
 
       - name: Generate Release file with hashes
         run: |
