@@ -85,9 +85,9 @@ jobs:
         run: |
           mkdir -p apt-repo/apt/dists/stable/main/binary-amd64
           cd apt-repo/apt
-          dpkg-scanpackages -m . /dev/null | sed 's|Filename: pool/|Filename: apt/pool/|' > dists/stable/main/binary-amd64/Packages
+          dpkg-scanpackages -m --path-prefix=apt pool/main /dev/null > dists/stable/main/binary-amd64/Packages
           gzip -9 -f dists/stable/main/binary-amd64/Packages
-    
+
       # - name: Setup APT repository
       #   run: |
       #     version="${{ github.ref_name }}" # or extract with git tag
