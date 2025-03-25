@@ -71,7 +71,7 @@ jobs:
 
       - name: Setup APT repository
         run: |
-          # Set u p directory structure inside apt-repo
+          # Set up directory structure inside apt-repo
           mkdir -p apt-repo/apt/dists/stable/main/binary-amd64
           mkdir -p apt-repo/apt/pool/main
 
@@ -97,11 +97,11 @@ jobs:
           Components: main
           Description: APT repository for Kubiya CLI
           MD5Sum:
-            $(md5sum dist/*.deb | awk '{print $1}')
+            $(find main/binary-amd64 -type f -name '*.deb' -exec md5sum {} \; | awk '{print $1}')
           SHA1:
-            $(sha1sum dist/*.deb | awk '{print $1}')
+            $(find main/binary-amd64 -type f -name '*.deb' -exec sha1sum {} \; | awk '{print $1}')
           SHA256:
-            $(sha256sum dist/*.deb | awk '{print $1}')
+            $(find main/binary-amd64 -type f -name '*.deb' -exec sha256sum {} \; | awk '{print $1}')
           EOF
   
       - name: Sign Release file
