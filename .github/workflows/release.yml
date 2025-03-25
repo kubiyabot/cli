@@ -83,8 +83,8 @@ jobs:
           # Generate Packages and compress it
           cd apt-repo/apt
           dpkg-scanpackages pool/main /dev/null > dists/stable/main/binary-amd64/Packages
-          gzip -9 -f dists/stable/main/binary-amd64/Packages
-
+          gzip -9 -f dists/stable/main/binary-amd64/Package
+          
       - name: Generate Release file with hashes
         run: |
           sudo apt-get update
