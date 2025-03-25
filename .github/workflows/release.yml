@@ -71,7 +71,7 @@ jobs:
         run: |
           version="${{ github.ref_name }}" # or extract with git tag
           version="${version#v}"           # remove "v" prefix
-          mv dist/cli_*_linux_amd64.deb "dist/kubiya-cli_${version}_linux_amd64.deb"
+          mv dist/*_linux_amd64.deb "dist/kubiya-cli_${version}_amd64.deb"
         
       - name: Setup APT repository
         run: |
