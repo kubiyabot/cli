@@ -104,7 +104,7 @@ jobs:
           EOF
       
           # Generate the Release file
-          apt-ftparchive release dists/stable > dists/stable/Release
+          apt-ftparchive release dists/stable | grep -v 'Release$' >> dists/stable/Release
 
       - name: Sign Release file
         run: |
