@@ -67,6 +67,12 @@ jobs:
           gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
           passphrase: ${{ secrets.GPG_PASSPHRASE }}
 
+      - name: Rename .deb to match APT expectations
+        run: |
+          version="${{ github.ref_name }}" # or extract with git tag
+          version="${version#v}"           # remove "v" prefix
+          mv dist/cli_*_linux_amd64.deb "dist/kubiya-cli_${version}_linux_amd64.deb"
+        
       - name: Setup APT repository
         run: |
           mkdir -p apt-repo/apt/dists/stable/main/binary-amd64
