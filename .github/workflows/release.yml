@@ -75,6 +75,9 @@ jobs:
           # Copy .deb files to pool
           cp dist/*.deb apt-repo/apt/pool/main/
 
+          echo "=== Tree ==="
+          tree 
+
           # Verify .deb file(s) are present and inspect
           echo "=== Copied .deb files ==="
           ls -lh apt-repo/apt/pool/main/
