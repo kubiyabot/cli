@@ -121,7 +121,7 @@ jobs:
             Components "main";
             Description "APT repository for Kubiya CLI";
           };
-        EOF
+EOF
 
           # Generate the Release file
           apt-ftparchive -c config.txt release dists/stable > dists/stable/Release
