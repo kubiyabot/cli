@@ -75,6 +75,8 @@ jobs:
         
       - name: Setup APT repository
         run: |
+          version="${{ github.ref_name }}" # or extract with git tag
+          version="${version#v}"           # remove "v" prefix
           mkdir -p apt-repo/apt/dists/stable/main/binary-amd64
           mkdir -p apt-repo/apt/pool/main
 
