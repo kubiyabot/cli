@@ -54,6 +54,7 @@ func newChatCommand(cfg *config.Config) *cobra.Command {
 		teammateID   string
 		teammateName string
 		message      string
+		noClassify   bool
 
 		interactive  bool
 		debug        bool
@@ -137,7 +138,8 @@ func newChatCommand(cfg *config.Config) *cobra.Command {
 		Short: "💬 Chat with a teammate",
 		Long: `Start a chat session with a Kubiya teammate.
 You can either use interactive mode, specify a message directly, or pipe input from stdin.
-Use --context to include additional files for context (supports wildcards and URLs).`,
+Use --context to include additional files for context (supports wildcards and URLs).
+The command will automatically select the most appropriate teammate unless one is specified.`,
 		Example: `  # Interactive chat mode
   kubiya chat --interactive
 
@@ -155,7 +157,10 @@ Use --context to include additional files for context (supports wildcards and UR
     -m "Review deployment"
 
   # Pipe from stdin with context
-  cat error.log | kubiya chat -n "debug" --stdin --context "config/*.yaml"`,
+  cat error.log | kubiya chat -n "debug" --stdin --context "config/*.yaml"
+
+  # Auto-classify the most appropriate teammate
+  kubiya chat -m "Help me with Kubernetes deployment issues"`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg.Debug = cfg.Debug || debug
 
@@ -217,29 +222,128 @@ Use --context to include additional files for context (supports wildcards and UR
 				return fmt.Errorf("failed to load context: %w", err)
 			}
 
+			// Setup client
+			client := kubiya.NewClient(cfg)
+
+			// Auto-classify by default unless teammate is explicitly specified or --no-classify is set
+			shouldClassify := teammateID == "" && teammateName == "" && !noClassify
+
+			// If auto-classify is enabled (default), use the classification endpoint
+			if shouldClassify {
+				if debug {
+					fmt.Printf("🔍 Classification prompt: %s\n", message)
+				}
+
+				// Create classification request
+				reqBody := map[string]string{
+					"message": message,
+				}
+				reqJSON, err := json.Marshal(reqBody)
+				if err != nil {
+					return fmt.Errorf("failed to marshal classification request: %w", err)
+				}
+
+				// Create HTTP request
+				baseURL := strings.TrimSuffix(cfg.BaseURL, "/")
+				if strings.HasSuffix(baseURL, "/api/v1") {
+					baseURL = strings.TrimSuffix(baseURL, "/api/v1")
+				}
+				classifyURL := fmt.Sprintf("%s/api/v1/http-bridge/v1/classify/teammate", baseURL)
+				req, err := http.NewRequestWithContext(cmd.Context(), http.MethodPost, classifyURL, bytes.NewBuffer(reqJSON))
+				if err != nil {
+					return fmt.Errorf("failed to create classification request: %w", err)
+				}
+
+				// Set headers
+				req.Header.Set("Content-Type", "application/json")
+				req.Header.Set("Authorization", "UserKey "+cfg.APIKey)
+
+				if debug {
+					fmt.Printf("🌐 Sending classification request to: %s\n", classifyURL)
+				}
+
+				// Send request
+				resp, err := http.DefaultClient.Do(req)
+				if err != nil {
+					return fmt.Errorf("failed to send classification request: %w", err)
+				}
+				defer resp.Body.Close()
+
+				// Read response body
+				body, err := io.ReadAll(resp.Body)
+				if err != nil {
+					return fmt.Errorf("failed to read classification response: %w", err)
+				}
+
+				if debug {
+					fmt.Printf("📥 Classification response status: %d\n", resp.StatusCode)
+					fmt.Printf("📄 Classification response body: %s\n", string(body))
+				}
+
+				if resp.StatusCode != http.StatusOK {
+					return fmt.Errorf("classification failed with status %d: %s", resp.StatusCode, string(body))
+				}
+
+				// Parse response
+				var teammates []struct {
+					UUID        string `json:"uuid"`
+					Name        string `json:"name"`
+					Description string `json:"description"`
+				}
+				if err := json.Unmarshal(body, &teammates); err != nil {
+					return fmt.Errorf("failed to parse classification response: %w", err)
+				}
+
+				if len(teammates) == 0 {
+					if debug {
+						fmt.Println("❌ No suitable teammate found in the classification response")
+					}
+					return fmt.Errorf("no suitable teammate found for the task")
+				}
+
+				// Use the first (best) teammate
+				teammateID = teammates[0].UUID
+				fmt.Printf("🤖 Auto-selected teammate: %s (%s)\n", teammates[0].Name, teammates[0].Description)
+			}
+
 			// If teammate name is provided, look up the ID
 			if teammateName != "" && teammateID == "" {
-				client := kubiya.NewClient(cfg)
-				teammates, err := client.ListTeammates(cmd.Context())
+				if debug {
+					fmt.Printf("🔍 Looking up teammate by name: %s\n", teammateName)
+				}
+
+				teammates, err := client.GetTeammates(cmd.Context())
 				if err != nil {
 					return fmt.Errorf("failed to list teammates: %w", err)
 				}
 
+				if debug {
+					fmt.Printf("📋 Found %d teammates\n", len(teammates))
+				}
+
+				found := false
 				for _, t := range teammates {
-					if t.Name == teammateName {
+					if strings.EqualFold(t.Name, teammateName) {
 						teammateID = t.UUID
+						found = true
+						if debug {
+							fmt.Printf("✅ Found matching teammate: %s (UUID: %s)\n", t.Name, t.UUID)
+						}
 						break
 					}
 				}
 
-				if teammateID == "" {
-					return fmt.Errorf("teammate not found: %s", teammateName)
+				if !found {
+					if debug {
+						fmt.Printf("❌ No teammate found with name: %s\n", teammateName)
+					}
+					return fmt.Errorf("teammate with name '%s' not found", teammateName)
 				}
 			}
 
-			// Ensure we have a teammate ID
+			// Ensure we have a teammate ID by this point
 			if teammateID == "" {
-				return fmt.Errorf("teammate ID or name is required")
+				return fmt.Errorf("no teammate selected - please specify a teammate or allow auto-classification")
 			}
 
 			// Add these variables
@@ -256,7 +360,6 @@ Use --context to include additional files for context (supports wildcards and UR
 			}
 
 			// Send message with context
-			client := kubiya.NewClient(cfg)
 			msgChan, err := client.SendMessageWithContext(cmd.Context(), teammateID, message, sessionID, context)
 			if err != nil {
 				return err
@@ -544,20 +647,21 @@ Use --context to include additional files for context (supports wildcards and UR
 		},
 	}
 
-	cmd.Flags().StringVarP(&teammateID, "id", "", "", "Teammate ID")
-	cmd.Flags().StringVarP(&teammateName, "name", "n", "", "Teammate name")
+	cmd.Flags().StringVarP(&teammateID, "teammate", "t", "", "Teammate ID (optional)")
+	cmd.Flags().StringVarP(&teammateName, "name", "n", "", "Teammate name (optional)")
 	cmd.Flags().StringVarP(&message, "message", "m", "", "Message to send")
 	cmd.Flags().BoolVarP(&interactive, "interactive", "i", false, "Start interactive chat mode")
-	cmd.Flags().BoolVar(&debug, "debug", false, "Enable debug mode")
-	cmd.Flags().BoolVar(&stream, "stream", false, "Stream assistant's response as it is received")
-	cmd.Flags().BoolVar(&clearSession, "clear-session", false, "Clear stored session ID")
-	cmd.Flags().StringVarP(&sessionID, "session-id", "s", "", "Session ID to continue conversation")
-	cmd.Flags().StringArrayVar(&contextFiles, "context", []string{}, "Files, wildcards, or URLs to include as context (can be specified multiple times)")
+	cmd.Flags().BoolVar(&debug, "debug", false, "Enable debug logging")
+	cmd.Flags().BoolVar(&stream, "stream", true, "Stream the response")
+	cmd.Flags().BoolVar(&clearSession, "clear-session", false, "Clear the current session")
+	cmd.Flags().StringVar(&sessionID, "session", "", "Session ID to resume")
+	cmd.Flags().StringArrayVar(&contextFiles, "context", []string{}, "Files to include as context (supports wildcards and URLs)")
 	cmd.Flags().BoolVar(&stdinInput, "stdin", false, "Read message from stdin")
-	cmd.Flags().BoolVar(&sourceTest, "source-test", false, "Testing mode for new source")
-	cmd.Flags().StringVar(&sourceUUID, "source-uuid", "", "UUID of source being tested")
-	cmd.Flags().StringVar(&sourceName, "source-name", "", "Name of source being tested")
-	cmd.Flags().StringVar(&suggestTool, "suggest-tool", "", "Suggested tool command to try")
+	cmd.Flags().BoolVar(&sourceTest, "source-test", false, "Test source connection")
+	cmd.Flags().StringVar(&sourceUUID, "source-uuid", "", "Source UUID")
+	cmd.Flags().StringVar(&sourceName, "source-name", "", "Source name")
+	cmd.Flags().StringVar(&suggestTool, "suggest-tool", "", "Suggest a tool to use")
+	cmd.Flags().BoolVar(&noClassify, "no-classify", false, "Disable automatic teammate classification")
 
 	return cmd
 }
