@@ -86,34 +86,6 @@ jobs:
           cd apt-repo/apt
           dpkg-scanpackages -m pool /dev/null > dists/stable/main/binary-amd64/Packages
           gzip --keep --force --no-name --best dists/stable/main/binary-amd64/Packages
-                
-      # - name: Setup APT repository
-      #   run: |
-      #     version="${{ github.ref_name }}" # or extract with git tag
-      #     version="${version#v}"           # remove "v" prefix
-      #     mkdir -p apt-repo/apt/dists/stable/main/binary-amd64
-      #     mkdir -p apt-repo/apt/pool/main
-
-      #     # # Copy .deb files to pool
-      #     # cp dist/*.deb apt-repo/apt/pool/main/
-      #     cp dist/kubiya-cli_${version}_amd64.deb apt-repo/apt/pool/main/
-
-
-      #     echo "=== Tree ==="
-      #     tree 
-
-      #     # Verify .deb file(s) are present and inspect
-      #     echo "=== Copied .deb files ==="
-      #     ls -lh apt-repo/apt/pool/main/
-      #     for deb in dist/*.deb; do
-      #       echo "Inspecting $deb"
-      #       dpkg-deb -I "$deb" | grep -E '^ Package|^ Version|^ Architecture'
-      #     done
-
-      #     # Generate Packages and compress it
-      #     cd apt-repo/apt
-      #     dpkg-scanpackages pool/main /dev/null > dists/stable/main/binary-amd64/Packages
-      #     gzip -9 -f dists/stable/main/binary-amd64/Packages
 
       - name: Generate Release file with hashes
         run: |

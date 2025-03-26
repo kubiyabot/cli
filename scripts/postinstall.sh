@@ -7,10 +7,10 @@ chmod +x /usr/local/bin/kubiya-cli
 mkdir -p /etc/bash_completion.d
 
 # Generate and install bash completion
-kubiya-cli completion bash > /etc/bash_completion.d/kubiya-cli
+KUBIYA_API_KEY=dummy kubiya-cli completion bash > /etc/bash_completion.d/kubiya-cli
 
 # Create zsh completion directory if it doesn't exist
 mkdir -p /usr/local/share/zsh/site-functions
 
 # Generate and install zsh completion
-kubiya-cli completion zsh > /usr/local/share/zsh/site-functions/_kubiya-cli 
+KUBIYA_API_KEY=dummy kubiya-cli completion zsh > /usr/local/share/zsh/site-functions/_kubiya-cli 
