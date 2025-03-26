@@ -681,17 +681,24 @@ When scanning a local directory:
 
 						fmt.Printf("%s\n", style.SubtitleStyle.Render("Error Details:"))
 						for _, e := range discovery.Errors {
-							fmt.Printf("• %s: %s\n", e.Type, e.Error)
+							// Format the error with file context
+							fmt.Printf("%s %s\n", style.ErrorStyle.Render("•"), style.HighlightStyle.Render(e.Type))
+							fmt.Printf("  File: %s\n", style.DimStyle.Render(e.File))
+							fmt.Printf("  Error: %s\n", style.ErrorStyle.Render(e.Error))
 							if e.Details != "" {
-								fmt.Printf("  Details: %s\n", e.Details)
+								fmt.Printf("  Details: %s\n", style.DimStyle.Render(e.Details))
 							}
+							fmt.Println() // Add spacing between errors
 						}
 
-						fmt.Printf("\n%s\n", style.SubtitleStyle.Render("Common Solutions:"))
+						fmt.Printf("%s\n", style.SubtitleStyle.Render("Common Solutions:"))
 						fmt.Println("• Check if the source code is valid and can be imported")
 						fmt.Println("• Ensure all required dependencies are available")
 						fmt.Println("• Check for syntax errors in tool definitions")
 						fmt.Println("• Verify the branch and file paths are correct")
+						fmt.Println("• Try running with --debug flag for more information")
+						fmt.Println("• Check if the file permissions are correct")
+						fmt.Println("• Verify the file encoding is UTF-8")
 					} else {
 						// Simple error output for non-discovery errors
 						fmt.Printf("\n%s\n", style.ErrorStyle.Render("❌ Scan failed"))
@@ -1038,20 +1045,20 @@ When scanning a local directory:
 		},
 	}
 
-	// Add flags
-	cmd.Flags().StringVarP(&repo, "repo", "r", "", "Repository name (org/repo format)")
-	cmd.Flags().StringVarP(&branch, "branch", "b", "", "Branch name")
-	cmd.Flags().StringVarP(&path, "path", "p", "", "Path within repository")
-	cmd.Flags().StringVar(&remote, "remote", "origin", "Git remote to use")
-	cmd.Flags().BoolVarP(&force, "force", "f", false, "Force continuing with uncommitted changes or branch switching")
-	cmd.Flags().BoolVar(&localOnly, "local-only", false, "Force local directory scan, ignoring Git repository information and scanning files directly")
-	cmd.Flags().StringVarP(&dynamicConfig, "config", "c", "", "Dynamic configuration file (JSON)")
-	cmd.Flags().StringVarP(&outputFormat, "output", "o", "text", "Output format (text|json)")
 	cmd.Flags().BoolVarP(&interactive, "interactive", "i", false, "Interactive mode")
+	cmd.Flags().StringVarP(&outputFormat, "output", "o", "table", "Output format (table|json)")
+	cmd.Flags().StringVarP(&dynamicConfig, "dynamic-config", "d", "", "Dynamic configuration file")
+	cmd.Flags().BoolVar(&local, "local", false, "Scan local directory")
+	cmd.Flags().BoolVar(&localOnly, "local-only", false, "Force local-only scanning (bypass Git)")
+	cmd.Flags().StringVarP(&repo, "repo", "r", "", "GitHub repository (org/repo)")
+	cmd.Flags().StringVarP(&branch, "branch", "b", "", "Git branch")
+	cmd.Flags().StringVarP(&path, "path", "p", "", "Path within repository")
+	cmd.Flags().StringVar(&remote, "remote", "origin", "Git remote name")
+	cmd.Flags().BoolVarP(&force, "force", "f", false, "Force scan despite uncommitted changes")
 	cmd.Flags().BoolVar(&push, "push", false, "Push changes to remote")
-	cmd.Flags().StringVar(&commitMsg, "commit-msg", "", "Commit message for local changes")
-	cmd.Flags().BoolVar(&addAll, "add", false, "Stage all changes")
-	cmd.Flags().StringVar(&runnerName, "runner", "", "Runner name to use for loading the source")
+	cmd.Flags().StringVar(&commitMsg, "commit-msg", "", "Commit message")
+	cmd.Flags().BoolVar(&addAll, "add", false, "Add all files before committing")
+	cmd.Flags().StringVar(&runnerName, "runner", "", "Runner name")
 
 	return cmd
 }
