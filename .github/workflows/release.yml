@@ -3,7 +3,8 @@ name: Release CLI
 on:
   push:
     tags:
-      - 'v*'
+      - "v[0-9]+.[0-9]+.[0-9]+"
+
   workflow_dispatch:
     inputs:
       snapshot:
@@ -39,10 +40,8 @@ jobs:
         id: get_previous_tag
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            # For manual runs, get the latest tag
             PREVIOUS_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
           else
-            # For tag pushes, get the previous tag
             PREVIOUS_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
           fi
           echo "previous_tag=$PREVIOUS_TAG" >> $GITHUB_OUTPUT
@@ -66,48 +65,85 @@ jobs:
           gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
           passphrase: ${{ secrets.GPG_PASSPHRASE }}
 
-      - name: Setup APT repository
+      # Rename .deb
+      - name: Rename .deb to match APT standards
         run: |
-          # Create the correct directory structure
-          mkdir -p apt/dists/stable/main/binary-amd64
-          mkdir -p apt/pool/main
-          
-          # Copy the Debian package to the pool
-          cp dist/*.deb apt/pool/main/
-          
-          # Create Packages file
-          cd apt
-          dpkg-scanpackages pool/main /dev/null > dists/stable/main/binary-amd64/Packages
-          gzip -9 dists/stable/main/binary-amd64/Packages
+          version="${{ github.ref_name }}"
+          version="${version#v}"
+          mv dist/*_linux_amd64.deb "dist/kubiya-cli_${version}_amd64.deb"
 
-      - name: Create Release file
+      # Copy to pool
+      - name: Copy .deb to pool
         run: |
-          cd apt/dists/stable
-          cat > Release << EOF
-          Origin: Kubiya
-          Label: Kubiya APT Repository
-          Suite: stable
-          Version: 1.0
-          Codename: stable
-          Date: $(date -u +"%a, %d %b %Y %H:%M:%S UTC")
-          Architectures: amd64
-          Components: main
-          Description: APT repository for Kubiya CLI
+          mkdir -p apt-repo/apt/pool/main
+          cp dist/kubiya-cli_*.deb apt-repo/apt/pool/main/
+
+      - name: Generate Packages.gz
+        run: |
+          mkdir -p apt-repo/apt/dists/stable/main/binary-amd64
+          cd apt-repo/apt
+          dpkg-scanpackages -m pool /dev/null > dists/stable/main/binary-amd64/Packages
+          gzip --keep --force --no-name --best dists/stable/main/binary-amd64/Packages
+
+      - name: Generate Release file with hashes
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y dpkg-dev gnupg
+
+          cd apt-repo/apt
+
+          # Create apt-ftparchive config
+          cat > config.txt <<EOF
+          Dir {
+            ArchiveDir ".";
+          };
+
+          Default {
+            Packages::Compress ". gzip";
+            Contents::Compress ". gzip";
+          };
+
+          TreeDefault {
+            BinCacheDB "packages.db";
+            Directory "pool";
+            Packages "dists/stable/main/binary-amd64/Packages";
+            Components "main";
+            Architectures "amd64";
+          };
+
+          APT::FTPArchive::Release {
+            Origin "Kubiya";
+            Label "Kubiya APT Repository";
+            Suite "stable";
+            Version "${{ github.ref_name }}";
+            Codename "stable";
+            Architectures "amd64";
+            Components "main";
+            Description "APT repository for Kubiya CLI";
+            Date "$(date -Ru)"
+          };
           EOF
+
+          # Set env var to avoid locale issues with date formatting
+          export LC_ALL=C
+
+          # Generate the Release file with proper config and timestamp
+          apt-ftparchive -c config.txt release dists/stable > dists/stable/Release
 
       - name: Sign Release file
         run: |
-          cd apt/dists/stable
+          cd apt-repo/apt/dists/stable
           echo "${{ secrets.GPG_PASSPHRASE }}" | gpg --batch --yes --passphrase-fd 0 --clearsign -o InRelease Release
           echo "${{ secrets.GPG_PASSPHRASE }}" | gpg --batch --yes --passphrase-fd 0 -abs -o Release.gpg Release
 
       - name: Export GPG key
         run: |
-          gpg --export --armor > apt/apt-key.gpg
+          mkdir -p apt-repo/apt
+          gpg --export --armor > apt-repo/apt/apt-key.gpg
 
       - name: Create index.html
         run: |
-          cat > index.html << EOF
+          cat > apt-repo/index.html << 'EOF'
           <!DOCTYPE html>
           <html>
           <head>
@@ -118,22 +154,25 @@ jobs:
             <p>This is the APT repository for the Kubiya CLI package.</p>
             <h2>Installation Instructions</h2>
             <pre>
-# Add Kubiya's APT repository
-curl -fsSL https://kubiyabot.github.io/cli/apt-key.gpg | sudo gpg --dearmor -o /usr/share/keyrings/kubiya-archive-keyring.gpg
-echo "deb [signed-by=/usr/share/keyrings/kubiya-archive-keyring.gpg] https://kubiyabot.github.io/cli/apt/dists/stable stable main" | sudo tee /etc/apt/sources.list.d/kubiya.list
+              # Add Kubiya's APT repository
+              curl -fsSL https://kubiyabot.github.io/cli/apt/apt-key.gpg | sudo gpg --dearmor -o /usr/share/keyrings/kubiya-archive-keyring.gpg
+              echo "deb [signed-by=/usr/share/keyrings/kubiya-archive-keyring.gpg] https://kubiyabot.github.io/cli/apt stable main" | sudo tee /etc/apt/sources.list.d/kubiya.list
 
-# Update package list and install Kubiya CLI
-sudo apt update
-sudo apt install kubiya-cli
+              # Update package list and install Kubiya CLI
+              sudo apt update
+              sudo apt install kubiya-cli
             </pre>
           </body>
           </html>
           EOF
 
+      - name: Add .nojekyll
+        run: touch apt-repo/.nojekyll
+
       - name: Deploy to GitHub Pages
         uses: peaceiris/actions-gh-pages@v3
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: .
+          publish_dir: ./apt-repo
           publish_branch: gh-pages
-          force_orphan: true 
+          force_orphan: true
