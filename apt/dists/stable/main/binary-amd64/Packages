@@ -1,0 +1,14 @@
+Package: kubiya-cli
+Version: 1.0.11
+Architecture: amd64
+Maintainer: Kubiya <support@kubiya.ai>
+Installed-Size: 90928
+Filename: pool/main/kubiya-cli_1.0.11_amd64.deb
+Size: 26831232
+MD5sum: 24ffb405d13670707f8cdf991f77b2a5
+SHA1: 6cb4d45504055d7e2c35e479d156fbd7f65dfaf1
+SHA256: 113b19d19d175bad4a3bc4dec9350e7bf4279b95e2c9dcdbef99e0fbdac0a239
+Priority: optional
+Homepage: https://github.com/kubiyabot/cli
+Description: Command line interface for Kubiya AI platform
+

@@ -1,0 +1,44 @@
+-----BEGIN PGP SIGNED MESSAGE-----
+Hash: SHA512
+
+Architectures: amd64
+Codename: stable
+Components: main
+Date: Thu, 27 Mar 2025 14:12:52 +0000
+Description: APT repository for Kubiya CLI
+Label: Kubiya APT Repository
+Origin: Kubiya
+Suite: stable
+Version: v1.0.11
+MD5Sum:
+ f37e95e99fa19d5394f3557639cece04              211 Release
+ 94a210d30cf34e4ec67b633949198360              463 main/binary-amd64/Packages
+ 48063c5a83ca27e72065a62fa8d8d3a7              350 main/binary-amd64/Packages.gz
+SHA1:
+ 4dda2e383f294b667d25ac08c8575296a92ef098              211 Release
+ 26d60eebfb58c8f9c8d48e6eb4b7b0fa507c8eae              463 main/binary-amd64/Packages
+ ee764e0903c3b42d70503763aab545999d1b89e5              350 main/binary-amd64/Packages.gz
+SHA256:
+ 35248c41ae6d868729024933161fcbc9431ccf1687e232f3b9c559195d622545              211 Release
+ d2b089cbe36891b7fbde483ebf3b52e5b3c5f21e6f45ea42b3be3dccfdc48d5d              463 main/binary-amd64/Packages
+ e0ed939f299f29cec0f75b3908868c10b8234685ef6ec0a7199358d68478e87b              350 main/binary-amd64/Packages.gz
+SHA512:
+ 7b232287db16651b75388f4cc7ba3fc0f2011892f9414a9e3a596d08b366a7a50104bb56e249645409f1c663d9856d3cba2b807d13cc665b6c29d4b78881c793              211 Release
+ 323df0c6b073902f804af4fe8f13c3bb9d15e4ce6bc0dcd9bc472fe617cad7781425728812737cc6ca4364d82a8d937180ab1c9056f353038e7a3c3f7640a0cb              463 main/binary-amd64/Packages
+ 70f765d30792b17437b58dd37a8ddea9ac7933f7c3d09229c6fd7b5340e3990933edf09e9734e533e2947e43ed80bbb507274aac50f4a7346eebc96919ac23dc              350 main/binary-amd64/Packages.gz
+-----BEGIN PGP SIGNATURE-----
+
+iQIzBAEBCgAdFiEEh4p571o9TCAe+87I/PHDCfXOmkkFAmflXOQACgkQ/PHDCfXO
+mkn34BAA1KMIbolU5Ec8OioVZsVY/mq7JgaCq0OoyRuJQjmb+ha90H5jhhrIpNQE
+pCHoh0E2IS9eVLE5CnWJ4xK0gEnP636D9XDRtIX6Ryv7i4gLw7W6HsgtHENjMenT
+w4ZbOodpoXUvoqiYx+8QeemDBCVROkTBP+aYXo3zVagTAz7pnCcxtef/N6zvZVFB
+jXNifm0NWMxX2C8hUv4RhAZfq/QDhB653+wKqi7MX9MsXq9w8Fkvu66HByQre5PK
+5AbejgeU09wOfqGUb7V33mLm7pYPLGL5r17+ItlsdAgJAsikHEhKcHRv3Dpqeo4V
+sphbG996YeAZEYpEY2dDXTsz7jLfC8C/WVAh0/4imHyjOU06y9xl8Ch9UvBs3hHv
+IH5NebdAkndISXJ/+O5hfHcpNs0vA1PsTsxS3p0m1Xd6ayrDWF4lGGJheGDqLpjA
+jmBR+QDv25qENvVCkI4Kv46uQWsPDSJ/q1u0ZcIX4nJmu5OjN2B+LkvctWvcaaw9
+dLnnbbfDt2zOq35MhvH7xCVFDoQf/CPnkaQguY+6Ngzjam3FvM4kmerwhVHBrtUg
+y39i86MLLIe9F7kxZskvSbHZVMJFxRp7qLkDwCgOPPNLAkAMacoV5sEU1gQVhcXE
+G2qsoeABQYBbLq7W+MtwsNQObgKX+Gn38VN6VqXmFqvr64ph1OI=
+=7sG7
+-----END PGP SIGNATURE-----

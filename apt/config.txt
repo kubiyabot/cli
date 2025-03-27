@@ -1,0 +1,28 @@
+Dir {
+  ArchiveDir ".";
+};
+
+Default {
+  Packages::Compress ". gzip";
+  Contents::Compress ". gzip";
+};
+
+TreeDefault {
+  BinCacheDB "packages.db";
+  Directory "pool";
+  Packages "dists/stable/main/binary-amd64/Packages";
+  Components "main";
+  Architectures "amd64";
+};
+
+APT::FTPArchive::Release {
+  Origin "Kubiya";
+  Label "Kubiya APT Repository";
+  Suite "stable";
+  Version "v1.0.11";
+  Codename "stable";
+  Architectures "amd64";
+  Components "main";
+  Description "APT repository for Kubiya CLI";
+  Date "Thu, 27 Mar 2025 14:12:52 +0000"
+};
