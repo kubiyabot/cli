@@ -20,7 +20,7 @@ func (s *SourceBrowser) executeTool() tea.Cmd {
 		// Ensure port forward is ready
 		if !s.portForward.ready {
 			if err := s.setupPortForward()(); err != nil {
-				return toolExecutedMsg{err: fmt.Errorf("failed to setup port forward: %w", err)}
+				return toolExecutedMsg{err: fmt.Errorf("failed to setup port forward: received %v", err)}
 			}
 		}
 
