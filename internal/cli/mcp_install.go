@@ -137,33 +137,37 @@ If run non-interactively, teammate selection will be skipped during auto-apply.`
 				}
 			}
 
-			// 8. Auto-apply default configurations
+			// --- Step 8: Auto-apply default configurations (with teammate selection AND API Key Check) ---
 			fmt.Fprintln(stdout, "\n⚙️ Applying default MCP configurations...")
 
-			// Check TTY for interactivity
-			fileInfo, _ := os.Stdout.Stat()
-			isTty := (fileInfo.Mode() & os.ModeCharDevice) != 0
-			// TODO: Add a --non-interactive flag to explicitly disable this?
-			isInteractive := isTty
-
-			var selectedTeammateUUIDs []string
-
+			// *** CRITICAL CHECK: Ensure API key is set before proceeding with auto-apply ***
 			if cfg.APIKey == "" {
-				fmt.Fprintln(stdout, "🟡 Skipping teammate selection: Kubiya API key not configured.")
-				fmt.Fprintln(stdout, "   Configurations will be applied without specific teammates.")
-				fmt.Fprintln(stdout, "   Run 'kubiya config set api-key YOUR_API_KEY' and 'kubiya mcp apply <provider>' to customize.")
+				fmt.Fprintln(stdout, "🟡 Skipping auto-apply: Kubiya API key not configured.")
+				fmt.Fprintln(stdout, "   Please run 'kubiya config set api-key YOUR_API_KEY'")
+				fmt.Fprintln(stdout, "   Then run 'kubiya mcp apply <provider>' manually to configure applications.")
 			} else {
-				// Fetch Teammates (regardless of interactivity, needed for 'Select All')
+				// --- Proceed with teammate selection and applying configs ONLY if API key exists ---
+
+				// Check TTY for interactivity
+				fileInfo, _ := os.Stdout.Stat()
+				isTty := (fileInfo.Mode() & os.ModeCharDevice) != 0
+				isInteractive := isTty
+
+				var selectedTeammateUUIDs []string
+
+				// Fetch Teammates (API key is confirmed present here)
 				fmt.Fprint(stdout, "  Fetching teammates... ")
 				client := kubiya.NewClient(cfg)
 				teammates, err := client.ListTeammates(context.Background())
 				if err != nil {
 					fmt.Fprintln(stdout, "❌ Error fetching teammates.")
 					fmt.Fprintf(stderr, "  Warning: Could not fetch teammates: %v\n", err)
-					fmt.Fprintln(stderr, "  Configurations will be applied without specific teammates.")
+					fmt.Fprintln(stderr, "  Proceeding to apply configurations without specific teammates.")
+					selectedTeammateUUIDs = []string{} // Use empty list on error
 				} else if len(teammates) == 0 {
 					fmt.Fprintln(stdout, "🟡 No teammates found.")
-					fmt.Fprintln(stderr, "  Warning: No teammates found in workspace. Configurations applied without specific teammates.")
+					fmt.Fprintln(stderr, "  Warning: No teammates found in workspace. Applying configurations without specific teammates.")
+					selectedTeammateUUIDs = []string{} // Use empty list if none found
 				} else {
 					fmt.Fprintf(stdout, "✅ Found %d teammates.\n", len(teammates))
 
@@ -173,8 +177,8 @@ If run non-interactively, teammate selection will be skipped during auto-apply.`
 
 						allUUIDs := make([]string, len(teammates))
 						options := make([]string, len(teammates)+1)
-						optionMap := make(map[string]string) // Map display string back to UUID
-						options[0] = "(Select All)"          // Add Select All option
+						optionMap := make(map[string]string)
+						options[0] = "(Select All)"
 						for i, tm := range teammates {
 							display := fmt.Sprintf("%s (%s)", tm.Name, tm.UUID)
 							options[i+1] = display
@@ -194,7 +198,6 @@ If run non-interactively, teammate selection will be skipped during auto-apply.`
 							fmt.Fprintln(stdout, "🟡 Teammate selection cancelled or failed. Applying configs without specific teammates.")
 							selectedTeammateUUIDs = []string{} // Ensure empty slice
 						} else {
-							// Process selection
 							selectAllChosen := false
 							for _, opt := range selectedOptions {
 								if opt == "(Select All)" {
@@ -206,8 +209,8 @@ If run non-interactively, teammate selection will be skipped during auto-apply.`
 							if selectAllChosen {
 								selectedTeammateUUIDs = allUUIDs
 								fmt.Fprintf(stdout, "  Selected all %d teammates.\n", len(allUUIDs))
-								// Optional: Add warning if len(allUUIDs) > 15 ?
 							} else {
+								selectedTeammateUUIDs = []string{} // Start fresh for specific selection
 								for _, opt := range selectedOptions {
 									if uuid, ok := optionMap[opt]; ok {
 										selectedTeammateUUIDs = append(selectedTeammateUUIDs, uuid)
@@ -221,37 +224,36 @@ If run non-interactively, teammate selection will be skipped during auto-apply.`
 						fmt.Fprintln(stdout, "  Running non-interactively. Applying configs without specific teammates.")
 						selectedTeammateUUIDs = []string{}
 					}
-				}
-			}
+				} // End of teammate fetching/selection logic
 
-			// Apply configurations using the selected (or empty) teammate list
-			mcpConfigDir, err := mcp.GetMcpConfigDir(fs)
-			if err != nil {
-				fmt.Fprintf(stderr, "  Warning: Could not access MCP config directory (%s) for auto-apply: %v\n", mcpConfigDir, err)
-			} else {
-				files, err := afero.ReadDir(fs, mcpConfigDir)
+				// Apply configurations using the selected (or empty) teammate list
+				mcpConfigDir, err := mcp.GetMcpConfigDir(fs)
 				if err != nil {
-					fmt.Fprintf(stderr, "  Warning: Could not list files in MCP config directory (%s) for auto-apply: %v\n", mcpConfigDir, err)
+					fmt.Fprintf(stderr, "  Warning: Could not access MCP config directory (%s) for auto-apply: %v\n", mcpConfigDir, err)
 				} else {
-					fmt.Fprintln(stdout, "  Checking providers in", mcpConfigDir)
-					appliedCount := 0
-					for _, file := range files {
-						if !file.IsDir() && strings.HasSuffix(file.Name(), ".yaml") {
-							providerName := strings.TrimSuffix(file.Name(), ".yaml")
-							// Call the refactored apply logic for each provider with selected teammates
-							if err := applyProviderConfiguration(providerName, cfg, fs, stdout, stderr, selectedTeammateUUIDs); err != nil {
-								fmt.Fprintf(stderr, "  Error applying config for %s: %v\n", providerName, err)
-							} else {
-								appliedCount++
+					files, err := afero.ReadDir(fs, mcpConfigDir)
+					if err != nil {
+						fmt.Fprintf(stderr, "  Warning: Could not list files in MCP config directory (%s) for auto-apply: %v\n", mcpConfigDir, err)
+					} else {
+						fmt.Fprintln(stdout, "  Checking providers in", mcpConfigDir)
+						appliedCount := 0
+						for _, file := range files {
+							if !file.IsDir() && strings.HasSuffix(file.Name(), ".yaml") {
+								providerName := strings.TrimSuffix(file.Name(), ".yaml")
+								// Call the refactored apply logic for each provider with selected teammates
+								if err := applyProviderConfiguration(providerName, cfg, fs, stdout, stderr, selectedTeammateUUIDs); err != nil {
+									fmt.Fprintf(stderr, "  Error applying config for %s: %v\n", providerName, err)
+								} else {
+									appliedCount++
+								}
 							}
 						}
-					}
-					if appliedCount == 0 {
-						fmt.Fprintln(stdout, "  No applicable default provider configurations found or applied.")
-						// Don't suggest manual apply here, as we just finished install
+						if appliedCount == 0 {
+							fmt.Fprintln(stdout, "  No applicable default provider configurations found or applied.")
+						}
 					}
 				}
-			}
+			} // End of API key check block
 
 			fmt.Fprintln(stdout, "\n✨ MCP server installation complete!")
 			fmt.Fprintln(stdout, "   Default configurations (if applicable) have been automatically applied.")
