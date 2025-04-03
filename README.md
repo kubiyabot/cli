@@ -1,43 +1,132 @@
-# Kubiya CLI - Your DevOps Automation Companion 🤖
+# Kubiya CLI - Your Agentic Automation Companion 🤖
 
-A command-line interface for managing Kubiya sources, teammates, and tools on the Kubiya platform.
+A powerful command-line interface for managing Kubiya sources, teammates, and tools. Automate your engineering workflows and interact with Kubiya AI Agents (Teammates) seamlessly.
 
 ## Features ✨
 
 - **Source Management** 📂
-  - Scan repositories for tools and capabilities
-  - Add and sync sources from Git repositories
-  - List and manage your sources
-  - Support for local directory scanning
-  - Interactive source browsing
+  - Scan Git repositories and local directories for tools
+  - Add and sync sources with version control
+  - Interactive source browsing and management
+  - Support for inline tools and dynamic configurations
 
 - **Teammate Management** 👥
-  - List and manage AI teammates
-  - View teammate configurations
-  - Manage teammate environment variables
+  - Create and manage AI teammates
+  - Configure capabilities, tools, and permissions
+  - Manage environment variables and secrets
+  - Set up webhooks for automated interactions
 
 - **Tool Management** 🛠️
-  - List available tools
-  - Execute tools with arguments
-  - Interactive tool execution
+  - Execute tools with arguments and flags
+  - Interactive tool browser and executor
+  - Real-time execution feedback
+  - Support for long-running operations
 
 - **Secret Management** 🔒
-  - Create and manage secrets
-  - Update secret values
-  - List available secrets
+  - Securely store and manage secrets
+  - Integrate with teammates and tools
+  - Role-based access control
 
 - **Runner Management** 🚀
-  - List available runners
-  - View runner configurations
+  - Manage tool execution environments
+  - Monitor runner health and status
+  - Configure runner-specific settings
 
 - **Webhook Management** 🔗
-  - List and manage webhooks
-  - View webhook configurations
+  - Create and manage webhooks
+  - Support for Slack, Teams, and HTTP
+  - Custom webhook configurations
 
-- **Interactive Mode** 💻
-  - TUI-based interface for source browsing
-  - Interactive tool execution
-  - Real-time updates and feedback
+- **MCP Integration** 💻↔️🤖 (Model Context Protocol)
+  - Integrate Kubiya context (API key, Teammates) with local AI tools like **Claude Desktop** and **Cursor IDE**.
+  - Install and manage a local **MCP Gateway** server that acts as a bridge.
+  - Automatically configure supported applications during installation.
+  - List, apply, and edit provider configurations.
+
+## MCP Integration (Model Context Protocol)
+
+The Kubiya CLI can bridge your Kubiya environment (API Key, Teammate context) with local AI-powered applications that support the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/). This allows applications like Claude Desktop or Cursor IDE to access information about your Kubiya teammates directly within their chat interfaces.
+
+This integration works by:
+
+1.  **Installing a local MCP Gateway server:** A small Python server (`mcp-gateway`) is installed locally.
+2.  **Configuring applications:** The CLI automatically updates the configuration files of supported applications (e.g., `~/.cursor/mcp.json` for Cursor) to point to this local gateway server.
+3.  **Proxying requests:** The local gateway receives requests from the application, injects your Kubiya API key and selected teammate context, and forwards the requests to the actual Kubiya API.
+
+### Quick Start
+
+Getting started is designed to be simple:
+
+```bash
+# Ensure you have configured your Kubiya API key first!
+# kubiya config set api-key YOUR_API_KEY
+
+# Install the MCP Gateway server and apply default configurations
+kubiya mcp install 
+```
+
+This single command will:
+
+1.  Check for dependencies (`git`, `uv`). You might be prompted to install `uv` if it's missing.
+2.  Clone the `mcp-gateway` repository to `~/.kubiya/mcp-gateway`.
+3.  Install the Python dependencies for the gateway using `uv`.
+4.  Store the current version of the gateway.
+5.  **Fetch your Kubiya teammates.**
+6.  **Prompt you to select which teammates** should be exposed to your local applications via MCP (includes a "Select All" option).
+7.  Automatically scan for default provider configurations (e.g., for Claude, Cursor) in `~/.kubiya/mcp`.
+8.  For each compatible provider found, **apply the configuration**, updating the target application's settings file (e.g., `~/.cursor/mcp.json`) with the local gateway details and your selected teammates.
+
+After this completes, your configured local applications should automatically start using the Kubiya MCP integration!
+
+### Prerequisites
+
+- **Kubiya API Key:** Must be configured (`kubiya config set api-key ...`).
+- **Git:** Needs to be installed and available in your `PATH`.
+- **uv:** The high-performance Python package installer from Astral. If not found, `kubiya mcp install` will provide installation instructions (e.g., `curl -LsSf https://astral.sh/uv/install.sh | sh`).
+
+### Managing MCP
+
+While `kubiya mcp install` handles the initial setup, you can manage the integration further:
+
+```bash
+# List available provider configuration files found in ~/.kubiya/mcp
+kubiya mcp list
+
+# Manually apply configuration for a specific provider
+# (Useful if you skipped auto-apply or want to change teammate selection)
+kubiya mcp apply <provider_name> 
+# Example: kubiya mcp apply claude_desktop
+# This command will prompt you to select teammates interactively.
+# Use --non-interactive to apply using all teammates.
+# Use --teammate-uuid <uuid> to specify exact teammates.
+
+# Check for updates to the mcp-gateway server and reinstall dependencies
+kubiya mcp update
+
+# Open the YAML configuration file for a provider in your default editor
+kubiya mcp edit <provider_name>
+# Example: kubiya mcp edit cursor_ide
+
+# Initialize the ~/.kubiya/mcp directory with default config files
+# (install usually handles this, but can be run manually)
+kubiya mcp setup 
+```
+
+### How it Works: Provider Configurations
+
+The integration is driven by YAML configuration files located in `~/.kubiya/mcp`. Each file defines how to integrate with a specific application (a "provider").
+
+- **Default Providers:** `kubiya mcp setup` (and the initial `kubiya mcp install`) automatically creates configurations for common applications like Claude Desktop (macOS) and Cursor IDE.
+- **Custom Providers:** You can create your own `.yaml` files in `~/.kubiya/mcp` to support other MCP-compatible tools.
+
+Each provider YAML contains:
+
+- `name`: Display name (e.g., "Claude Desktop").
+- `os`: (Optional) Target operating system (`darwin`, `linux`, `windows`).
+- `target_file`: Path to the application's configuration file (e.g., `~/Library/.../claude_desktop_config.json`). Cursor is handled automatically (`~/.cursor/mcp.json`).
+- `template`: A Go template defining the JSON content to be written to the `target_file`. It receives context like API key, selected teammate UUIDs (as a JSON string), and the path to the gateway.
+
+Use `kubiya mcp edit <provider>` to easily view or modify these files.
 
 ## Installation 📥
 
@@ -45,6 +134,7 @@ A command-line interface for managing Kubiya sources, teammates, and tools on th
 
 - Go 1.22 or higher
 - [Kubiya API Key](https://docs.kubiya.ai/docs/org-management/api-keys)
+- For MCP Integration: `git` and `uv` (see MCP section above)
 
 ### Build from Source
 
@@ -60,16 +150,14 @@ make build
 make install
 ```
 
-## APT Installation (Debian/Ubuntu)
-
-To install Kubiya CLI using APT:
+### APT Installation (Debian/Ubuntu)
 
 ```bash
 # Add Kubiya's APT repository
 curl -fsSL https://cli.kubiya.ai/apt-key.gpg | sudo gpg --dearmor -o /usr/share/keyrings/kubiya-archive-keyring.gpg
 echo "deb [signed-by=/usr/share/keyrings/kubiya-archive-keyring.gpg] https://cli.kubiya.ai/apt stable main" | sudo tee /etc/apt/sources.list.d/kubiya.list
 
-# Update package list and install Kubiya CLI
+# Update and install
 sudo apt update
 sudo apt install kubiya-cli
 ```
@@ -87,333 +175,275 @@ export KUBIYA_BASE_URL="https://api.kubiya.ai/api/v1"  # Default API URL
 export KUBIYA_DEBUG=true                               # Enable debug mode
 ```
 
-## Usage 🚀
-
-The Kubiya CLI can be run from any directory - it uses your API key for authentication and doesn't require any specific working directory.
-
-### Interactive Chat
-
-Chat with your AI teammates directly from the terminal:
-
-```bash
-# Start an interactive chat session
-kubiya chat -i
-
-# Example output:
-🤖 Connected to DevOps Assistant
-Type your message or /help for commands...
-
-You: How do I deploy to staging?
-Assistant: Let me help you with the staging deployment...
-```
-
-Chat with specific context:
-```bash
-# Chat about specific files
-kubiya chat -m "Review this deployment" --context k8s/deployment.yaml
-
-# Example output:
-🔍 Analyzing k8s/deployment.yaml...
-💡 I notice a few things in your deployment:
-1. Resource limits are not set
-2. Security context is missing
-...
-```
+## Usage Examples 🚀
 
 ### Source Management
 
-List your sources with detailed information:
+#### List Sources
 ```bash
+# Basic listing
 kubiya source list
 
-# Example output:
-📦 SOURCES
-UUID                                    NAME              TOOLS  STATUS
-f7d8e9c3-4b2a-4f1e-8d9c-1a2b3c4d5e6f  jenkins-tools     12     ✅
-a1b2c3d4-5e6f-7g8h-9i0j-k1l2m3n4o5p6  kubernetes-tools  8      ✅
+# Detailed view with all information
+kubiya source list --all
+
+# Filter sources
+kubiya source list --filter "kubernetes"
+
+# Sort by name or creation date
+kubiya source list --sort name
+kubiya source list --sort created
 ```
 
-Scan a repository with detailed output:
+#### Scan Sources
 ```bash
+# Scan GitHub repository
 kubiya source scan https://github.com/org/repo
 
-# Example output:
-🔍 Scanning Source: https://github.com/org/repo
+# Scan local directory
+kubiya source scan .
 
-✅ Scan completed
-URL: https://github.com/org/repo
-Name: deployment-tools
+# Scan with specific runner
+kubiya source scan . --runner python
 
-📦 Found 3 tools
+# Scan with branch and path
+kubiya source scan https://github.com/org/repo --branch main --path /tools
 
-Available Tools:
-• deploy-staging
-  Deploys application to staging environment
-  Arguments: 2 required, 1 optional
+# Force scan with uncommitted changes
+kubiya source scan . --force
+```
 
-• update-config
-  Updates application configuration
-  Arguments: 1 required, 2 optional
+#### Add Sources
+```bash
+# Add from repository
+kubiya source add https://github.com/org/repo --name "DevOps Tools"
 
-• rollback
-  Rolls back deployment to previous version
-  Arguments: 1 required
+# Add with configuration
+kubiya source add https://github.com/org/repo --config config.json --runner python
+
+# Add inline source from file
+kubiya source add --inline tools.yaml --name "Custom Tools"
+
+# Add with auto-commit and push
+kubiya source add . --add --push --commit-msg "feat: add new tools"
 ```
 
 ### Teammate Management
 
-View teammate details with their capabilities:
+#### Create Teammates
 ```bash
-kubiya teammate get "DevOps Bot"
+# Create interactively
+kubiya teammate create --interactive
 
-# Example output:
-👤 TEAMMATE DETAILS
-Name: DevOps Bot
-Description: Specialized in DevOps automation
-Sources: 
-  • jenkins-tools
-  • kubernetes-tools
-Environment Variables: 3 configured
-Secrets: 2 configured
+# Create with basic info
+kubiya teammate create --name "DevOps Bot" --desc "Handles DevOps tasks"
+
+# Create with sources and secrets
+kubiya teammate create --name "AWS Bot" \
+  --source abc-123 --source def-456 \
+  --secret AWS_KEY --secret DB_PASSWORD
+
+# Create with environment variables
+kubiya teammate create --name "Deploy Bot" \
+  --env "ENVIRONMENT=prod" --env "DEBUG=true"
+
+# Create with webhooks
+kubiya teammate create --name "Slack Bot" \
+  --webhook-method slack --webhook-dest "#alerts" \
+  --webhook-prompt "Please analyze this alert"
+
+# Create with HTTP webhook
+kubiya teammate create --name "API Bot" \
+  --webhook-method http \
+  --webhook-prompt "Process this request"
 ```
 
-### Tool Execution
-
-Execute tools with arguments:
+#### List Teammates
 ```bash
-kubiya tool execute deploy-staging --app myapp --env staging
+# Basic listing
+kubiya teammate list
 
-# Example output:
-🚀 Executing: deploy-staging
-Parameters:
-  • app: myapp
-  • env: staging
+# Show all details
+kubiya teammate list --all
 
-📋 Deployment Steps:
-1. Validating configuration...
-2. Building container...
-3. Pushing to registry...
-4. Updating deployment...
+# Show only active teammates
+kubiya teammate list --active
 
-✅ Deployment successful!
+# Filter teammates
+kubiya teammate list --filter "kubernetes"
+
+# Sort by various fields
+kubiya teammate list --sort name
+kubiya teammate list --sort updated
 ```
 
-### Interactive Tool Browser
-
-The interactive tool browser provides a TUI for exploring and executing tools:
+#### Edit Teammates
 ```bash
-kubiya tool -i
+# Edit interactively
+kubiya teammate edit abc-123 --interactive
 
-# Opens an interactive interface:
-┌─ Available Tools ───────────────┐
-│ > deploy-staging               │
-│   update-config               │
-│   rollback                    │
-│                              │
-│ [↑↓] Navigate [Enter] Select │
-└──────────────────────────────┘
+# Update basic info
+kubiya teammate edit abc-123 --name "New Name" --desc "Updated description"
+
+# Add/remove sources
+kubiya teammate edit abc-123 --add-source def-456 --remove-source ghi-789
+
+# Update environment variables
+kubiya teammate edit abc-123 --add-env "DEBUG=true" --remove-env LOG_LEVEL
+
+# Add webhooks
+kubiya teammate edit abc-123 \
+  --webhook-method slack \
+  --webhook-dest "#notifications" \
+  --webhook-prompt "New alert received"
+```
+
+### Tool Management
+
+#### Execute Tools
+```bash
+# Basic execution
+kubiya tool execute deploy-app --app myapp --env staging
+
+# Interactive execution
+kubiya tool execute -i
+
+# Execute with JSON input
+kubiya tool execute update-config --input config.json
+
+# Execute with environment variables
+kubiya tool execute backup-db --env "BACKUP_PATH=/data"
+
+# Long-running tool execution
+kubiya tool execute monitor-logs --follow
+```
+
+#### List Tools
+```bash
+# List all tools
+kubiya tool list
+
+# Filter by source
+kubiya tool list --source abc-123
+
+# Show detailed info
+kubiya tool list --all
+
+# Filter by type
+kubiya tool list --type python
 ```
 
 ### Secret Management
 
-Create and manage secrets securely:
 ```bash
-# Create a new secret
+# Create secret
 kubiya secret create DB_PASSWORD "mypassword" --description "Database password"
 
-# Example output:
-🔒 Creating secret: DB_PASSWORD
-✅ Secret created successfully
+# Create with expiration
+kubiya secret create API_KEY "secretkey" --expires-in 30d
 
 # List secrets
 kubiya secret list
-
-# Example output:
-🔑 SECRETS
-NAME         CREATED BY  CREATED AT
-DB_PASSWORD  john.doe    2024-03-15 10:30:00
-API_KEY      jane.doe    2024-03-14 15:45:00
-```
-
-### Working with Local Repositories
-
-The CLI can detect Git information from your local directory:
-```bash
-# In your project directory
-cd my-project
-kubiya source scan .
-
-# Example output:
-📂 Local Directory Scan
-Found repository: https://github.com/org/my-project
-Branch: feature/new-tools
-
-🔍 Scanning Source...
-```
-
-### CI/CD Integration Examples
-
-#### GitHub Actions
-```yaml
-name: Kubiya Source Sync
-
-on:
-  push:
-    branches: [ main ]
-    paths:
-      - 'tools/**'
-      - '.kubiya/**'
-
-jobs:
-  sync:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-      
-      - name: Setup Go
-        uses: actions/setup-go@v4
-        with:
-          go-version: '1.22'
-
-      - name: Build Kubiya CLI
-        run: |
-          git clone https://github.com/kubiyabot/cli.git
-          cd cli
-          make build
-          sudo make install
-
-      - name: Configure Kubiya CLI
-        env:
-          KUBIYA_API_KEY: ${{ secrets.KUBIYA_API_KEY }}
-        run: |
-          kubiya source list  # Verify connection
-          SOURCE_ID=$(kubiya source list --output json | jq -r '.[] | select(.url | contains("${{ github.repository }}")) | .uuid')
-          kubiya source sync $SOURCE_ID --mode ci --auto-commit
-```
-
-#### GitLab CI
-```yaml
-kubiya-sync:
-  script:
-    - |
-      export KUBIYA_API_KEY=${KUBIYA_API_KEY}
-      kubiya source scan .
-      kubiya source sync ${SOURCE_ID} --mode ci
-```
-
-### Advanced Usage
-
-#### JSON Output for Scripting
-```bash
-# Get source information in JSON format
-kubiya source list --output json | jq '.[] | select(.name=="jenkins-tools")'
-
-# Example output:
-{
-  "uuid": "f7d8e9c3-4b2a-4f1e-8d9c-1a2b3c4d5e6f",
-  "name": "jenkins-tools",
-  "url": "https://github.com/org/jenkins-tools",
-  "tools": [
-    {
-      "name": "deploy-staging",
-      "description": "Deploys application to staging"
-    }
-  ]
-}
-```
-
-## Command Reference 📖
-
-### Global Flags
-- `--debug`: Enable debug output
-- `--output`: Output format (text|json)
-
-### Source Commands
-```bash
-# List sources
-kubiya source list [--output json]
-
-# Scan source
-kubiya source scan [url|path] [--local] [--config file.json]
-
-# Add source
-kubiya source add [url] [--name "Name"] [--config file.json]
-
-# Sync source
-kubiya source sync [uuid] [--mode ci] [--branch main] [--force]
-
-# Describe source
-kubiya source describe [uuid] [--output json]
-
-# Delete source
-kubiya source delete [uuid] [--force]
-```
-
-### Teammate Commands
-```bash
-# List teammates
-kubiya teammate list [--output json]
-
-# Get teammate details
-kubiya teammate get [uuid|name]
-
-# Get teammate environment variable
-kubiya teammate env get [teammate] [variable]
-```
-
-### Tool Commands
-```bash
-# List tools
-kubiya tool list [--output json]
-
-# Execute tool
-kubiya tool execute [name] [args...]
-
-# Interactive tool execution
-kubiya tool execute -i
-```
-
-### Secret Commands
-```bash
-# List secrets
-kubiya secret list
-
-# Get secret value
-kubiya secret get [name]
-
-# Create secret
-kubiya secret create [name] [value] [--description "desc"]
 
 # Update secret
-kubiya secret update [name] [value] [--description "desc"]
+kubiya secret update DB_PASSWORD "newpassword"
+
+# Delete secret
+kubiya secret delete DB_PASSWORD
 ```
 
-### Runner Commands
-```bash
-# List runners
-kubiya runner list [--output json]
+### Webhook Management
 
-# Get runner details
-kubiya runner get [uuid]
-```
-
-### Webhook Commands
 ```bash
+# Create Slack webhook
+kubiya webhook create --type slack --destination "#alerts" \
+  --name "Alert Handler" --prompt "Process this alert"
+
+# Create HTTP webhook
+kubiya webhook create --type http \
+  --name "API Endpoint" --prompt "Handle this request"
+
 # List webhooks
-kubiya webhook list [--output json]
+kubiya webhook list
 
 # Get webhook details
-kubiya webhook get [id]
+kubiya webhook get abc-123
+
+# Delete webhook
+kubiya webhook delete abc-123
 ```
 
-### Interactive Mode
+### Interactive Chat
+
 ```bash
-# Interactive source browser
-kubiya source browse
+# Start chat session
+kubiya chat -i
 
-# Interactive tool execution
-kubiya tool -i
+# Chat with context
+kubiya chat -m "Review this deployment" --context k8s/deployment.yaml
+
+# Chat with specific teammate
+kubiya chat -i --teammate "DevOps Bot"
+
+# Chat with file attachments
+kubiya chat -i --attach "error.log" --attach "config.yaml"
 ```
+
+### MCP Integration (Examples)
+
+*These commands are also detailed in the dedicated MCP section above.*
+
+```bash
+# Install MCP gateway and configure defaults interactively
+kubiya mcp install
+
+# List configured application providers
+kubiya mcp list
+
+# Manually apply/re-apply configuration for Cursor
+kubiya mcp apply cursor_ide 
+
+# Update the MCP gateway code
+kubiya mcp update
+
+# Edit the Claude Desktop provider config
+kubiya mcp edit claude_desktop
+```
+
+## Tips and Tricks 💡
+
+1. Use `--help` with any command to see detailed usage:
+   ```bash
+   kubiya source --help
+   kubiya teammate create --help
+   ```
+
+2. Enable debug mode for verbose output:
+   ```bash
+   export KUBIYA_DEBUG=true
+   kubiya source scan .
+   ```
+
+3. Use tab completion (bash/zsh):
+   ```bash
+   # For bash
+   source <(kubiya completion bash)
+   
+   # For zsh
+   source <(kubiya completion zsh)
+   ```
+
+4. Save common configurations in a config file:
+   ```bash
+   kubiya config init
+   kubiya config set default_runner python
+   ```
+
+## Support 🤝
+
+- Documentation: [https://docs.kubiya.ai](https://docs.kubiya.ai)
+- Issues: [GitHub Issues](https://github.com/kubiyabot/cli/issues)
+- Community: [Join our Slack](https://join.slack.com/t/kubiya/shared_invite/zt-1234567890)
 
 ## Development 👩‍💻
 
@@ -424,15 +454,11 @@ kubiya tool -i
 │   ├── cli/         # CLI implementation
 │   ├── config/      # Configuration handling
 │   ├── kubiya/      # API client
+│   ├── mcp/         # MCP integration logic & defaults
 │   ├── style/       # Terminal styling
 │   └── tui/         # Terminal UI components
 └── main.go         # Entry point
 ```
-
-## Support 💬
-
-- **Documentation**: [docs.kubiya.ai](https://docs.kubiya.ai)
-- **Issues**: [GitHub Issues](https://github.com/kubiyabot/cli/issues)
 
 ## License 📄
 
