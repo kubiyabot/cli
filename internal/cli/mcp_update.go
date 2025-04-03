@@ -1,12 +1,14 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
 	"strings"
 
 	"github.com/kubiyabot/cli/internal/config"
+	"github.com/kubiyabot/cli/internal/kubiya"
 	"github.com/kubiyabot/cli/internal/mcp"
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
@@ -123,6 +125,57 @@ and updates the stored version information.`,
 			} else {
 				fmt.Fprintln(stdout, "✅ Stored.")
 			}
+
+			// 6. Re-apply configurations
+			fmt.Fprintln(stdout, "\n⚙️ Re-applying configurations for existing providers...")
+
+			if cfg.APIKey == "" {
+				fmt.Fprintln(stdout, "🟡 Skipping configuration re-apply: Kubiya API key not configured.")
+				fmt.Fprintln(stdout, "   Run 'kubiya mcp apply <provider>' manually if needed after setting the API key.")
+			} else {
+				var allTeammateUUIDs []string
+				client := kubiya.NewClient(cfg)
+				fmt.Fprint(stdout, "  Fetching all teammates for re-apply... ")
+				teammates, err := client.ListTeammates(context.Background())
+				if err != nil {
+					fmt.Fprintln(stdout, "❌ Error fetching teammates.")
+					fmt.Fprintf(stderr, "  Warning: Could not fetch teammates for re-apply: %v\n", err)
+					fmt.Fprintln(stderr, "  Will re-apply configurations without specific teammates.")
+					allTeammateUUIDs = []string{}
+				} else {
+					for _, tm := range teammates {
+						allTeammateUUIDs = append(allTeammateUUIDs, tm.UUID)
+					}
+					fmt.Fprintf(stdout, "✅ Using %d teammates.\n", len(allTeammateUUIDs))
+				}
+
+				mcpConfigDir, err := mcp.GetMcpConfigDir(fs)
+				if err != nil {
+					fmt.Fprintf(stderr, "  Warning: Could not access MCP config directory (%s) for re-apply: %v\n", mcpConfigDir, err)
+				} else {
+					files, err := afero.ReadDir(fs, mcpConfigDir)
+					if err != nil {
+						fmt.Fprintf(stderr, "  Warning: Could not list files in MCP config directory (%s) for re-apply: %v\n", mcpConfigDir, err)
+					} else {
+						fmt.Fprintln(stdout, "  Checking providers in", mcpConfigDir)
+						appliedCount := 0
+						for _, file := range files {
+							if !file.IsDir() && strings.HasSuffix(file.Name(), ".yaml") {
+								providerName := strings.TrimSuffix(file.Name(), ".yaml")
+								fmt.Fprintf(stdout, "  Re-applying configuration for: %s\n", providerName)
+								if err := applyProviderConfiguration(providerName, cfg, fs, stdout, stderr, allTeammateUUIDs); err != nil {
+									fmt.Fprintf(stderr, "  Error re-applying config for %s: %v\n", providerName, err)
+								} else {
+									appliedCount++
+								}
+							}
+						}
+						if appliedCount == 0 {
+							fmt.Fprintln(stdout, "  No provider configurations found to re-apply.")
+						}
+					}
+				}
+			} // End API key check
 
 			fmt.Fprintln(stdout, "\n✨ MCP server updated successfully!")
 
