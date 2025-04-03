@@ -28,6 +28,7 @@ Quick Start:
   • Manage runners:   kubiya runner list
   • Manage webhooks:  kubiya webhook list
   • Update CLI:       kubiya update
+  • Initialize:       kubiya init tool|workflow  # Create new tools/workflows
 
 Need help? Visit: https://docs.kubiya.ai`,
 		Version: version.GetVersion(),
@@ -73,6 +74,8 @@ Need help? Visit: https://docs.kubiya.ai`,
 		newProjectCommand(cfg),
 		newAuditCommand(cfg),
 		newRunCommand(cfg),
+		newInitCommand(cfg),
+		newMcpCommand(cfg),
 	)
 
 	return rootCmd.Execute()

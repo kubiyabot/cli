@@ -26,6 +26,10 @@ func newTeammateCommand(cfg *config.Config) *cobra.Command {
 		Aliases: []string{"teammates", "tm"},
 		Short:   "👥 Manage teammates",
 		Long:    `Create, edit, delete, and list teammates in your Kubiya workspace.`,
+		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			// Check if API key is configured before running any teammate command
+			return requireAPIKey(cmd, cfg)
+		},
 	}
 
 	cmd.AddCommand(
@@ -70,6 +74,12 @@ func newCreateTeammateCommand(cfg *config.Config) *cobra.Command {
 		Short: "➕ Create new teammate",
 		Example: `  # Create interactively with advanced form
   kubiya teammate create --interactive
+  
+  # Interactive mode allows creating sources directly:
+  # - Add existing sources by UUID
+  # - Create sources from GitHub URLs
+  # - Create sources from local directories or files
+  # - Create inline sources with custom code or YAML
 
   # Create from JSON/YAML file
   kubiya teammate create --file teammate.json
@@ -111,7 +121,56 @@ func newCreateTeammateCommand(cfg *config.Config) *cobra.Command {
 			var err error
 			var createdResources []string // Track resources created to show in summary
 
-			// Handle inline sources first if provided
+			// Process input based on flags
+			if inputFile != "" || fromStdin {
+				if inputFile != "" {
+					teammate, err = readTeammateFromFile(inputFile, inputFormat)
+				} else {
+					teammate, err = readTeammateFromStdin(inputFormat)
+				}
+				if err != nil {
+					return fmt.Errorf("failed to read teammate configuration: %w", err)
+				}
+			} else if interactive {
+				form := tui.NewTeammateForm(cfg)
+				result, err := form.Run()
+				if err != nil {
+					return fmt.Errorf("failed to run interactive form: %w", err)
+				}
+				if result == nil {
+					return fmt.Errorf("teammate creation cancelled")
+				}
+				teammate = *result
+			} else {
+				// Create teammate from command line arguments
+				teammate = kubiya.Teammate{
+					Name:            name,
+					Description:     description,
+					LLMModel:        llmModel,
+					InstructionType: instructionType,
+					Sources:         sources,
+					Secrets:         secrets,
+					Integrations:    integrations,
+					Environment:     parseEnvVars(envVars),
+				}
+			}
+
+			// Validate the teammate configuration
+			if err := validateTeammate(client, cmd.Context(), &teammate); err != nil {
+				return fmt.Errorf("invalid teammate configuration: %w", err)
+			}
+
+			// Create the teammate
+			fmt.Printf("Creating teammate '%s'...\n", teammate.Name)
+			created, err := client.CreateTeammate(cmd.Context(), teammate)
+			if err != nil {
+				return fmt.Errorf("failed to create teammate: %w", err)
+			}
+
+			fmt.Printf("✅ Created teammate: %s (UUID: %s)\n", created.Name, created.UUID)
+			createdResources = append(createdResources, fmt.Sprintf("Teammate: %s (%s)", created.Name, created.UUID))
+
+			// Handle inline sources if provided
 			if inlineSourceFile != "" || inlineSourceStdin {
 				// We need to create a temporary stand-alone source using sources.go functionality
 				var sourceName string
@@ -160,8 +219,12 @@ func newCreateTeammateCommand(cfg *config.Config) *cobra.Command {
 				fmt.Printf("✅ Created inline source with UUID: %s\n", sourceUUID)
 				createdResources = append(createdResources, fmt.Sprintf("Source: %s", sourceUUID))
 
-				// Add the source UUID to the teammate
-				teammate.Sources = append(teammate.Sources, sourceUUID)
+				// Bind the source to the teammate
+				fmt.Printf("Attaching source %s to teammate %s...\n", sourceUUID, created.UUID)
+				if err := client.BindSourceToTeammate(cmd.Context(), sourceUUID, created.UUID); err != nil {
+					return fmt.Errorf("failed to bind source to teammate: %w", err)
+				}
+				fmt.Printf("✅ Attached source %s to teammate %s\n", sourceUUID, created.UUID)
 			}
 
 			// Process knowledge files if provided
@@ -203,165 +266,6 @@ func newCreateTeammateCommand(cfg *config.Config) *cobra.Command {
 
 			// Add existing knowledge items
 			knowledgeIds = append(knowledgeIds, knowledgeItems...)
-
-			// Process input based on flags
-			switch {
-			case inputFile != "":
-				// Read from file (JSON or YAML)
-				teammate, err = readTeammateFromFile(inputFile, inputFormat)
-				if err != nil {
-					return err
-				}
-				fmt.Printf("📄 Parsed teammate configuration from %s\n", inputFile)
-
-			case fromStdin:
-				// Read from stdin
-				teammate, err = readTeammateFromStdin(inputFormat)
-				if err != nil {
-					return err
-				}
-				fmt.Printf("📥 Parsed teammate configuration from stdin\n")
-
-			case interactive:
-				// Use enhanced TUI form
-				fmt.Println("🖥️ Starting interactive teammate creation form...")
-				form := tui.NewTeammateForm(cfg)
-				result, err := form.Run()
-				if err != nil {
-					return err
-				}
-				if result == nil {
-					return fmt.Errorf("teammate creation cancelled")
-				}
-				teammate = *result
-
-			default:
-				// Use command line parameters
-				if name == "" {
-					return fmt.Errorf("name is required when not using --interactive, --file or --stdin")
-				}
-				teammate = kubiya.Teammate{
-					Name:            name,
-					Description:     description,
-					LLMModel:        llmModel,
-					InstructionType: instructionType,
-					Sources:         sources,
-					Secrets:         secrets,
-					Integrations:    integrations,
-				}
-
-				// Parse environment variables
-				if len(envVars) > 0 {
-					teammate.Environment = make(map[string]string)
-					for _, env := range envVars {
-						parts := strings.SplitN(env, "=", 2)
-						if len(parts) != 2 {
-							return fmt.Errorf("invalid environment variable format: %s (should be KEY=VALUE)", env)
-						}
-						teammate.Environment[parts[0]] = parts[1]
-					}
-				}
-			}
-
-			// Add knowledge items to teammate's properties
-			if len(knowledgeIds) > 0 {
-				if teammate.Tags == nil {
-					teammate.Tags = []string{}
-				}
-				for _, id := range knowledgeIds {
-					teammate.Tags = append(teammate.Tags, fmt.Sprintf("knowledge:%s", id))
-				}
-			}
-
-			// Augment the teammate with the proper structure expected by the API
-			if teammate.Starters == nil {
-				teammate.Starters = []interface{}{}
-			}
-
-			// Initialize empty slices if nil to ensure proper JSON serialization
-			if teammate.Sources == nil {
-				teammate.Sources = []string{}
-			}
-			if teammate.Secrets == nil {
-				teammate.Secrets = []string{}
-			}
-			if teammate.Integrations == nil {
-				teammate.Integrations = []string{}
-			}
-			if teammate.Runners == nil {
-				teammate.Runners = []string{}
-			}
-			if teammate.AllowedGroups == nil {
-				teammate.AllowedGroups = []string{}
-			}
-			if teammate.AllowedUsers == nil {
-				teammate.AllowedUsers = []string{}
-			}
-			if teammate.Owners == nil {
-				teammate.Owners = []string{}
-			}
-			if teammate.Tools == nil {
-				teammate.Tools = []string{}
-			}
-			if teammate.Tasks == nil {
-				teammate.Tasks = []string{}
-			}
-			if teammate.Tags == nil {
-				teammate.Tags = []string{}
-			}
-
-			// Validate the teammate - this cannot be bypassed
-			if err := validateTeammate(client, cmd.Context(), &teammate); err != nil {
-				// Print a more helpful message with validation instructions
-				fmt.Printf("\n%s\n", style.ErrorStyle.Render("❌ Validation Error"))
-				fmt.Printf("%s\n\n", err.Error())
-
-				return fmt.Errorf("validation failed")
-			}
-
-			// Show confirmation with details before proceeding
-			fmt.Printf("\n%s\n\n", style.TitleStyle.Render(" 🤖 Creating Teammate "))
-			fmt.Printf("  Name: %s\n", style.HighlightStyle.Render(teammate.Name))
-			fmt.Printf("  Description: %s\n", teammate.Description)
-			fmt.Printf("  LLM Model: %s\n", teammate.LLMModel)
-			fmt.Printf("  Type: %s\n", teammate.InstructionType)
-
-			if len(teammate.Sources) > 0 {
-				fmt.Printf("  Sources: %d\n", len(teammate.Sources))
-			}
-			if len(teammate.Secrets) > 0 {
-				fmt.Printf("  Secrets: %d\n", len(teammate.Secrets))
-			}
-			if len(teammate.Environment) > 0 {
-				fmt.Printf("  Environment Variables: %d\n", len(teammate.Environment))
-			}
-			if len(teammate.Integrations) > 0 {
-				fmt.Printf("  Integrations: %d\n", len(teammate.Integrations))
-			}
-			if len(knowledgeIds) > 0 {
-				fmt.Printf("  Knowledge Items: %d\n", len(knowledgeIds))
-			}
-			fmt.Println()
-
-			// Send to API
-			created, err := client.CreateTeammate(cmd.Context(), teammate)
-			if err != nil {
-				// Enhanced error handling
-				return fmt.Errorf("failed to create teammate: %w", err)
-			}
-
-			// Ensure we have a valid UUID before displaying
-			if created.UUID == "" {
-				fmt.Printf("\n%s\n", style.WarningStyle.Render("⚠️ Warning: API returned a teammate with empty UUID!"))
-				fmt.Printf("The teammate may have been created, but the UUID was not returned by the API.\n")
-				fmt.Printf("Please check the 'kubiya teammate list' command to find your teammate.\n\n")
-
-				// Return with a more specific error to help debugging
-				if created.ID != "" {
-					fmt.Printf("Note: The API returned an ID field (%s) but not a UUID field.\n", style.HighlightStyle.Render(created.ID))
-					fmt.Printf("This may indicate a mismatch between the CLI and API versions.\n\n")
-				}
-			}
 
 			// Process webhooks if provided
 			if len(webhooks) > 0 || len(webhookDestinations) > 0 || webhookFile != "" {
@@ -415,7 +319,7 @@ func newCreateTeammateCommand(cfg *config.Config) *cobra.Command {
 					if webhookMethod == "http" && len(webhookDestinations) == 0 {
 						prompt := webhookPrompt
 						if prompt == "" {
-							prompt = "Default prompt for HTTP webhook"
+							prompt = "Default HTTP webhook prompt"
 						}
 
 						webhook, err := createWebhook(cmd.Context(), client, created.UUID, "", "http", prompt)
@@ -425,7 +329,6 @@ func newCreateTeammateCommand(cfg *config.Config) *cobra.Command {
 							fmt.Printf("✅ Created HTTP webhook (ID: %s)\n", webhook.ID)
 							if webhook.WebhookURL != "" {
 								fmt.Printf("   📋 Webhook URL: %s\n", style.HighlightStyle.Render(webhook.WebhookURL))
-								fmt.Printf("   📊 Use the webhooks API or web interface to track webhook activity\n")
 								createdResources = append(createdResources, fmt.Sprintf("Created HTTP webhook: %s (URL: %s)",
 									webhook.ID, webhook.WebhookURL))
 							} else {
@@ -435,73 +338,27 @@ func newCreateTeammateCommand(cfg *config.Config) *cobra.Command {
 						}
 					}
 
-					// Process webhooks from file if specified
+					// Process webhook file if provided
 					if webhookFile != "" {
-						// Read file content
-						webhookData, err := os.ReadFile(webhookFile)
+						webhooks, err := readWebhooksFromFile(webhookFile)
 						if err != nil {
 							fmt.Printf("⚠️ Failed to read webhook file: %v\n", err)
 						} else {
-							// Parse the webhooks (format depends on file extension)
-							var webhooks []kubiya.Webhook
-							ext := strings.ToLower(filepath.Ext(webhookFile))
-							if ext == ".json" {
-								if err := json.Unmarshal(webhookData, &webhooks); err != nil {
-									// Try single webhook parse if array fails
-									var singleWebhook kubiya.Webhook
-									if err := json.Unmarshal(webhookData, &singleWebhook); err != nil {
-										fmt.Printf("⚠️ Failed to parse webhook JSON: %v\n", err)
-									} else {
-										webhooks = []kubiya.Webhook{singleWebhook}
-									}
-								}
-							} else if ext == ".yaml" || ext == ".yml" {
-								if err := yaml.Unmarshal(webhookData, &webhooks); err != nil {
-									// Try single webhook parse if array fails
-									var singleWebhook kubiya.Webhook
-									if err := yaml.Unmarshal(webhookData, &singleWebhook); err != nil {
-										fmt.Printf("⚠️ Failed to parse webhook YAML: %v\n", err)
-									} else {
-										webhooks = []kubiya.Webhook{singleWebhook}
-									}
-								}
-							} else {
-								fmt.Printf("⚠️ Unsupported webhook file format: %s (use .json, .yaml, or .yml)\n", ext)
-							}
-
-							// Create each webhook
-							for i, webhook := range webhooks {
-								// Set the teammate ID
-								webhook.AgentID = created.UUID
-
-								// Set defaults if needed
-								if webhook.Name == "" {
-									webhook.Name = fmt.Sprintf("Webhook %d for %s", i+1, created.UUID)
-								}
-								if webhook.Communication.Method == "" {
-									webhook.Communication.Method = "http"
-								}
-								if webhook.Prompt == "" {
-									webhook.Prompt = fmt.Sprintf("Default prompt for %s webhook", webhook.Communication.Method)
-								}
-
-								// Create the webhook
+							for _, webhook := range webhooks {
+								webhook.AgentID = created.UUID // Set the teammate ID
 								createdWebhook, err := client.CreateWebhook(cmd.Context(), webhook)
 								if err != nil {
-									fmt.Printf("⚠️ Failed to create webhook %d from file: %v\n", i+1, err)
-									continue
-								}
-
-								fmt.Printf("✅ Created %s webhook from file (ID: %s)\n",
-									webhook.Communication.Method, createdWebhook.ID)
-
-								if createdWebhook.WebhookURL != "" {
-									fmt.Printf("   📋 Webhook URL: %s\n", style.HighlightStyle.Render(createdWebhook.WebhookURL))
-									createdResources = append(createdResources, fmt.Sprintf("Created %s webhook: %s (URL: %s)",
-										webhook.Communication.Method, createdWebhook.ID, createdWebhook.WebhookURL))
+									fmt.Printf("⚠️ Failed to create webhook from file: %v\n", err)
 								} else {
-									createdResources = append(createdResources, fmt.Sprintf("Created %s webhook: %s",
-										webhook.Communication.Method, createdWebhook.ID))
+									fmt.Printf("✅ Created webhook from file (ID: %s)\n", createdWebhook.ID)
+									if createdWebhook.WebhookURL != "" {
+										fmt.Printf("   📋 Webhook URL: %s\n", style.HighlightStyle.Render(createdWebhook.WebhookURL))
+										createdResources = append(createdResources, fmt.Sprintf("Created webhook from file: %s (URL: %s)",
+											createdWebhook.ID, createdWebhook.WebhookURL))
+									} else {
+										createdResources = append(createdResources, fmt.Sprintf("Created webhook from file: %s",
+											createdWebhook.ID))
+									}
 								}
 							}
 						}
@@ -509,23 +366,15 @@ func newCreateTeammateCommand(cfg *config.Config) *cobra.Command {
 				}
 			}
 
-			// Display the teammate info
-			fmt.Printf("%s Created teammate: %s (UUID: %s)\n\n",
-				style.SuccessStyle.Render("✅"),
-				style.HighlightStyle.Render(created.Name),
-				style.DimStyle.Render(created.UUID))
-
-			// Show created resources summary if any
+			// Show summary of created resources
 			if len(createdResources) > 0 {
-				fmt.Printf("%s\n", style.SubtitleStyle.Render("Created Resources"))
+				fmt.Printf("\n%s\n", style.SubtitleStyle.Render("Created Resources"))
 				for _, resource := range createdResources {
 					fmt.Printf("• %s\n", resource)
 				}
-				fmt.Println()
 			}
 
-			// Helpful next steps
-			fmt.Printf("%s\n", style.SubtitleStyle.Render("Next Steps"))
+			fmt.Printf("\n%s\n", style.SubtitleStyle.Render("Next Steps"))
 			if created.UUID != "" {
 				fmt.Printf("• View details: %s\n",
 					style.CommandStyle.Render(fmt.Sprintf("kubiya teammate get %s", created.UUID)))
@@ -815,28 +664,15 @@ func newEditTeammateCommand(cfg *config.Config) *cobra.Command {
 		Short: "✏️ Edit teammate",
 		Example: `  # Edit interactively with form
   kubiya teammate edit abc-123 --interactive
+  
+  # Interactive mode allows managing sources directly:
+  # - Add existing sources by UUID
+  # - Create sources from GitHub URLs
+  # - Create sources from local directories or files
+  # - Create inline sources with custom code or YAML
 
   # Edit using JSON editor
-  kubiya teammate edit abc-123 --editor
-
-  # Edit specific fields
-  kubiya teammate edit abc-123 --name "New Name" --desc "Updated description"
-  
-  # Add or remove components
-  kubiya teammate edit abc-123 --add-source def-456 --remove-secret DB_PASSWORD
-  kubiya teammate edit abc-123 --add-env "DEBUG=true" --remove-integration github
-  
-  # Add webhooks to teammate
-  kubiya teammate edit abc-123 --webhook-method slack --webhook-dest "#alerts" --webhook-prompt "Alert received"
-  
-  # Add HTTP webhook (system generates the URL)
-  kubiya teammate edit abc-123 --webhook-method http --webhook-prompt "Process this API request"
-  
-  # Add existing webhook by ID
-  kubiya teammate edit abc-123 --add-webhook webhook-123-456
-  
-  # Remove webhook from teammate
-  kubiya teammate edit abc-123 --remove-webhook webhook-789-012`,
+  kubiya teammate edit abc-123 --editor`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			client := kubiya.NewClient(cfg)
@@ -2210,4 +2046,66 @@ func extractUUIDFromSourceOutput(output string) string {
 		}
 	}
 	return ""
+}
+
+// parseEnvVars parses environment variables from a slice of strings in KEY=VALUE format
+func parseEnvVars(envVars []string) map[string]string {
+	env := make(map[string]string)
+	for _, envVar := range envVars {
+		parts := strings.SplitN(envVar, "=", 2)
+		if len(parts) == 2 {
+			env[parts[0]] = parts[1]
+		}
+	}
+	return env
+}
+
+// readWebhooksFromFile reads webhook definitions from a file
+func readWebhooksFromFile(filepath string) ([]kubiya.Webhook, error) {
+	// Read file content
+	webhookData, err := os.ReadFile(filepath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read webhook file: %w", err)
+	}
+
+	// Parse the webhooks (format depends on file extension)
+	var webhooks []kubiya.Webhook
+	// get the extension from the file string (after the last dot)
+	ext := "yaml"
+	if ext == ".json" {
+		if err := json.Unmarshal(webhookData, &webhooks); err != nil {
+			// Try single webhook parse if array fails
+			var singleWebhook kubiya.Webhook
+			if err := json.Unmarshal(webhookData, &singleWebhook); err != nil {
+				return nil, fmt.Errorf("failed to parse webhook JSON: %w", err)
+			}
+			webhooks = []kubiya.Webhook{singleWebhook}
+		}
+	} else if ext == ".yaml" || ext == ".yml" {
+		if err := yaml.Unmarshal(webhookData, &webhooks); err != nil {
+			// Try single webhook parse if array fails
+			var singleWebhook kubiya.Webhook
+			if err := yaml.Unmarshal(webhookData, &singleWebhook); err != nil {
+				return nil, fmt.Errorf("failed to parse webhook YAML: %w", err)
+			}
+			webhooks = []kubiya.Webhook{singleWebhook}
+		}
+	} else {
+		return nil, fmt.Errorf("unsupported webhook file format: %s (use .json, .yaml, or .yml)", ext)
+	}
+
+	// Set defaults for each webhook
+	for i := range webhooks {
+		if webhooks[i].Name == "" {
+			webhooks[i].Name = fmt.Sprintf("Webhook %d", i+1)
+		}
+		if webhooks[i].Communication.Method == "" {
+			webhooks[i].Communication.Method = "http"
+		}
+		if webhooks[i].Prompt == "" {
+			webhooks[i].Prompt = fmt.Sprintf("Default prompt for %s webhook", webhooks[i].Communication.Method)
+		}
+	}
+
+	return webhooks, nil
 }
