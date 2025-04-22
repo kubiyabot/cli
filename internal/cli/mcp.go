@@ -37,6 +37,6 @@ configuration files of these local tools.`,
 	cmd.AddCommand(newMcpUpdateCommand(cfg, fs))
 	cmd.AddCommand(newMcpApplyCommand(cfg, fs))
 	cmd.AddCommand(newMcpEditCommand(cfg, fs))
-
+	cmd.AddCommand(newMcpServeCommand(cfg, fs))
 	return cmd
 }
