@@ -83,7 +83,7 @@ func newRunCommand(cfg *config.Config) *cobra.Command {
 
 				// Set headers
 				req.Header.Set("Content-Type", "application/json")
-				req.Header.Set("Authorization", "UserKey "+cfg.APIKey)
+	
 
 				if debug {
 					fmt.Printf("🌐 Sending classification request to: %s\n", classifyURL)

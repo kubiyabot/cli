@@ -271,3 +271,44 @@ func (c *Client) SendMessageWithContext(ctx context.Context, teammateID, message
 
 	return c.SendMessage(ctx, teammateID, contextMsg.String(), sessionID)
 }
+
+func (c *Client) GetConversationMessages(ctx context.Context, teammateID, message, sessionID string) (map[string]SSEEvent, error) {
+	// synchronousely get the conversation messages
+	payload := struct {
+		Message   string `json:"message"`
+		AgentUUID string `json:"agent_uuid"`
+		SessionID string `json:"session_id"`
+	}{
+		Message:   message,
+		AgentUUID: teammateID,
+		SessionID: sessionID,
+	}
+	var body bytes.Buffer
+	if err := json.NewEncoder(&body).Encode(payload); err != nil {
+		return nil, fmt.Errorf("failed to encode request payload: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, "POST", fmt.Sprintf("%s/converse", c.baseURL), &body)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "UserKey "+c.cfg.APIKey)
+	lines, err := c.doRaw(req)
+	if err != nil {
+		return nil, err
+	}
+	ret := make(map[string]SSEEvent, 0)
+
+	for _, line := range strings.Split(string(lines), "\n") {
+		// iterate over the lines and only keep the last event of each message id (compensate over streaming)
+		if line == "" {
+			continue
+		}
+		var ev SSEEvent
+		err = json.Unmarshal([]byte(line), &ev)
+		if err != nil {
+			continue
+		}
+		ret[ev.ID] = ev
+	}
+	return ret, nil
+}
