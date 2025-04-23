@@ -2,10 +2,12 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 
 	"github.com/google/uuid"
 	"github.com/kubiyabot/cli/internal/config"
@@ -43,7 +45,7 @@ func getSpecificTeammates(ctx context.Context, cli *kubiya.Client) ([]kubiya.Tea
 		if teammate.UUID == "" || teammate.Name == "" {
 			continue
 		}
-		if contains(teammatesIdentifiers, teammate.UUID) || contains(teammatesIdentifiers, teammate.Name) {
+		if contains(teammatesIdentifiers, teammate.UUID) || contains(teammatesIdentifiers, teammate.Name) || teammatesIdentifiers[0] == "*" {
 			ret = append(ret, teammate)
 		}
 	}
@@ -53,14 +55,26 @@ func getSpecificTeammates(ctx context.Context, cli *kubiya.Client) ([]kubiya.Tea
 func getToolsFromTeammate(ctx context.Context, cli *kubiya.Client, teammates []kubiya.Teammate) (map[string][]kubiya.Tool, map[string]kubiya.Teammate, error) {
 	toolsMap := make(map[string][]kubiya.Tool, 0)
 	teammateMap := make(map[string]kubiya.Teammate, 0)
+	var wg sync.WaitGroup
+	var mu sync.Mutex
 	for _, teammate := range teammates {
 		teammateMap[teammate.UUID] = teammate
 		for _, sourceid := range teammate.Sources {
-			// TODO: fetch these metadatas in parallel
-			sourceMetadata, _ := cli.GetSourceMetadata(ctx, sourceid)
-			toolsMap[teammate.UUID] = append(toolsMap[teammate.UUID], sourceMetadata.Tools...)
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				sourceMd, err := cli.GetSourceMetadata(ctx, sourceid)
+				if err != nil {
+					fmt.Printf("failed to get source metadata: %s\n", err)
+					return
+				}
+				mu.Lock()
+				defer mu.Unlock()
+				toolsMap[teammate.UUID] = append(toolsMap[teammate.UUID], sourceMd.Tools...)
+			}()
 		}
 	}
+	wg.Wait()
 	return toolsMap, teammateMap, nil
 }
 
@@ -93,21 +107,62 @@ func canonicalToolName(teammatename, toolname string) string {
 	newToolName := fmt.Sprintf("%s_%s", teammatename, toolname)
 	newToolName = strings.ReplaceAll(newToolName, " ", "_")
 	newToolName = strings.ReplaceAll(newToolName, "-", "_")
+	if len(newToolName) > 64 {
+		return newToolName[:64]
+	}
 	return newToolName
+}
+
+func getToolInputSchema(tool kubiya.Tool) json.RawMessage {
+	// converts the tool description as in the metadata to a valid mcp input schema
+
+	// input schema types, as taken from the spec
+	// https://github.com/modelcontextprotocol/modelcontextprotocol/blob/main/schema/2025-03-26/schema.ts#L800-L803
+
+	type propertySchema struct {
+		Type string `json:"type"`
+		Desc string `json:"description,omitempty"`
+	}
+	type toolSchema struct {
+		Type       string                    `json:"type"`
+		Properties map[string]propertySchema `json:"properties"`
+		Required   []string                  `json:"required"`
+	}
+
+	// create the actual schema
+	ts := toolSchema{
+		Type:       "object", // this is always an object
+		Properties: make(map[string]propertySchema),
+		Required:   make([]string, 0),
+	}
+	for _, arg := range tool.Args {
+		ts.Properties[arg.Name] = propertySchema{
+			Type: arg.Type,
+			Desc: arg.Description,
+		}
+
+		if arg.Required {
+			ts.Required = append(ts.Required, arg.Name)
+		}
+	}
+
+	ret, _ := json.Marshal(ts)
+	return ret
 }
 
 func kubiyaToolMcpWrapper(ctx context.Context, cli *kubiya.Client, teammate kubiya.Teammate, tool kubiya.Tool) server.ServerTool {
 	handler := func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		_, outp, err := executeKubiyaToolViaTeammate(ctx, cli, teammate, tool, nil) // TODO: pass args
+		_, outp, err := executeKubiyaToolViaTeammate(ctx, cli, teammate, tool, request.Params.Arguments)
 		if err != nil {
 			return nil, fmt.Errorf("failed to execute tool: %w", err)
 		}
 		return mcp.NewToolResultText(outp), nil
 	}
 	return server.ServerTool{
-		Tool: mcp.NewTool(
+		Tool: mcp.NewToolWithRawSchema(
 			canonicalToolName(teammate.Name, tool.Name),
-			mcp.WithDescription(tool.Description),
+			tool.Description,
+			getToolInputSchema(tool),
 		),
 		Handler: handler,
 	}
@@ -156,7 +211,6 @@ func newMcpServeCommand(cfg *config.Config, fs afero.Fs) *cobra.Command {
 }
 
 func startMcpServer(tools []server.ServerTool) error {
-	fmt.Println("Starting MCP server...")
 	s := server.NewMCPServer(
 		"Kubiya",
 		"0.0.1",
