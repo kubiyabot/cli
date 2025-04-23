@@ -1,7 +1,9 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,6 +14,19 @@ import (
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 )
+
+func commandExists(fs afero.Fs, cmdName string, stdout io.Writer) (bool, error) {
+	// Use the mockable LookPath function
+	_, err := exec.LookPath(cmdName)
+	if err != nil {
+		if errors.Is(err, exec.ErrNotFound) {
+			return false, nil // Command not found is not an error for this check
+		}
+		// Other errors (e.g., permission issues) should be reported
+		return false, fmt.Errorf("failed to check for command '%s': %w", cmdName, err)
+	}
+	return true, nil
+}
 
 // Accept fs afero.Fs (for consistency, though not directly used in RunE)
 func newMcpEditCommand(cfg *config.Config, fs afero.Fs) *cobra.Command {
