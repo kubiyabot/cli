@@ -137,7 +137,7 @@ func getToolInputSchema(tool kubiya.Tool) json.RawMessage {
 	}
 	for _, arg := range tool.Args {
 		ts.Properties[arg.Name] = propertySchema{
-			Type: arg.Type,
+			Type: canonicalArgName(arg.Type),
 			Desc: arg.Description,
 		}
 
@@ -148,6 +148,23 @@ func getToolInputSchema(tool kubiya.Tool) json.RawMessage {
 
 	ret, _ := json.Marshal(ts)
 	return ret
+}
+
+func canonicalArgName(argType string) string {
+	switch argType {
+	case "string", "text", "str":
+		return "string"
+	case "number", "integer", "float", "double", "int":
+		return "number"
+	case "boolean", "bool":
+		return "boolean"
+	case "array", "list":
+		return "array"
+	case "object", "dict", "map":
+		return "object"
+	default:
+		return ""
+	}
 }
 
 func kubiyaToolMcpWrapper(ctx context.Context, cli *kubiya.Client, teammate kubiya.Teammate, tool kubiya.Tool) server.ServerTool {
