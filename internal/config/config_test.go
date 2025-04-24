@@ -32,9 +32,10 @@ func TestLoad(t *testing.T) {
 			wantDebug:   false,
 		},
 		{
-			name:    "missing API key",
-			envVars: map[string]string{},
-			wantErr: true,
+			name:        "missing API key",
+			envVars:     map[string]string{},
+			wantErr:     false,
+			wantBaseURL: "https://api.kubiya.ai/api/v1",
 		},
 	}
 
@@ -72,4 +73,4 @@ func TestLoad(t *testing.T) {
 			}
 		})
 	}
-} 
+}

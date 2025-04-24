@@ -74,7 +74,7 @@ func CheckForUpdate() (string, bool, error) {
 	lastCheck = time.Now()
 	latestVersion = release.TagName
 
-	return latestVersion, latestVersion > Version, nil
+	return latestVersion, latestVersion > Version && Version != "dev", nil
 }
 
 // GetUpdateMessage returns a formatted message about available updates
