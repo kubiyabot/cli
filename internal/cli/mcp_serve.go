@@ -3,15 +3,14 @@ package cli
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"os"
 	"strings"
 	"sync"
 
 	"github.com/google/uuid"
 	"github.com/kubiyabot/cli/internal/config"
 	"github.com/kubiyabot/cli/internal/kubiya"
+	"github.com/kubiyabot/cli/internal/mcp_helpers"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -19,23 +18,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func getTeammateIdentifiers() ([]string, error) {
-	envnvar := os.Getenv("TEAMMATE_UUIDS") // or names
-	if envnvar == "" {
-		return nil, errors.New("TEAMMATE_UUIDS environment variable is not set")
-	}
-	ret := strings.Split(envnvar, ",")
-	for i, id := range ret {
-		ret[i] = strings.TrimSpace(id)
-	}
-	return ret, nil
-}
-
-func getSpecificTeammates(ctx context.Context, cli *kubiya.Client) ([]kubiya.Teammate, error) {
-	teammatesIdentifiers, err := getTeammateIdentifiers()
-	if err != nil {
-		return nil, err
-	}
+func loadTeammates(ctx context.Context, cli *kubiya.Client, teammatesIdentifiers []string) ([]kubiya.Teammate, error) {
 	allTeammates, err := cli.ListTeammates(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list teammates: %w", err)
@@ -198,11 +181,16 @@ func newMcpServeCommand(cfg *config.Config, fs afero.Fs) *cobra.Command {
 		Use:   "serve",
 		Short: "💻 Serve MCP server",
 		Long:  "execute the local MCP server",
-
 		RunE: func(cmd *cobra.Command, args []string) error {
+			mcp_conf, err := mcp_helpers.LoadMcpConfig(fs)
+			cobra.CheckErr(err)
+			cfg, err := config.Load()
+			cobra.CheckErr(err)
+
+			cfg.APIKey = mcp_conf.ApiKey
 			cli := kubiya.NewClient(cfg)
-			cmd.Context()
-			teammates, err := getSpecificTeammates(cmd.Context(), cli)
+
+			teammates, err := loadTeammates(cmd.Context(), cli, mcp_conf.TeammateIds)
 			if err != nil {
 				return fmt.Errorf("failed to get teammate IDs: %w", err)
 			}

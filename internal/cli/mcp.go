@@ -32,11 +32,6 @@ configuration files of these local tools.`,
 
 	// Add subcommands
 	cmd.AddCommand(newMcpSetupCommand(cfg, fs))
-	cmd.AddCommand(newMcpListCommand(cfg, fs))
-	cmd.AddCommand(newMcpInstallCommand(cfg, fs))
-	cmd.AddCommand(newMcpUpdateCommand(cfg, fs))
-	cmd.AddCommand(newMcpApplyCommand(cfg, fs))
-	cmd.AddCommand(newMcpEditCommand(cfg, fs))
 	cmd.AddCommand(newMcpServeCommand(cfg, fs))
 	return cmd
 }
