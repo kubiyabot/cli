@@ -55,90 +55,17 @@ This integration works by:
 
 ### Quick Start
 
-Getting started is designed to be simple:
+Getting started is designed to be simple, it only has three steps:
+1. chose which teammates are to be used by the mcp
+2. run mcp setup
+3. add the kubiya mcp-server to your favorite mcp client (Cursor od Claude Desktop)
 
 ```bash
-# Ensure you have configured your Kubiya API key first!
-# kubiya config set api-key YOUR_API_KEY
-
-# Install the MCP Gateway server and apply default configurations
-kubiya mcp install 
+kubiya teammate list # to list the existing teammates from which your want to pick
+export TEAMMATE_UUIDS=...  # a comma-separated list of teammate uuids
+kubiya mcp setup # to show the command£
 ```
 
-This single command will:
-
-1.  Check for dependencies (`git`, `uv`). You might be prompted to install `uv` if it's missing.
-2.  Clone the `mcp-gateway` repository to `~/.kubiya/mcp-gateway`.
-3.  Install the Python dependencies for the gateway using `uv`.
-4.  Store the current version of the gateway.
-5.  **Fetch your Kubiya teammates.**
-6.  **Prompt you to select which teammates** should be exposed to your local applications via MCP (includes a "Select All" option).
-7.  Automatically scan for default provider configurations (e.g., for Claude, Cursor) in `~/.kubiya/mcp`.
-8.  For each compatible provider found, **apply the configuration**, updating the target application's settings file (e.g., `~/.cursor/mcp.json`) with the local gateway details and your selected teammates.
-
-After this completes, your configured local applications should automatically start using the Kubiya MCP integration!
-
-### Prerequisites
-
-- **Kubiya API Key:** Must be configured (`kubiya config set api-key ...`).
-- **Git:** Needs to be installed and available in your `PATH`.
-- **uv:** The high-performance Python package installer from Astral. If not found, `kubiya mcp install` will provide installation instructions (e.g., `curl -LsSf https://astral.sh/uv/install.sh | sh`).
-
-### Managing MCP
-
-While `kubiya mcp install` handles the initial setup, you can manage the integration further:
-
-```bash
-# List available provider configuration files found in ~/.kubiya/mcp
-kubiya mcp list
-
-# Manually apply configuration for a specific provider
-# (Useful if you skipped auto-apply or want to change teammate selection)
-kubiya mcp apply <provider_name> 
-# Example: kubiya mcp apply claude_desktop
-# This command will prompt you to select teammates interactively.
-# Use --non-interactive to apply using all teammates.
-# Use --teammate-uuid <uuid> to specify exact teammates.
-
-# Check for updates to the mcp-gateway server and reinstall dependencies
-kubiya mcp update
-
-# Open the YAML configuration file for a provider in your default editor
-kubiya mcp edit <provider_name>
-# Example: kubiya mcp edit cursor_ide
-
-# Initialize the ~/.kubiya/mcp directory with default config files
-# (install usually handles this, but can be run manually)
-kubiya mcp setup 
-```
-
-### How it Works: Provider Configurations
-
-The integration is driven by YAML configuration files located in `~/.kubiya/mcp`. Each file defines how to integrate with a specific application (a "provider").
-
-- **Default Providers:** `kubiya mcp setup` (and the initial `kubiya mcp install`) automatically creates configurations for common applications like Claude Desktop (macOS) and Cursor IDE.
-- **Custom Providers:** You can create your own `.yaml` files in `~/.kubiya/mcp` to support other MCP-compatible tools.
-
-Each provider YAML contains:
-
-- `name`: Display name (e.g., "Claude Desktop").
-- `os`: (Optional) Target operating system (`darwin`, `linux`, `windows`).
-- `target_file`: Path to the application's configuration file (e.g., `~/Library/.../claude_desktop_config.json`). Cursor is handled automatically (`~/.cursor/mcp.json`).
-- `template`: A Go template defining the JSON content to be written to the `target_file`. It receives context like API key, selected teammate UUIDs (as a JSON string), and the path to the gateway.
-
-Use `kubiya mcp edit <provider>` to easily view or modify these files.
-
-## Installation 📥
-
-### Prerequisites
-
-- Go 1.22 or higher
-- [Kubiya API Key](https://docs.kubiya.ai/docs/org-management/api-keys)
-- For MCP Integration: `git` and `uv` (see MCP section above)
-
-### Build from Source
-
-```bash
 # Clone the repository
 git clone https://github.com/kubiyabot/cli.git
 cd cli

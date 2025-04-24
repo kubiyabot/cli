@@ -3,10 +3,10 @@ package cli
 import (
 	"fmt"
 	"os"
-	"path/filepath"
+	"strings"
 
 	"github.com/kubiyabot/cli/internal/config"
-	"github.com/kubiyabot/cli/internal/mcp"
+	"github.com/kubiyabot/cli/internal/mcp_helpers"
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 )
@@ -15,53 +15,42 @@ func newMcpSetupCommand(cfg *config.Config, fs afero.Fs) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "setup",
 		Short: "🚀 Initialize the MCP configuration directory and default providers",
-		Long: `Creates the necessary MCP configuration directory (~/.kubiya/mcp)
-and populates it with default configuration files for known applications
-(e.g., Claude Desktop on macOS, Cursor IDE).
+		Long: `Creates the necessary MCP configuration file (~/.kubiya/mcp)
+and populates it with default 
+
 
 If configuration files already exist, they will not be overwritten.`,
+		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			// Check if API key is configured before running any teammate command
+			return requireAPIKey(cmd, cfg)
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cmd.SilenceUsage = true // Prevent usage from printing on error
+			cfg, err := config.Load()
+			cobra.CheckErr(err)
 
-			mcpDir, err := mcp.GetMcpConfigDir(fs)
+			teammateIds := os.Getenv("TEAMMATE_UUIDS")
+			if strings.TrimSpace(teammateIds) == "" {
+				fmt.Println("please set the TEAMMATE_UUIDS (comma separated)")
+				os.Exit(0)
+			}
+			err = mcp_helpers.SaveMcpConfig(fs, cfg.APIKey, strings.Split(teammateIds, ","))
 			if err != nil {
-				return fmt.Errorf("failed to get or create MCP config directory: %w", err)
+				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "✅ Ensured MCP configuration directory exists: %s\n", mcpDir)
+			executable, err := os.Executable()
+			cobra.CheckErr(err)
 
-			defaultConfigs := mcp.GetDefaultConfigs()
-			if len(defaultConfigs) == 0 {
-				fmt.Fprintln(cmd.OutOrStdout(), "ℹ️ No default MCP configurations applicable for your operating system.")
-				return nil
-			}
+			fmt.Println("here's your mcp servers")
+			fmt.Printf(`{
+  "mcpServers": {
+    "kubiya": {
+      "command": "%s",
+      "args": ["mcp", "serve"]
+    }
+  }
+}
 
-			var createdCount int
-			for filename, content := range defaultConfigs {
-				targetPath := filepath.Join(mcpDir, filename)
-
-				if _, err := fs.Stat(targetPath); err == nil {
-					fmt.Fprintf(cmd.OutOrStdout(), "🟡 Skipping existing configuration: %s\n", filename)
-					continue
-				} else if !os.IsNotExist(err) {
-					fmt.Fprintf(cmd.ErrOrStderr(), "⚠️ Error checking file %s: %v. Skipping.\n", filename, err)
-					continue
-				}
-
-				err = afero.WriteFile(fs, targetPath, []byte(content), 0640)
-				if err != nil {
-					fmt.Fprintf(cmd.ErrOrStderr(), "❌ Error writing default config %s: %v\n", filename, err)
-					continue
-				}
-				fmt.Fprintf(cmd.OutOrStdout(), "➕ Created default configuration: %s\n", filename)
-				createdCount++
-			}
-
-			if createdCount > 0 {
-				fmt.Fprintf(cmd.OutOrStdout(), "\n✨ MCP setup complete. You can now list configurations with 'kubiya mcp list'.\n")
-			} else {
-				fmt.Fprintf(cmd.OutOrStdout(), "\n✨ MCP setup checked. All applicable default configurations already exist.\n")
-			}
-
+`, executable)
 			return nil
 		},
 	}
