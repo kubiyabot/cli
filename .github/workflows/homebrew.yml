@@ -45,6 +45,12 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.KUBIYA_GITHUB_TOKEN }}
 
+      - name: Get Release URL
+        id: get_release_url
+        run: |
+          RELEASE_URL="https://github.com/${{ github.repository }}/releases/download/${{ github.sha }}/kubiya-cli-darwin-amd64"
+          echo "release_url=$RELEASE_URL" >> $GITHUB_OUTPUT
+
       - name: Generate Homebrew Formula
         run: |
           # Get the current commit SHA for versioning
@@ -59,7 +65,7 @@ jobs:
           class Kubiya < Formula
             desc "Command line interface for Kubiya AI platform"
             homepage "https://github.com/${{ github.repository }}"
-            url "https://github.com/${{ github.repository }}/releases/download/${VERSION}/kubiya-cli-darwin-amd64"
+            url "${{ steps.get_release_url.outputs.release_url }}"
             sha256 "${SHA256}"
             version "${VERSION}"
             
