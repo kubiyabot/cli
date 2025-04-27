@@ -49,12 +49,26 @@ jobs:
             sha256 "${SHA256}"
             version "${VERSION}"
             
+            # Specify platform-specific dependencies
+            depends_on :macos
+            depends_on "go" => :build
+            
             def install
               bin.install "kubiya-cli-darwin-amd64" => "kubiya"
             end
             
             test do
               system "#{bin}/kubiya", "--version"
+            end
+            
+            # Add caveats for users
+            def caveats
+              <<~EOS
+                kubiya has been installed as "kubiya".
+                
+                To get started, run:
+                  kubiya --help
+              EOS
             end
           end
           EOF
