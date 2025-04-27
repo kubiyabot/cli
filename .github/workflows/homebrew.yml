@@ -31,6 +31,20 @@ jobs:
           mkdir -p dist
           GOOS=darwin GOARCH=amd64 go build -o dist/kubiya-cli-darwin-amd64 ./main.go
 
+      - name: Create GitHub Release
+        id: create_release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: dist/kubiya-cli-darwin-amd64
+          tag_name: ${{ github.sha }}
+          name: Development Build
+          body: |
+            Development build from commit ${{ github.sha }}
+          draft: true
+          prerelease: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.KUBIYA_GITHUB_TOKEN }}
+
       - name: Generate Homebrew Formula
         run: |
           # Get the current commit SHA for versioning
