@@ -4,9 +4,9 @@ on:
   push:
     branches-ignore:
       - main
-    paths-ignore:
-      - '.git/**'
-      - '.github/**'
+    # paths-ignore:
+    #   - '.git/**'
+    #   - '.github/**'
 
 permissions:
   contents: write
