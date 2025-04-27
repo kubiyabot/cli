@@ -67,6 +67,9 @@ jobs:
           # Clone the Homebrew tap repository
           git clone https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ secrets.HOMEBREW_TAP_REPO }}.git homebrew-tap
           
+          # Create Formula directory if it doesn't exist
+          mkdir -p homebrew-tap/Formula
+          
           # Copy the formula
           cp Formula/kubiya.rb homebrew-tap/Formula/
           
@@ -74,4 +77,4 @@ jobs:
           cd homebrew-tap
           git add Formula/kubiya.rb
           git commit -m "Update kubiya formula to version ${VERSION}"
-          git push 
+          git push
