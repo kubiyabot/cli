@@ -2,12 +2,12 @@ name: Build - developers
 
 on:
   workflow_dispatch:
-  # push:
-  #   branches-ignore:
-  #     - main
-  #     - stable
-  #   paths-ignore:
-  #     - '.git/**'
+  push:
+    branches-ignore:
+      - main
+      - stable
+    paths-ignore:
+      - '.git/**'
 
 concurrency:
   group: ${{ github.repository }}-dev-${{ github.ref }}
