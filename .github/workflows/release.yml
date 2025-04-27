@@ -59,6 +59,69 @@ jobs:
           GORELEASER_CURRENT_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.version != '' && inputs.version || github.ref_name }}
           GORELEASER_PREVIOUS_TAG: ${{ steps.get_previous_tag.outputs.previous_tag }}
 
+      - name: Generate Homebrew Formula
+        run: |
+          VERSION="${{ github.event_name == 'workflow_dispatch' && inputs.version != '' && inputs.version || github.ref_name }}"
+          VERSION="${VERSION#v}"
+          
+          # Download the binary and calculate SHA256
+          BINARY_URL="https://github.com/${{ github.repository }}/releases/download/v${VERSION}/kubiya-cli-darwin-amd64"
+          SHA256=$(curl -L "$BINARY_URL" | shasum -a 256 | cut -d' ' -f1)
+          
+          # Create the formula
+          cat > Formula/kubiya.rb << EOF
+          class Kubiya < Formula
+            desc "Command line interface for Kubiya AI platform"
+            homepage "https://github.com/${{ github.repository }}"
+            url "https://github.com/${{ github.repository }}/releases/download/v${VERSION}/kubiya-cli-darwin-amd64"
+            sha256 "${SHA256}"
+            version "${VERSION}"
+            
+            def install
+              bin.install "kubiya-cli-darwin-amd64" => "kubiya"
+            end
+            
+            test do
+              system "#{bin}/kubiya", "--version"
+            end
+          end
+          EOF
+
+      - name: Sign Homebrew Formula
+        run: |
+          # Create a temporary keychain
+          security create-keychain -p "${{ secrets.KEYCHAIN_PASSWORD }}" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "${{ secrets.KEYCHAIN_PASSWORD }}" build.keychain
+          security set-keychain-settings -t 3600 -l ~/Library/Keychains/build.keychain
+          
+          # Import the certificate
+          security import "${{ secrets.APPLE_DEVELOPER_CERTIFICATE }}" -k build.keychain -P "${{ secrets.APPLE_DEVELOPER_CERTIFICATE_PASSWORD }}" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "${{ secrets.KEYCHAIN_PASSWORD }}" build.keychain
+          
+          # Sign the formula
+          codesign --force --sign "Developer ID Application: ${{ secrets.APPLE_DEVELOPER_ID }}" Formula/kubiya.rb
+          
+          # Clean up
+          security delete-keychain build.keychain
+
+      - name: Create Homebrew Tap Repository
+        run: |
+          git config --global user.name "GitHub Actions"
+          git config --global user.email "actions@github.com"
+          
+          # Clone the Homebrew tap repository
+          git clone https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ secrets.HOMEBREW_TAP_REPO }}.git homebrew-tap
+          
+          # Copy the signed formula
+          cp Formula/kubiya.rb homebrew-tap/Formula/
+          
+          # Commit and push
+          cd homebrew-tap
+          git add Formula/kubiya.rb
+          git commit -m "Update kubiya formula to version ${VERSION}"
+          git push
+
       - name: Import GPG key
         uses: crazy-max/ghaction-import-gpg@v6
         with:
