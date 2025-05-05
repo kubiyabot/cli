@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - "v[0-9]+.[0-9]+.[0-9]+"
+    
 
   workflow_dispatch:
     inputs:
@@ -59,6 +60,7 @@ jobs:
           GORELEASER_CURRENT_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.version != '' && inputs.version || github.ref_name }}
           GORELEASER_PREVIOUS_TAG: ${{ steps.get_previous_tag.outputs.previous_tag }}
 
+      # ===== HOMEBREW  =====
       - name: Generate Homebrew Formula
         run: |
           VERSION="${{ github.event_name == 'workflow_dispatch' && inputs.version != '' && inputs.version || github.ref_name }}"
@@ -69,6 +71,7 @@ jobs:
           SHA256=$(curl -L "$BINARY_URL" | shasum -a 256 | cut -d' ' -f1)
           
           # Create the formula
+          mkdir -p Formula
           cat > Formula/kubiya.rb << EOF
           class Kubiya < Formula
             desc "Command line interface for Kubiya AI platform"
@@ -93,17 +96,25 @@ jobs:
           git config --global user.email "actions@github.com"
           
           # Clone the Homebrew tap repository
-          git clone https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ secrets.HOMEBREW_TAP_REPO }}.git homebrew-tap
+          git clone https://x-access-token:${{ secrets.GITHUB_TOKEN || secrets.KUBIYA_GITHUB_TOKEN }}@github.com/${{ secrets.HOMEBREW_TAP_REPO }}.git homebrew-tap
           
           # Copy the formula
+          mkdir -p homebrew-tap/Formula
           cp Formula/kubiya.rb homebrew-tap/Formula/
           
           # Commit and push
           cd homebrew-tap
           git add Formula/kubiya.rb
-          git commit -m "Update kubiya formula to version ${VERSION}"
-          git push
+          git diff --staged --quiet || HAS_CHANGES=1
+          
+          if [ "$HAS_CHANGES" ]; then
+            git commit -m "Update kubiya formula to version ${VERSION}"
+            git push
+          else
+            echo "No changes to commit."
+          fi
 
+      # ===== APT PACKAGE SECTION =====
       - name: Import GPG key
         uses: crazy-max/ghaction-import-gpg@v6
         with:
@@ -123,6 +134,7 @@ jobs:
           mkdir -p apt-repo/apt/pool/main
           cp dist/kubiya-cli_*.deb apt-repo/apt/pool/main/
 
+      # Generate APT repository structure
       - name: Generate Packages.gz
         run: |
           mkdir -p apt-repo/apt/dists/stable/main/binary-amd64
@@ -130,62 +142,42 @@ jobs:
           dpkg-scanpackages -m pool /dev/null > dists/stable/main/binary-amd64/Packages
           gzip --keep --force --no-name --best dists/stable/main/binary-amd64/Packages
 
-      - name: Generate Release file with hashes
+      # Create Release file
+      - name: Generate Release file
         run: |
           sudo apt-get update
           sudo apt-get install -y dpkg-dev gnupg
 
           cd apt-repo/apt
-
-          # Create apt-ftparchive config
-          cat > config.txt <<EOF
-          Dir {
-            ArchiveDir ".";
-          };
-
-          Default {
-            Packages::Compress ". gzip";
-            Contents::Compress ". gzip";
-          };
-
-          TreeDefault {
-            BinCacheDB "packages.db";
-            Directory "pool";
-            Packages "dists/stable/main/binary-amd64/Packages";
-            Components "main";
-            Architectures "amd64";
-          };
-
-          APT::FTPArchive::Release {
-            Origin "Kubiya";
-            Label "Kubiya APT Repository";
-            Suite "stable";
-            Version "${{ github.ref_name }}";
-            Codename "stable";
-            Architectures "amd64";
-            Components "main";
-            Description "APT repository for Kubiya CLI";
-            Date "$(date -Ru)"
-          };
+          cat > dists/stable/Release << EOF
+          Origin: Kubiya
+          Label: Kubiya APT Repository
+          Suite: stable
+          Version: ${{ github.ref_name || '1.0' }}
+          Codename: stable
+          Date: $(date -u +"%a, %d %b %Y %H:%M:%S UTC")
+          Architectures: amd64
+          Components: main
+          Description: APT repository for Kubiya CLI
           EOF
 
           # Set env var to avoid locale issues with date formatting
           export LC_ALL=C
 
-          # Generate the Release file with proper config and timestamp
-          apt-ftparchive -c config.txt release dists/stable > dists/stable/Release
-
+      # Sign Release file
       - name: Sign Release file
         run: |
           cd apt-repo/apt/dists/stable
           echo "${{ secrets.GPG_PASSPHRASE }}" | gpg --batch --yes --passphrase-fd 0 --clearsign -o InRelease Release
           echo "${{ secrets.GPG_PASSPHRASE }}" | gpg --batch --yes --passphrase-fd 0 -abs -o Release.gpg Release
 
+      # Export GPG key
       - name: Export GPG key
         run: |
           mkdir -p apt-repo/apt
           gpg --export --armor > apt-repo/apt/apt-key.gpg
 
+      # Create documentation
       - name: Create index.html
         run: |
           cat > apt-repo/index.html << 'EOF'
@@ -214,6 +206,7 @@ jobs:
       - name: Add .nojekyll
         run: touch apt-repo/.nojekyll
 
+      # Deploy to GitHub Pages
       - name: Deploy to GitHub Pages
         uses: peaceiris/actions-gh-pages@v3
         with:
