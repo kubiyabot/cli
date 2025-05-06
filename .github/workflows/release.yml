@@ -96,7 +96,7 @@ jobs:
           git config --global user.email "actions@github.com"
           
           # Clone the Homebrew tap repository
-          git clone https://x-access-token:${{ secrets.GITHUB_TOKEN || secrets.KUBIYA_GITHUB_TOKEN }}@github.com/${{ secrets.HOMEBREW_TAP_REPO }}.git homebrew-tap
+          git clone https://x-access-token:${{ secrets.KUBIYA_GITHUB_TOKEN }}@github.com/${{ secrets.HOMEBREW_TAP_REPO }}.git homebrew-tap
           
           # Copy the formula
           mkdir -p homebrew-tap/Formula
