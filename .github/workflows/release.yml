@@ -90,20 +90,27 @@ jobs:
           end
           EOF
 
-      - name: Create Homebrew Tap Repository
+      - name: Checkout Homebrew Tap repository
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ secrets.HOMEBREW_TAP_REPO }}
+          path: homebrew-tap
+          token: ${{ secrets.KUBIYA_GITHUB_TOKEN }}
+
+      - name: Update Homebrew Formula
         run: |
-          git config --global user.name "GitHub Actions"
-          git config --global user.email "actions@github.com"
-          
-          # Clone the Homebrew tap repository
-          git clone https://x-access-token:${{ secrets.KUBIYA_GITHUB_TOKEN }}@github.com/${{ secrets.HOMEBREW_TAP_REPO }}.git homebrew-tap
+          # Create Formula directory if it doesn't exist
+          mkdir -p homebrew-tap/Formula
           
           # Copy the formula
-          mkdir -p homebrew-tap/Formula
           cp Formula/kubiya.rb homebrew-tap/Formula/
           
-          # Commit and push
+          # Configure git
           cd homebrew-tap
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          
+          # Check if there are changes
           git add Formula/kubiya.rb
           git diff --staged --quiet || HAS_CHANGES=1
           
