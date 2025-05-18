@@ -114,6 +114,8 @@ func newCreateKnowledgeCommand(cfg *config.Config) *cobra.Command {
 		labels      []string
 		groups      []string
 		contentFile string
+		content     string
+		owner       string
 	)
 
 	cmd := &cobra.Command{
@@ -122,24 +124,42 @@ func newCreateKnowledgeCommand(cfg *config.Config) *cobra.Command {
 		Example: `  kubiya knowledge create --name "Redis Setup" --desc "How to setup Redis" --labels devops,redis --content-file redis.md
   kubiya knowledge create --name "AWS Tips" --desc "AWS best practices" --labels aws,cloud`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			var content string
+			var contentValue string
 			if contentFile != "" {
 				data, err := os.ReadFile(contentFile)
 				if err != nil {
 					return fmt.Errorf("failed to read content file: %w", err)
 				}
-				content = string(data)
+				contentValue = string(data)
+			} else if content != "" {
+				contentValue = content
+			} else {
+				return fmt.Errorf("either --content-file or --content must be provided")
 			}
 
+			// Build knowledge item
 			item := kubiya.Knowledge{
-				Name:        name,
-				Description: desc,
-				Labels:      labels,
-				Groups:      groups,
-				Content:     content,
-				Type:        "knowledge",
-				Source:      "manual",
-				Properties:  make(map[string]string),
+				Name:                 name,
+				Description:          desc,
+				Labels:               labels,
+				Content:              contentValue,
+				Groups:               groups,
+				Type:                 "knowledge",
+				Source:               "manual",
+				Properties:           map[string]string{},
+				Owner:                owner,
+				SupportedAgents:      []string{"7a06ad1f-bb4e-4a99-bc38-5fdde5ed2bad"},
+				SupportedAgentGroups: []string{},
+			}
+
+			// Ensure labels is always an array, even if empty
+			if labels == nil {
+				item.Labels = []string{}
+			}
+
+			// Ensure groups is always an array, even if empty
+			if groups == nil {
+				item.Groups = []string{}
 			}
 
 			client := kubiya.NewClient(cfg)
@@ -148,7 +168,7 @@ func newCreateKnowledgeCommand(cfg *config.Config) *cobra.Command {
 				return err
 			}
 
-			fmt.Printf("✅ Created knowledge item: %s (%s)\n", created.Name, created.UUID)
+			fmt.Printf("✅ Created knowledge item: %v\n", created)
 			return nil
 		},
 	}
@@ -158,8 +178,12 @@ func newCreateKnowledgeCommand(cfg *config.Config) *cobra.Command {
 	cmd.Flags().StringSliceVarP(&labels, "labels", "l", nil, "Labels (comma-separated)")
 	cmd.Flags().StringSliceVarP(&groups, "groups", "g", nil, "Groups (comma-separated)")
 	cmd.Flags().StringVarP(&contentFile, "content-file", "f", "", "File containing the content")
+	cmd.Flags().StringVarP(&content, "content", "c", "", "Direct content for the knowledge item")
+	cmd.Flags().StringVarP(&owner, "owner", "o", "", "Knowledge item owner")
 
 	cmd.MarkFlagRequired("name")
+	cmd.MarkFlagRequired("owner")
+	cmd.MarkFlagRequired("supported-agents")
 	return cmd
 }
 
