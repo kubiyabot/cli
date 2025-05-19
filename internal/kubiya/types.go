@@ -352,6 +352,36 @@ type RunnerManifest struct {
 	URL string `json:"url"`
 }
 
+// RunnerHelmChart represents the Helm chart configuration for a runner
+type RunnerHelmChart struct {
+	Alloy struct {
+		Alloy struct {
+			ConfigMap struct {
+				Create bool   `json:"create"`
+				Key    string `json:"key"`
+				Name   string `json:"name"`
+			} `json:"configMap"`
+			ExtraEnv []struct {
+				Name  string `json:"name"`
+				Value string `json:"value"`
+			} `json:"extraEnv"`
+			SecurityContext struct {
+				RunAsGroup int `json:"runAsGroup"`
+				RunAsUser  int `json:"runAsUser"`
+			} `json:"securityContext"`
+		} `json:"alloy"`
+	} `json:"alloy"`
+	Nats struct {
+		JWT       string `json:"jwt"`
+		SecondJWT string `json:"secondJwt"`
+		Subject   string `json:"subject"`
+	} `json:"nats"`
+	Organization string `json:"organization"`
+	RunnerName   string `json:"runner_name"`
+	UserID       string `json:"user_id"`
+	UUID         string `json:"uuid"`
+}
+
 // Webhook represents a Kubiya webhook
 type Webhook struct {
 	ID                 string        `json:"id"`

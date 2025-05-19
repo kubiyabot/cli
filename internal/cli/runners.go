@@ -355,69 +355,20 @@ func newGetRunnerManifestCommand(cfg *config.Config) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			client := kubiya.NewClient(cfg)
 
-			// Check runner version first
-			runner, err := client.GetRunner(cmd.Context(), args[0])
-			if err != nil {
-				return err
-			}
-
-			if runner.Version == "v1" {
-				return fmt.Errorf("⚠️  runner '%s' is using deprecated v1 version. Please upgrade to the latest version", args[0])
-			}
-
 			// Get manifest URL
-			manifest, err := client.GetRunnerManifest(cmd.Context(), args[0])
+			manifest, err := client.CreateRunnerManifest(cmd.Context(), args[0])
 			if err != nil {
 				return err
 			}
 
-			// Download manifest content
-			content, err := client.DownloadManifest(cmd.Context(), manifest.URL)
-			if err != nil {
-				return err
+			// Build kubectl command
+			kubectlCmd := fmt.Sprintf("kubectl apply -f %s", manifest.URL)
+			if context != "" {
+				kubectlCmd = fmt.Sprintf("kubectl --context %s apply -f %s", context, manifest.URL)
 			}
 
-			if outputFile != "" {
-				if err := os.WriteFile(outputFile, content, 0644); err != nil {
-					return fmt.Errorf("failed to write manifest: %w", err)
-				}
-				fmt.Printf("✅ Manifest saved to: %s\n", outputFile)
-			}
-
-			if apply {
-				// Check if kubectl is installed
-				if err := checkKubectlInstalled(); err != nil {
-					return err
-				}
-
-				// Create temporary file for kubectl
-				tmpfile, err := os.CreateTemp("", "kubiya-*.yaml")
-				if err != nil {
-					return fmt.Errorf("failed to create temp file: %w", err)
-				}
-				defer os.Remove(tmpfile.Name())
-
-				if _, err := tmpfile.Write(content); err != nil {
-					return fmt.Errorf("failed to write temp file: %w", err)
-				}
-				tmpfile.Close()
-
-				// Build kubectl command
-				args := []string{"apply", "-f", tmpfile.Name()}
-				if context != "" {
-					args = append([]string{"--context", context}, args...)
-				}
-
-				// Run kubectl
-				cmd := exec.Command("kubectl", args...)
-				cmd.Stdout = os.Stdout
-				cmd.Stderr = os.Stderr
-
-				if err := cmd.Run(); err != nil {
-					return fmt.Errorf("failed to apply manifest: %w", err)
-				}
-				fmt.Println("✅ Manifest applied successfully")
-			}
+			// Output the command
+			fmt.Println(kubectlCmd)
 
 			return nil
 		},
@@ -497,8 +448,60 @@ func newInstallRunnerCommand(cfg *config.Config) *cobra.Command {
 			fmt.Printf("✅ Runner '%s' created successfully!\n", runnerName)
 
 			if !deploy {
+				// Get Helm chart configuration
+				helmChart, err := client.GetRunnerHelmChart(cmd.Context(), runnerName)
+				if err != nil {
+					return fmt.Errorf("failed to get Helm chart configuration: %w", err)
+				}
+
+				// Build the set values string
+				var setValues []string
+
+				// Add ConfigMap settings
+				setValues = append(setValues,
+					fmt.Sprintf("alloy.alloy.configMap.create=%v", helmChart.Alloy.Alloy.ConfigMap.Create),
+					fmt.Sprintf("alloy.alloy.configMap.key=%s", helmChart.Alloy.Alloy.ConfigMap.Key),
+					fmt.Sprintf("alloy.alloy.configMap.name=%s", helmChart.Alloy.Alloy.ConfigMap.Name),
+				)
+
+				// Add extra environment variables
+				for i, env := range helmChart.Alloy.Alloy.ExtraEnv {
+					setValues = append(setValues,
+						fmt.Sprintf("alloy.alloy.extraEnv\\[%d\\].name=\"%s\"", i, env.Name),
+						fmt.Sprintf("alloy.alloy.extraEnv\\[%d\\].value=\"%s\"", i, env.Value),
+					)
+				}
+
+				// Add security context
+				setValues = append(setValues,
+					fmt.Sprintf("alloy.alloy.securityContext.runAsGroup=%d", helmChart.Alloy.Alloy.SecurityContext.RunAsGroup),
+					fmt.Sprintf("alloy.alloy.securityContext.runAsUser=%d", helmChart.Alloy.Alloy.SecurityContext.RunAsUser),
+				)
+
+				// Add NATS configuration
+				setValues = append(setValues,
+					fmt.Sprintf("nats.jwt=%s", helmChart.Nats.JWT),
+					fmt.Sprintf("nats.secondJwt=%s", helmChart.Nats.SecondJWT),
+					fmt.Sprintf("nats.subject=%s", helmChart.Nats.Subject),
+				)
+
+				// Add other configuration
+				setValues = append(setValues,
+					fmt.Sprintf("organization=%s", helmChart.Organization),
+					fmt.Sprintf("runner_name=%s", helmChart.RunnerName),
+					fmt.Sprintf("user_id=%s", helmChart.UserID),
+					fmt.Sprintf("uuid=%s", helmChart.UUID),
+				)
+
 				fmt.Println("\n💡 To deploy this runner to Kubernetes, run:")
 				fmt.Printf("  kubiya runner install %s --deploy\n", runnerName)
+				fmt.Println("\n💡 Or manually run these commands:")
+				fmt.Println("  # Add Helm repository")
+				fmt.Println("  helm repo add kubiya-helm-charts https://kubiyabot.github.io/helm-charts/ && helm repo update")
+				fmt.Println("\n  # Install the runner")
+				fmt.Printf("  helm upgrade --install %s kubiya-helm-charts/kubiya-runner --set %s --create-namespace --namespace kubiya",
+					runnerName,
+					strings.Join(setValues, ","))
 				return nil
 			}
 
@@ -539,7 +542,7 @@ func newInstallRunnerCommand(cfg *config.Config) *cobra.Command {
 
 			// Install the chart
 			fmt.Printf("🚀 Installing runner to namespace '%s'...\n", namespace)
-			if err := installHelmChart(runnerName, namespace, context, enableRBAC, autoApprove); err != nil {
+			if err := installHelmChart(cmd.Context(), cfg, runnerName, namespace, context, enableRBAC, autoApprove); err != nil {
 				return err
 			}
 
@@ -582,7 +585,7 @@ func newInstallRunnerCommand(cfg *config.Config) *cobra.Command {
 	cmd.Flags().StringVarP(&namespace, "namespace", "n", "", "Kubernetes namespace to install the runner to (default: kubiya)")
 	cmd.Flags().StringVar(&context, "context", "", "Kubernetes context to use")
 	cmd.Flags().BoolVarP(&autoApprove, "yes", "y", false, "Auto-approve all prompts")
-	cmd.Flags().BoolVar(&enableRBAC, "rbac", false, "Enable RBAC for accessing other namespaces")
+	cmd.Flags().BoolVar(&enableRBAC, "rbac", false, "Give Kubiya access to general namespaces")
 	cmd.Flags().BoolVar(&installHelm, "install-helm", false, "Install Helm if not already installed")
 	cmd.Flags().BoolVarP(&wait, "wait", "w", false, "Wait for deployment to complete")
 	cmd.Flags().DurationVar(&timeout, "timeout", 5*time.Minute, "Timeout for wait operation")
@@ -675,7 +678,7 @@ func addHelmRepo(autoApprove bool) error {
 }
 
 // installHelmChart installs the Kubiya runner Helm chart
-func installHelmChart(runnerName, namespace, context string, enableRBAC, autoApprove bool) error {
+func installHelmChart(ctx context.Context, cfg *config.Config, runnerName, namespace, context string, enableRBAC, autoApprove bool) error {
 	if !autoApprove {
 		fmt.Print("Install Kubiya runner Helm chart? [Y/n]: ")
 		var response string
@@ -686,39 +689,66 @@ func installHelmChart(runnerName, namespace, context string, enableRBAC, autoApp
 		}
 	}
 
+	// Get Helm chart configuration from API
+	client := kubiya.NewClient(cfg)
+	helmChart, err := client.GetRunnerHelmChart(ctx, runnerName)
+	if err != nil {
+		return fmt.Errorf("failed to get Helm chart configuration: %w", err)
+	}
+
+	// Build the set values string
+	var setValues []string
+
+	// Add ConfigMap settings
+	setValues = append(setValues,
+		fmt.Sprintf("alloy.alloy.configMap.create=%v", helmChart.Alloy.Alloy.ConfigMap.Create),
+		fmt.Sprintf("alloy.alloy.configMap.key=%s", helmChart.Alloy.Alloy.ConfigMap.Key),
+		fmt.Sprintf("alloy.alloy.configMap.name=%s", helmChart.Alloy.Alloy.ConfigMap.Name),
+	)
+
+	// Add extra environment variables
+	for i, env := range helmChart.Alloy.Alloy.ExtraEnv {
+		setValues = append(setValues,
+			fmt.Sprintf("alloy.alloy.extraEnv\\[%d\\].name=\"%s\"", i, env.Name),
+			fmt.Sprintf("alloy.alloy.extraEnv\\[%d\\].value=\"%s\"", i, env.Value),
+		)
+	}
+
+	// Add security context
+	setValues = append(setValues,
+		fmt.Sprintf("alloy.alloy.securityContext.runAsGroup=%d", helmChart.Alloy.Alloy.SecurityContext.RunAsGroup),
+		fmt.Sprintf("alloy.alloy.securityContext.runAsUser=%d", helmChart.Alloy.Alloy.SecurityContext.RunAsUser),
+	)
+
+	// Add NATS configuration
+	setValues = append(setValues,
+		fmt.Sprintf("nats.jwt=%s", helmChart.Nats.JWT),
+		fmt.Sprintf("nats.secondJwt=%s", helmChart.Nats.SecondJWT),
+		fmt.Sprintf("nats.subject=%s", helmChart.Nats.Subject),
+	)
+
+	// Add other configuration
+	setValues = append(setValues,
+		fmt.Sprintf("organization=%s", helmChart.Organization),
+		fmt.Sprintf("runner_name=%s", helmChart.RunnerName),
+		fmt.Sprintf("user_id=%s", helmChart.UserID),
+		fmt.Sprintf("uuid=%s", helmChart.UUID),
+	)
+
+	// Add RBAC settings if enabled
+	if enableRBAC {
+		setValues = append(setValues, "toolManager.adminClusterRole.create=true")
+	}
+
 	// Prepare Helm command
 	args := []string{
 		"upgrade",
 		"--install",
 		runnerName,
 		"kubiya-helm-charts/kubiya-runner",
-		"--set", "alloy.alloy.configMap.create=false",
-		"--set", "alloy.alloy.configMap.key=config.alloy",
-		"--set", "alloy.alloy.configMap.name=kubiya-runner-alloy-config",
-		"--set", "alloy.alloy.extraEnv[0].name=AZURE_REMOTE_WRITE_URL",
-		"--set", "alloy.alloy.extraEnv[0].value=https://runners-dce-metrics-prod-frkd.swedencentral-1.metrics.ingest.monitor.azure.com/dataCollectionRules/dcr-1ae3855c75624121bffa32679effcf2d/streams/Microsoft-PrometheusMetrics/api/v1/write?api-version=2023-04-24",
-		"--set", "alloy.alloy.extraEnv[1].name=AZURE_CLIENT_ID",
-		"--set", "alloy.alloy.extraEnv[1].value=e1768082-b511-41b2-9120-f4313d1d5245",
-		"--set", "alloy.alloy.extraEnv[2].name=AZURE_CLIENT_SECRET",
-		"--set", "alloy.alloy.extraEnv[2].value=xiv8Q~ZUYNrVFP8cMxUzMosYELxjwQWgzm58laQn",
-		"--set", "alloy.alloy.extraEnv[3].name=AZURE_TOKEN_URL",
-		"--set", "alloy.alloy.extraEnv[3].value=https://login.microsoftonline.com/84293e41-2381-47c9-afae-63eb789bce50/oauth2/v2.0/token",
-		"--set", "alloy.alloy.securityContext.runAsGroup=473",
-		"--set", "alloy.alloy.securityContext.runAsUser=473",
-		"--set", "nats.jwt=LS0tLS1CRUdJTiBOQVRTIFVTRVIgSldULS0tLS0KZXlKMGVYQWlPaUpLVjFRaUxDSmhiR2NpT2lKbFpESTFOVEU1TFc1clpYa2lmUS5leUpxZEdraU9pSmFRelpDUlUxVlZWUklRMGRTUVRkVlFsbFBUbFpUU0U1WlRrazBWRlZGTmpkTlJUSlBURXhLVmtoUFIwbFZTVkZIU0ZCQklpd2lhV0YwSWpveE56UXlNemsxTURnNUxDSnBjM01pT2lKQlExUkJVVm8yVFZkU1YwdE9SRWxLUlVaTFRFSkpSakpNUkZCVlJrdFdTMU5PTlVkTVUwdEhVa1l6TjFKSU1rVlVWVmxOVTAxQ1ZDSXNJbTVoYldVaU9pSnJkV0pwZVdFdFlXa3VkR1Z6ZENJc0luTjFZaUk2SWxWRFN6WlRORWxRTkVoUVMxQk9RVlpIV0VsR1FrdE5WRTlITWtkVU4wZEdUVFEyUkZkUlZqSklXRFpPV2tVeU5sYzNOMXBIUzFOU0lpd2libUYwY3lJNmV5SndkV0lpT250OUxDSnpkV0lpT250OUxDSnBjM04xWlhKZllXTmpiM1Z1ZENJNklrRkJXRTlRVkRWTlIwcExWRXMyTmxBM1RWY3lVbEpKVEZGWVNFTTJSRnBMVkZSUE5raFhSRmhQUzBwUlRrVkpTVWxQVFZWYU5FSlRJaXdpZEhsd1pTSTZJblZ6WlhJaUxDSjJaWEp6YVc5dUlqb3lmWDAuaGFMZ0EwQlZ2X20wUGFndGx4RmFqdVdFWHk3ODJra0VtVXVJNUhUdEtGcTh1MFA2S1lqb0o4eHF5d0M2bGdpMTAwQVo1S0ltZjN6Um1Menk2YlJMRFEKLS0tLS0tRU5EIE5BVFMgVVNFUiBKV1QtLS0tLS0KCioqKioqKioqKioqKioqKioqKioqKioqKiogSU1QT1JUQU5UICoqKioqKioqKioqKioqKioqKioqKioqKioKTktFWSBTZWVkIHByaW50ZWQgYmVsb3cgY2FuIGJlIHVzZWQgdG8gc2lnbiBhbmQgcHJvdmUgaWRlbnRpdHkuCk5LRVlzIGFyZSBzZW5zaXRpdmUgYW5kIHNob3VsZCBiZSB0cmVhdGVkIGFzIHNlY3JldHMuCgotLS0tLUJFR0lOIFVTRVIgTktFWSBTRUVELS0tLS0KU1VBTUIzVE5QVURaS0FHWlZOUFgyR1BSWDJPNVVFSUlQUzJNR0FaTldINE1MUzJVM1FaSVBPT1BXSQotLS0tLS1FTkQgVVNFUiBOS0VZIFNFRUQtLS0tLS0KCioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioK",
-		"--set", "nats.secondJwt=LS0tLS1CRUdJTiBOQVRTIFVTRVIgSldULS0tLS0KZXlKMGVYQWlPaUpLVjFRaUxDSmhiR2NpT2lKbFpESTFOVEU1TFc1clpYa2lmUS5leUpxZEdraU9pSkZUMHhNTXpkVFVVSk1OVTlEUWpZMVRGUklVRkZWV2t4UFZGcElTVkZFVFZRMk5rWlhXalpQVUVkSk1sbEtSRlJNUkZkQklpd2lhV0YwSWpveE56RTFOVEExT0RZNUxDSnBjM01pT2lKQlJFMDJOMUphVmxwUk5FaFBVMGhPTWxORVNsQlVRbFpZTTAwM1dWaEpUVE15TkRkS1JVeFZVRFJRVHpWT1dVbEpORmRLUjB0VVZpSXNJbTVoYldVaU9pSnJkV0pwZVdFdFlXa2lMQ0p6ZFdJaU9pSlZRVkpVV1ZVM1dGWkdSVmxaUzFnMlJqUTJOVWxSVUVOYVYwSTBXVkpaU1RKVVRFTkpNbGhXVkROTVZVNVNTVUZLVVZSRVJreE9RU0lzSW01aGRITWlPbnNpY0hWaUlqcDdmU3dpYzNWaUlqcDdmU3dpYVhOemRXVnlYMkZqWTI5MWJuUWlPaUpCUVZoUFVGUTFUVWRLUzFSTE5qWlFOMDFYTWxKU1NVeFJXRWhETmtSYVMxUlVUelpJVjBSWVQwdEtVVTVGU1VsSlQwMVZXalJDVXlJc0luUjVjR1VpT2lKMWMyVnlJaXdpZG1WeWMybHZiaUk2TW4xOS5yN1hDNU9SMEo5R0xqWDVGcXFNUUtDeEIxcHlEQTdvVG00NU5uNF9INm1FNjU0MFNQVTRoQnJtQlRyelNXMTdhZ3Q3MjBmeUdwV2tZYmFOWXBYajJBUQotLS0tLS1FTkQgTkFUUyBVU0VSIEpXVC0tLS0tLQoKKioqKioqKioqKioqKioqKioqKioqKioqKiBJTVBPUlRBTlQgKioqKioqKioqKioqKioqKioqKioqKioqKgpOS0VZIFNlZWQgcHJpbnRlZCBiZWxvdyBjYW4gYmUgdXNlZCB0byBzaWduIGFuZCBwcm92ZSBpZGVudGl0eS4KTktFWXMgYXJlIHNlbnNpdGl2ZSBhbmQgc2hvdWxkIGJlIHRyZWF0ZWQgYXMgc2VjcmV0cy4KCi0tLS0tQkVHSU4gVVNFUiBOS0VZIFNFRUQtLS0tLQpTVUFDM0dBMzNGNEdHN1FXMlNDM0FTQ0c1TU5RWkZGVUdIVVg2UzdLUTJINlpFRDdVWUlQWVRWTldNCi0tLS0tLUVORCBVU0VSIE5LRVkgU0VFRC0tLS0tLQoKKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKgo=",
-		"--set", "nats.subject=kubiya-ai." + runnerName + ".incoming",
-		"--set", "organization=kubiya-ai",
-		"--set", "runner_name=" + runnerName,
-		"--set", "user_id=2uXVpYlWeq9eZUf3YinINHRFJRg",
-		"--set", "uuid=3df0598e-fce6-4178-8a9b-be040f11e130",
+		"--set", strings.Join(setValues, ","),
 		"--create-namespace",
 		"--namespace", namespace,
-	}
-
-	// Add RBAC settings if enabled
-	if enableRBAC {
-		args = append(args, "--set", "toolManager.adminClusterRole.create=true")
 	}
 
 	// Add context if specified
