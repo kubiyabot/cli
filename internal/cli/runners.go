@@ -493,6 +493,11 @@ func newInstallRunnerCommand(cfg *config.Config) *cobra.Command {
 					fmt.Sprintf("uuid=%s", helmChart.UUID),
 				)
 
+				// Add RBAC settings if enabled
+				if enableRBAC {
+					setValues = append(setValues, "toolManager.adminClusterRole.create=true")
+				}
+
 				fmt.Println("\n💡 To deploy this runner to Kubernetes, run:")
 				fmt.Printf("  kubiya runner install %s --deploy\n", runnerName)
 				fmt.Println("\n💡 Or manually run these commands:")
