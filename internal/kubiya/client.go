@@ -579,20 +579,55 @@ func (c *Client) ListRunners(ctx context.Context) ([]Runner, error) {
 	return runners, nil
 }
 
-// Example method: retrieve a runner's manifest
-func (c *Client) GetRunnerManifest(ctx context.Context, name string) (RunnerManifest, error) {
-	resp, err := c.get(ctx, fmt.Sprintf("/runners/%s/manifest", name))
+// GetRunnerManifest retrieves a runner's manifest
+func (c *Client) GetRunnerManifest(ctx context.Context, name string) (*RunnerManifest, error) {
+	req, err := c.newJSONRequest(ctx, "GET", fmt.Sprintf("/runners/%s/manifest", name), nil)
 	if err != nil {
-		return RunnerManifest{}, fmt.Errorf("failed to get runner manifest: %w", err)
+		return nil, err
+	}
+
+	var manifest RunnerManifest
+	if err := c.do(req, &manifest); err != nil {
+		return nil, err
+	}
+
+	return &manifest, nil
+}
+
+// GetRunnerHelmChart retrieves the Helm chart configuration for a runner
+func (c *Client) GetRunnerHelmChart(ctx context.Context, name string) (*RunnerHelmChart, error) {
+	// The endpoint is a different path than the standard API
+	url := fmt.Sprintf("%s/api/v3/runners/helmchart/%s", strings.TrimSuffix(c.baseURL, "/api/v1"), name)
+
+	if c.debug {
+		fmt.Printf("Getting Helm chart configuration for %s at URL: %s\n", name, url)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Authorization", "UserKey "+c.cfg.APIKey)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get Helm chart configuration: %w", err)
 	}
 	defer resp.Body.Close()
 
-	var manifest RunnerManifest
-	if err := json.NewDecoder(resp.Body).Decode(&manifest); err != nil {
-		return RunnerManifest{}, fmt.Errorf("failed to decode manifest response: %w", err)
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("unexpected status code: %d, body: %s", resp.StatusCode, string(bodyBytes))
 	}
 
-	return manifest, nil
+	var helmChart RunnerHelmChart
+	if err := json.NewDecoder(resp.Body).Decode(&helmChart); err != nil {
+		return nil, fmt.Errorf("failed to decode Helm chart response: %w", err)
+	}
+
+	return &helmChart, nil
 }
 
 // CreateRunnerManifest requests a new runner manifest from the API
