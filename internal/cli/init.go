@@ -55,10 +55,12 @@ type Workflow struct {
 
 // WorkflowStep represents a step in a workflow
 type WorkflowStep struct {
-	Name     string           `yaml:"name"`
-	Executor WorkflowExecutor `yaml:"executor"`
-	Output   string           `yaml:"output,omitempty"`
-	Depends  []string         `yaml:"depends,omitempty"`
+	Name        string           `yaml:"name"`
+	Description string           `yaml:"description,omitempty"`
+	Command     string           `yaml:"command,omitempty"`
+	Executor    WorkflowExecutor `yaml:"executor,omitempty"`
+	Output      string           `yaml:"output,omitempty"`
+	Depends     []string         `yaml:"depends,omitempty"`
 }
 
 // WorkflowExecutor represents the executor configuration for a workflow step
