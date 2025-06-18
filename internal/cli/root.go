@@ -27,6 +27,7 @@ Quick Start:
   • Manage knowledge: kubiya knowledge list
   • Manage runners:   kubiya runner list
   • Manage webhooks:  kubiya webhook list
+  • Manage workflows: kubiya workflow generate|test|execute|compose
   • Update CLI:       kubiya update
   • Initialize:       kubiya init tool|workflow  # Create new tools/workflows
 
@@ -76,6 +77,7 @@ Need help? Visit: https://docs.kubiya.ai`,
 		newRunCommand(cfg),
 		newInitCommand(cfg),
 		newMcpCommand(cfg),
+		newWorkflowCommand(cfg),
 	)
 
 	return rootCmd.Execute()
