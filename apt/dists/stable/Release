@@ -1,0 +1,9 @@
+Origin: Kubiya
+Label: Kubiya APT Repository
+Suite: stable
+Version: v1.1.0
+Codename: stable
+Date: Thu, 19 Jun 2025 14:37:08 UTC
+Architectures: amd64
+Components: main
+Description: APT repository for Kubiya CLI
