@@ -9,7 +9,9 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
+	"time"
 )
 
 // WorkflowClient handles workflow-specific operations
@@ -56,7 +58,6 @@ type WorkflowExecutionRequest struct {
 	Description string                 `json:"description"`
 	Steps       []interface{}          `json:"steps"`
 	Variables   map[string]interface{} `json:"variables,omitempty"`
-	Runner      string                 `json:"runner,omitempty"`
 }
 
 // WorkflowSSEEvent represents a workflow-specific SSE event
@@ -69,8 +70,17 @@ type WorkflowSSEEvent struct {
 
 // GenerateWorkflow generates a workflow from a natural language prompt using the orchestration API
 func (wc *WorkflowClient) GenerateWorkflow(ctx context.Context, prompt string, options OrchestrateRequest) (<-chan WorkflowSSEEvent, error) {
-	// Use orchestrator API endpoint
-	orchestratorURL := "https://api.kubiya.ai/api/orchestrate"
+	// Use orchestrator API endpoint - check for custom orchestrator URL
+	orchestratorURL := os.Getenv("KUBIYA_ORCHESTRATOR_URL")
+	if orchestratorURL == "" {
+		// Check if we should use the same base URL as the main API
+		if os.Getenv("KUBIYA_USE_SAME_API") == "true" {
+			orchestratorURL = strings.TrimSuffix(wc.client.baseURL, "/api/v1") + "/api/orchestrate"
+		} else {
+			// Default to the orchestrator service URL
+			orchestratorURL = "https://orchestrator.kubiya.ai/api/orchestrate"
+		}
+	}
 
 	// Set default values
 	if options.Format == "" {
@@ -108,9 +118,21 @@ func (wc *WorkflowClient) GenerateWorkflow(ctx context.Context, prompt string, o
 	}
 
 	// Execute request
-	resp, err := wc.client.client.Do(req)
+	// Create a custom client with longer timeout for orchestration
+	orchestrationClient := &http.Client{
+		Timeout: 5 * time.Minute, // Longer timeout for orchestration
+	}
+	resp, err := orchestrationClient.Do(req)
 	if err != nil {
+		if strings.Contains(err.Error(), "timeout") || strings.Contains(err.Error(), "deadline exceeded") {
+			return nil, fmt.Errorf("orchestration API timeout. The service might be unavailable or slow. You can:\n1. Try again later\n2. Use 'kubiya workflow execute' for direct workflow execution\n3. The generate command will create a local template instead")
+		}
 		return nil, fmt.Errorf("failed to execute request: %w", err)
+	}
+
+	if resp.StatusCode == http.StatusNotFound {
+		resp.Body.Close()
+		return nil, fmt.Errorf("orchestration API not found at %s. You may need to:\n1. Set KUBIYA_ORCHESTRATOR_URL environment variable\n2. Enable orchestration features in your Kubiya account\n3. Use 'kubiya workflow execute' for direct workflow execution instead", orchestratorURL)
 	}
 
 	if resp.StatusCode != http.StatusOK {
@@ -148,6 +170,8 @@ func (wc *WorkflowClient) GenerateWorkflow(ctx context.Context, prompt string, o
 				switch eventType {
 				case "2": // Data event
 					events <- WorkflowSSEEvent{Type: "data", Data: data}
+				case "3": // Error event with details
+					events <- WorkflowSSEEvent{Type: "data", Data: data} // Process as data to get the error details
 				case "d": // Done event
 					events <- WorkflowSSEEvent{Type: "done", Data: data}
 				case "e": // Error event
@@ -249,6 +273,8 @@ func (wc *WorkflowClient) ExecuteWorkflow(ctx context.Context, req WorkflowExecu
 				switch eventType {
 				case "2": // Data event
 					events <- WorkflowSSEEvent{Type: "data", Data: data}
+				case "3": // Error event with details
+					events <- WorkflowSSEEvent{Type: "data", Data: data} // Process as data to get the error details
 				case "d": // Done event
 					events <- WorkflowSSEEvent{Type: "done", Data: data}
 				case "e": // Error event

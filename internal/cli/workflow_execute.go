@@ -51,13 +51,7 @@ You can provide variables and choose the runner for execution.`,
 				return fmt.Errorf("failed to read workflow file: %w", err)
 			}
 
-			// Parse workflow
-			var workflow Workflow
-			if err := yaml.Unmarshal(data, &workflow); err != nil {
-				return fmt.Errorf("failed to parse workflow YAML: %w", err)
-			}
-
-			// Parse variables
+			// Parse variables first
 			vars := make(map[string]interface{})
 			for _, v := range variables {
 				parts := strings.SplitN(v, "=", 2)
@@ -66,50 +60,46 @@ You can provide variables and choose the runner for execution.`,
 				}
 			}
 
-			// Convert WorkflowStep to interface{} for the API
-			steps := make([]interface{}, len(workflow.Steps))
-			for i, step := range workflow.Steps {
-				stepMap := map[string]interface{}{
-					"name": step.Name,
-				}
-				if step.Description != "" {
-					stepMap["description"] = step.Description
-				}
-				if step.Command != "" {
-					stepMap["command"] = step.Command
-				}
-				if step.Executor.Type != "" {
-					stepMap["executor"] = map[string]interface{}{
-						"type":   step.Executor.Type,
-						"config": step.Executor.Config,
+			// Parse workflow based on file extension
+			var workflow Workflow
+			var req kubiya.WorkflowExecutionRequest
+
+			if strings.HasSuffix(strings.ToLower(workflowFile), ".json") {
+				// Try to parse as JSON
+				if err := json.Unmarshal(data, &workflow); err != nil {
+					// JSON workflows might be in a different format, try parsing as raw execution request
+					if err2 := json.Unmarshal(data, &req); err2 != nil {
+						return fmt.Errorf("failed to parse workflow JSON: %w (also tried as raw request: %w)", err, err2)
 					}
+					// Use the raw request directly
+					if req.Variables == nil {
+						req.Variables = vars
+					} else {
+						// Merge variables
+						for k, v := range vars {
+							req.Variables[k] = v
+						}
+					}
+				} else {
+					// Parsed as Workflow struct, convert to request
+					req = buildExecutionRequest(workflow, vars, runner)
 				}
-				if step.Output != "" {
-					stepMap["output"] = step.Output
+			} else {
+				// Parse as YAML
+				if err := yaml.Unmarshal(data, &workflow); err != nil {
+					return fmt.Errorf("failed to parse workflow YAML: %w", err)
 				}
-				if len(step.Depends) > 0 {
-					stepMap["depends"] = step.Depends
-				}
-				steps[i] = stepMap
+				req = buildExecutionRequest(workflow, vars, runner)
 			}
 
-			// Build execution request
-			req := kubiya.WorkflowExecutionRequest{
-				Name:        workflow.Name,
-				Description: fmt.Sprintf("Execution of %s", workflow.Name),
-				Steps:       steps,
-				Variables:   vars,
-				Runner:      runner,
-			}
-
-			fmt.Printf("%s Executing workflow: %s\n", style.StatusStyle.Render("🚀"), style.HighlightStyle.Render(workflow.Name))
+			fmt.Printf("%s Executing workflow: %s\n", style.StatusStyle.Render("🚀"), style.HighlightStyle.Render(req.Name))
 			fmt.Printf("%s %s\n", style.DimStyle.Render("File:"), workflowFile)
 			if runner != "" {
 				fmt.Printf("%s %s\n", style.DimStyle.Render("Runner:"), runner)
 			}
-			if len(vars) > 0 {
+			if len(req.Variables) > 0 {
 				fmt.Printf("%s\n", style.DimStyle.Render("Variables:"))
-				for k, v := range vars {
+				for k, v := range req.Variables {
 					fmt.Printf("  %s = %v\n", style.KeyStyle.Render(k), v)
 				}
 			}
@@ -201,4 +191,41 @@ You can provide variables and choose the runner for execution.`,
 	cmd.Flags().BoolVarP(&watch, "watch", "w", true, "Watch execution output")
 
 	return cmd
+}
+
+// buildExecutionRequest converts a Workflow to WorkflowExecutionRequest
+func buildExecutionRequest(workflow Workflow, vars map[string]interface{}, runner string) kubiya.WorkflowExecutionRequest {
+	// Convert WorkflowStep to interface{} for the API
+	steps := make([]interface{}, len(workflow.Steps))
+	for i, step := range workflow.Steps {
+		stepMap := map[string]interface{}{
+			"name": step.Name,
+		}
+		if step.Description != "" {
+			stepMap["description"] = step.Description
+		}
+		if step.Command != "" {
+			stepMap["command"] = step.Command
+		}
+		if step.Executor.Type != "" {
+			stepMap["executor"] = map[string]interface{}{
+				"type":   step.Executor.Type,
+				"config": step.Executor.Config,
+			}
+		}
+		if step.Output != "" {
+			stepMap["output"] = step.Output
+		}
+		if len(step.Depends) > 0 {
+			stepMap["depends"] = step.Depends
+		}
+		steps[i] = stepMap
+	}
+
+	return kubiya.WorkflowExecutionRequest{
+		Name:        workflow.Name,
+		Description: fmt.Sprintf("Execution of %s", workflow.Name),
+		Steps:       steps,
+		Variables:   vars,
+	}
 }
