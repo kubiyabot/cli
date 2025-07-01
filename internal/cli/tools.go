@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"os/signal"
 	"sort"
@@ -609,6 +611,8 @@ func newExecToolCommand(cfg *config.Config) *cobra.Command {
 		envVars         []string
 		args            []string
 		iconURL         string
+		toolURL         string
+		sourceUUID      string
 	)
 
 	cmd := &cobra.Command{
@@ -681,7 +685,13 @@ Environment Variables:
     --content 'aws ec2 describe-instances $([[ -n "$instance_ids" ]] && echo "--instance-ids $instance_ids")' \
     --arg instance_ids:string:"Comma-separated instance IDs":false \
     --with-file ~/.aws/credentials:/root/.aws/credentials \
-    --env AWS_PROFILE=production`,
+    --env AWS_PROFILE=production
+
+  # Execute a tool from a URL
+  kubiya tool exec --tool-url https://raw.githubusercontent.com/kubiyabot/community-tools/main/aws/tools/ec2_describe_instances.yaml
+
+  # Execute a tool from a source UUID
+  kubiya tool exec --source-uuid 64b0cb09-d6b5-4ff7-9d4b-9e05c6c3ae56 --name ec2_describe_instances`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			client := kubiya.NewClient(cfg)
@@ -734,7 +744,101 @@ Environment Variables:
 			// Build tool definition
 			var toolDef map[string]interface{}
 
-			if jsonInput != "" {
+			// Load from URL if specified
+			if toolURL != "" {
+				fmt.Printf("%s Loading tool from URL: %s\n", style.InfoStyle.Render("🌐"), toolURL)
+
+				// Fetch the tool definition from URL
+				resp, err := http.Get(toolURL)
+				if err != nil {
+					return fmt.Errorf("failed to fetch tool from URL: %w", err)
+				}
+				defer resp.Body.Close()
+
+				if resp.StatusCode != http.StatusOK {
+					return fmt.Errorf("failed to fetch tool from URL: status %d", resp.StatusCode)
+				}
+
+				// Parse the response based on content type
+				contentType := resp.Header.Get("Content-Type")
+				data, err := io.ReadAll(resp.Body)
+				if err != nil {
+					return fmt.Errorf("failed to read tool definition: %w", err)
+				}
+
+				// Try to parse as JSON or YAML
+				if strings.Contains(contentType, "json") || strings.HasSuffix(toolURL, ".json") {
+					if err := json.Unmarshal(data, &toolDef); err != nil {
+						return fmt.Errorf("failed to parse JSON tool definition: %w", err)
+					}
+				} else {
+					// For YAML, we'd need to parse it - for now assume JSON
+					if err := json.Unmarshal(data, &toolDef); err != nil {
+						return fmt.Errorf("failed to parse tool definition: %w", err)
+					}
+				}
+
+				// Extract tool name
+				if name, ok := toolDef["name"].(string); ok && name != "" {
+					toolName = name
+				}
+				fmt.Printf("%s Loaded tool: %s\n", style.SuccessStyle.Render("✓"), toolName)
+			} else if sourceUUID != "" {
+				// Load from source UUID
+				if toolName == "" {
+					return fmt.Errorf("tool name is required when using --source-uuid")
+				}
+
+				fmt.Printf("%s Loading tool '%s' from source: %s\n",
+					style.InfoStyle.Render("📦"), toolName, sourceUUID)
+
+				// Get source metadata
+				source, err := client.GetSourceMetadata(ctx, sourceUUID)
+				if err != nil {
+					return fmt.Errorf("failed to get source metadata: %w", err)
+				}
+
+				// Find the tool
+				var found bool
+				for _, tool := range source.Tools {
+					if tool.Name == toolName {
+						// Convert tool to map
+						toolJSON, err := json.Marshal(tool)
+						if err != nil {
+							return fmt.Errorf("failed to marshal tool: %w", err)
+						}
+						if err := json.Unmarshal(toolJSON, &toolDef); err != nil {
+							return fmt.Errorf("failed to unmarshal tool: %w", err)
+						}
+						found = true
+						break
+					}
+				}
+
+				// Also check inline tools
+				if !found {
+					for _, tool := range source.InlineTools {
+						if tool.Name == toolName {
+							// Convert tool to map
+							toolJSON, err := json.Marshal(tool)
+							if err != nil {
+								return fmt.Errorf("failed to marshal tool: %w", err)
+							}
+							if err := json.Unmarshal(toolJSON, &toolDef); err != nil {
+								return fmt.Errorf("failed to unmarshal tool: %w", err)
+							}
+							found = true
+							break
+						}
+					}
+				}
+
+				if !found {
+					return fmt.Errorf("tool '%s' not found in source %s", toolName, sourceUUID)
+				}
+
+				fmt.Printf("%s Loaded tool: %s\n", style.SuccessStyle.Render("✓"), toolName)
+			} else if jsonInput != "" {
 				// Parse direct JSON input
 				if err := json.Unmarshal([]byte(jsonInput), &toolDef); err != nil {
 					return fmt.Errorf("failed to parse JSON input: %w", err)
@@ -914,13 +1018,13 @@ Environment Variables:
 				opaEnforce := os.Getenv("KUBIYA_OPA_ENFORCE")
 				if opaEnforce == "true" || opaEnforce == "1" {
 					fmt.Printf("%s Validating tool execution permissions...\n", style.InfoStyle.Render("🛡️"))
-					
+
 					// Extract args from toolDef for validation
 					toolArgs := make(map[string]interface{})
 					if args, ok := toolDef["args"].(map[string]interface{}); ok {
 						toolArgs = args
 					}
-					
+
 					allowed, message, err := client.ValidateToolExecution(ctx, toolName, toolArgs, selectedRunner)
 					if err != nil {
 						fmt.Printf("%s Policy validation failed: %v\n", style.WarningStyle.Render("⚠️"), err)
@@ -1101,6 +1205,8 @@ Environment Variables:
 	cmd.Flags().StringSliceVar(&envVars, "env", []string{}, "Environment variables in format 'KEY=VALUE' (can be specified multiple times)")
 	cmd.Flags().StringSliceVar(&args, "arg", []string{}, "Tool arguments in format 'name:type:description:required' (can be specified multiple times)")
 	cmd.Flags().StringVar(&iconURL, "icon-url", "", "Icon URL for the tool")
+	cmd.Flags().StringVar(&toolURL, "tool-url", "", "URL to load tool definition from")
+	cmd.Flags().StringVar(&sourceUUID, "source-uuid", "", "Source UUID to load tool from")
 
 	return cmd
 }
@@ -1136,7 +1242,7 @@ func applyToolPropertiesFromFlags(toolDef map[string]interface{}, withFiles, wit
 			}
 
 			// Check if source is a local file that should be read
-			if isLocalPath(source) {
+			if IsLocalPath(source) {
 				content, err := os.ReadFile(source)
 				if err != nil {
 					fmt.Printf("%s Warning: Could not read local file %s: %v\n", style.WarningStyle.Render("⚠"), source, err)
@@ -1249,8 +1355,8 @@ func applyToolPropertiesFromFlags(toolDef map[string]interface{}, withFiles, wit
 	return nil
 }
 
-// isLocalPath checks if a path refers to a local file
-func isLocalPath(path string) bool {
+// IsLocalPath checks if a path refers to a local file
+func IsLocalPath(path string) bool {
 	// Paths that start with these are typically remote/container paths
 	remotePathPrefixes := []string{
 		"/var/run/",
