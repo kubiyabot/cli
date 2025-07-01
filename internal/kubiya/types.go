@@ -17,14 +17,33 @@ type Integration struct {
 	} `json:"configs,omitempty"`
 }
 
-// Agent represents a Kubiya teammate
+// Agent represents a Kubiya agent
 type Agent struct {
-	UUID           string            `json:"uuid"`
-	Name           string            `json:"name"`
-	Desc           string            `json:"description"`
-	AIInstructions string            `json:"ai_instructions"`
-	Environment    map[string]string `json:"environment"`
-	Metadata       struct {
+	UUID            string            `json:"uuid"`
+	ID              string            `json:"id"`
+	Name            string            `json:"name"`
+	Description     string            `json:"description"`
+	Desc            string            `json:"desc"` // for backward compatibility
+	InstructionType string            `json:"instruction_type"`
+	LLMModel        string            `json:"llm_model"`
+	Sources         []string          `json:"sources"`
+	Environment     map[string]string `json:"environment"`
+	Secrets         []string          `json:"secrets"`
+	AllowedGroups   []string          `json:"allowed_groups"`
+	AllowedUsers    []string          `json:"allowed_users"`
+	Owners          []string          `json:"owners"`
+	Runners         []string          `json:"runners"`
+	IsDebugMode     bool              `json:"is_debug_mode"`
+	AIInstructions  string            `json:"ai_instructions"`
+	Image           string            `json:"image"`
+	ManagedBy       string            `json:"managed_by"`
+	Integrations    []string          `json:"integrations"`
+	Links           []string          `json:"links"`
+	Tools           []string          `json:"tools"`
+	Tasks           []string          `json:"tasks"`
+	Starters        []interface{}     `json:"starters,omitempty"`
+	Tags            []string          `json:"tags,omitempty"`
+	Metadata        struct {
 		CreatedAt   string `json:"created_at"`
 		LastUpdated string `json:"last_updated"`
 	} `json:"metadata"`
@@ -422,11 +441,11 @@ type SecretValue struct {
 
 // Add these types
 type EnvVarSource struct {
-	Type     string // "teammate", "local", "aws", "manual"
+	Type     string // "agent", "local", "aws", "manual"
 	Value    string
 	Icon     string
 	Label    string
-	Teammate *Teammate // if from teammate
+	Agent *Agent // if from agent
 }
 
 // EnvVarStatus represents the status of an environment variable
@@ -435,37 +454,6 @@ type EnvVarStatus struct {
 	// ... other fields if needed
 }
 
-// Add these types to your existing types.go file
-
-type Teammate struct {
-	UUID            string            `json:"uuid"`
-	ID              string            `json:"id"`
-	Name            string            `json:"name"`
-	Description     string            `json:"description"`
-	InstructionType string            `json:"instruction_type"`
-	LLMModel        string            `json:"llm_model"`
-	Sources         []string          `json:"sources"`
-	Environment     map[string]string `json:"environment_variables"`
-	Secrets         []string          `json:"secrets"`
-	AllowedGroups   []string          `json:"allowed_groups"`
-	AllowedUsers    []string          `json:"allowed_users"`
-	Owners          []string          `json:"owners"`
-	Runners         []string          `json:"runners"`
-	IsDebugMode     bool              `json:"is_debug_mode"`
-	AIInstructions  string            `json:"ai_instructions"`
-	Image           string            `json:"image"`
-	ManagedBy       string            `json:"managed_by"`
-	Integrations    []string          `json:"integrations"`
-	Links           []string          `json:"links"`
-	Tools           []string          `json:"tools"`
-	Tasks           []string          `json:"tasks"`
-	Starters        []interface{}     `json:"starters,omitempty"`
-	Tags            []string          `json:"tags,omitempty"`
-	Metadata        struct {
-		CreatedAt   string `json:"created_at"`
-		LastUpdated string `json:"last_updated"`
-	} `json:"metadata"`
-}
 
 // SourceError represents an error in source discovery
 type SourceError struct {

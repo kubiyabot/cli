@@ -234,17 +234,17 @@ func (c *Client) delete(ctx context.Context, path string) (*http.Response, error
 // Source-related methods have been moved to sources.go for better organization
 // Please use the methods defined there instead of these deprecated ones.
 
-// Example method: retrieving teammates
-func (c *Client) GetTeammates(ctx context.Context) ([]Teammate, error) {
+// Example method: retrieving agents
+func (c *Client) GetAgents(ctx context.Context) ([]Agent, error) {
 	resp, err := c.get(ctx, "/agents")
 	if err != nil {
 		if c.debug {
-			fmt.Printf("Error getting teammates: %v\n", err)
+			fmt.Printf("Error getting agents: %v\n", err)
 			fmt.Printf("BaseURL: %s\n", c.baseURL)
 			fmt.Printf("Full URL: %s/agents\n", c.baseURL)
 			fmt.Printf("API Key present: %v\n", c.cfg.APIKey != "")
 		}
-		return nil, fmt.Errorf("failed to get teammates: %w", err)
+		return nil, fmt.Errorf("failed to get agents: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -256,37 +256,37 @@ func (c *Client) GetTeammates(ctx context.Context) ([]Teammate, error) {
 		resp.Body = io.NopCloser(bytes.NewBuffer(body))
 	}
 
-	var teammates []Teammate
-	if err := json.NewDecoder(resp.Body).Decode(&teammates); err != nil {
+	var agents []Agent
+	if err := json.NewDecoder(resp.Body).Decode(&agents); err != nil {
 		if c.debug {
 			fmt.Printf("Error decoding response: %v\n", err)
 		}
 		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}
 
-	// Process each teammate to ensure UUID is correctly set
-	var validTeammates []Teammate
-	for _, t := range teammates {
+	// Process each agent to ensure UUID is correctly set
+	var validAgents []Agent
+	for _, t := range agents {
 		// If UUID is empty but ID is set, use ID as UUID
 		if t.UUID == "" && t.ID != "" {
 			t.UUID = t.ID
 			if c.debug {
-				fmt.Printf("Warning: UUID was empty for teammate %s, using ID field: %s\n", t.Name, t.ID)
+				fmt.Printf("Warning: UUID was empty for agent %s, using ID field: %s\n", t.Name, t.ID)
 			}
 		}
 
 		// Filter out empty entries
 		if t.UUID != "" && t.Name != "" {
-			validTeammates = append(validTeammates, t)
+			validAgents = append(validAgents, t)
 		}
 	}
 
-	return validTeammates, nil
+	return validAgents, nil
 }
 
-// Example method: retrieving a teammate's environment variable
-func (c *Client) GetTeammateEnvVar(ctx context.Context, teammateID, varName string) (string, error) {
-	resp, err := c.get(ctx, fmt.Sprintf("/agents/%s", teammateID))
+// Example method: retrieving a agent's environment variable
+func (c *Client) GetAgentEnvVar(ctx context.Context, agentID, varName string) (string, error) {
+	resp, err := c.get(ctx, fmt.Sprintf("/agents/%s", agentID))
 	if err != nil {
 		return "", err
 	}
@@ -303,7 +303,7 @@ func (c *Client) GetTeammateEnvVar(ctx context.Context, teammateID, varName stri
 	if value, exists := agent.Environment[varName]; exists {
 		return value, nil
 	}
-	return "", fmt.Errorf("environment variable %s not found for teammate", varName)
+	return "", fmt.Errorf("environment variable %s not found for agent", varName)
 }
 
 // Example secrets methods
@@ -394,11 +394,25 @@ func (c *Client) ListTools(ctx context.Context, sourceURL string) ([]Tool, error
 	return source.Tools, nil
 }
 
-// Example method: describing a runner
+// GetRunner retrieves a specific runner's information including health status
 func (c *Client) GetRunner(ctx context.Context, name string) (Runner, error) {
+	// First, try to get the runner from the list of all runners (v3 API)
+	runners, err := c.ListRunners(ctx)
+	if err != nil {
+		return Runner{}, fmt.Errorf("failed to list runners: %w", err)
+	}
+
+	// Find the specific runner
+	for _, runner := range runners {
+		if runner.Name == name {
+			return runner, nil
+		}
+	}
+
+	// If not found in the list, try the v1 API as fallback
 	resp, err := c.get(ctx, fmt.Sprintf("/runners/%s/describe", name))
 	if err != nil {
-		return Runner{}, fmt.Errorf("failed to get runner details: %w", err)
+		return Runner{}, fmt.Errorf("runner '%s' not found", name)
 	}
 	defer resp.Body.Close()
 
@@ -691,17 +705,17 @@ func (c *Client) DownloadManifest(ctx context.Context, url string) ([]byte, erro
 	return content, nil
 }
 
-// Example method: creating a teammate
-func (c *Client) CreateTeammate(ctx context.Context, teammate Teammate) (*Teammate, error) {
+// Example method: creating a agent
+func (c *Client) CreateAgent(ctx context.Context, agent Agent) (*Agent, error) {
 	// Debug output for the request
 	if c.debug {
-		payload, _ := json.MarshalIndent(teammate, "", "  ")
-		fmt.Printf("CreateTeammate request payload:\n%s\n", string(payload))
+		payload, _ := json.MarshalIndent(agent, "", "  ")
+		fmt.Printf("CreateAgent request payload:\n%s\n", string(payload))
 	}
 
-	resp, err := c.post(ctx, "/agents", teammate)
+	resp, err := c.post(ctx, "/agents", agent)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create teammate: %w", err)
+		return nil, fmt.Errorf("failed to create agent: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -713,11 +727,11 @@ func (c *Client) CreateTeammate(ctx context.Context, teammate Teammate) (*Teamma
 
 	// Debug output for the response
 	if c.debug {
-		fmt.Printf("CreateTeammate response:\n%s\n", string(bodyBytes))
+		fmt.Printf("CreateAgent response:\n%s\n", string(bodyBytes))
 	}
 
-	// Unmarshal into created teammate
-	var created Teammate
+	// Unmarshal into created agent
+	var created Agent
 	if err := json.Unmarshal(bodyBytes, &created); err != nil {
 		// Try parsing as a different response format
 		var altResponse struct {
@@ -727,9 +741,9 @@ func (c *Client) CreateTeammate(ctx context.Context, teammate Teammate) (*Teamma
 			// We got an alternative format with just an ID
 			created.ID = altResponse.ID
 			created.UUID = altResponse.ID // Also set UUID to match
-			created.Name = teammate.Name  // Copy over the name from the request
+			created.Name = agent.Name  // Copy over the name from the request
 			if c.debug {
-				fmt.Printf("Parsed teammate ID from alternative response format: %s\n", created.ID)
+				fmt.Printf("Parsed agent ID from alternative response format: %s\n", created.ID)
 			}
 		} else {
 			return nil, fmt.Errorf("failed to unmarshal response: %w\nResponse body: %s", err, string(bodyBytes))
@@ -744,25 +758,25 @@ func (c *Client) CreateTeammate(ctx context.Context, teammate Teammate) (*Teamma
 		}
 	}
 
-	// Verify we have a valid teammate
+	// Verify we have a valid agent
 	if created.UUID == "" {
 		if c.debug {
-			fmt.Printf("Warning: Created teammate has empty UUID after processing\n")
+			fmt.Printf("Warning: Created agent has empty UUID after processing\n")
 		}
 	}
 
 	return &created, nil
 }
 
-// Example method: updating a teammate
-func (c *Client) UpdateTeammate(ctx context.Context, uuid string, teammate Teammate) (*Teammate, error) {
+// Example method: updating a agent
+func (c *Client) UpdateAgent(ctx context.Context, uuid string, agent Agent) (*Agent, error) {
 	// Debug output
 	if c.debug {
-		payload, _ := json.MarshalIndent(teammate, "", "  ")
-		fmt.Printf("UpdateTeammate request payload:\n%s\n", string(payload))
+		payload, _ := json.MarshalIndent(agent, "", "  ")
+		fmt.Printf("UpdateAgent request payload:\n%s\n", string(payload))
 	}
 
-	resp, err := c.put(ctx, fmt.Sprintf("/agents/%s", uuid), teammate)
+	resp, err := c.put(ctx, fmt.Sprintf("/agents/%s", uuid), agent)
 	if err != nil {
 		return nil, err
 	}
@@ -776,10 +790,10 @@ func (c *Client) UpdateTeammate(ctx context.Context, uuid string, teammate Teamm
 
 	// Debug output
 	if c.debug {
-		fmt.Printf("UpdateTeammate response:\n%s\n", string(bodyBytes))
+		fmt.Printf("UpdateAgent response:\n%s\n", string(bodyBytes))
 	}
 
-	var updated Teammate
+	var updated Agent
 	if err := json.Unmarshal(bodyBytes, &updated); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal response: %w\nResponse body: %s", err, string(bodyBytes))
 	}
@@ -795,8 +809,8 @@ func (c *Client) UpdateTeammate(ctx context.Context, uuid string, teammate Teamm
 	return &updated, nil
 }
 
-// Example method: deleting a teammate
-func (c *Client) DeleteTeammate(ctx context.Context, uuid string) error {
+// Example method: deleting a agent
+func (c *Client) DeleteAgent(ctx context.Context, uuid string) error {
 	resp, err := c.delete(ctx, fmt.Sprintf("/agents/%s", uuid))
 	if err != nil {
 		return err
@@ -805,9 +819,9 @@ func (c *Client) DeleteTeammate(ctx context.Context, uuid string) error {
 	return nil
 }
 
-// Example method: binding a source to a teammate
-func (c *Client) BindSourceToTeammate(ctx context.Context, sourceUUID, teammateUUID string) error {
-	path := fmt.Sprintf("sources/%s/teammates/%s", sourceUUID, teammateUUID)
+// Example method: binding a source to a agent
+func (c *Client) BindSourceToAgent(ctx context.Context, sourceUUID, agentUUID string) error {
+	path := fmt.Sprintf("sources/%s/agents/%s", sourceUUID, agentUUID)
 	resp, err := c.post(ctx, path, nil)
 	if err != nil {
 		return err
@@ -815,17 +829,17 @@ func (c *Client) BindSourceToTeammate(ctx context.Context, sourceUUID, teammateU
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("failed to bind source to teammate: %s", resp.Status)
+		return fmt.Errorf("failed to bind source to agent: %s", resp.Status)
 	}
 	return nil
 }
 
-// Example method: listing teammates for a particular source
-func (c *Client) GetSourceTeammates(ctx context.Context, sourceUUID string) ([]Teammate, error) {
-	// Get all teammates first
-	teammates, err := c.GetTeammates(ctx)
+// Example method: listing agents for a particular source
+func (c *Client) GetSourceAgents(ctx context.Context, sourceUUID string) ([]Agent, error) {
+	// Get all agents first
+	agents, err := c.GetAgents(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("failed to list teammates: %w", err)
+		return nil, fmt.Errorf("failed to list agents: %w", err)
 	}
 
 	// Get source details
@@ -834,45 +848,45 @@ func (c *Client) GetSourceTeammates(ctx context.Context, sourceUUID string) ([]T
 		return nil, fmt.Errorf("failed to get source details: %w", err)
 	}
 
-	// Filter teammates that have this source
-	var connectedTeammates []Teammate
-	for _, teammate := range teammates {
+	// Filter agents that have this source
+	var connectedAgents []Agent
+	for _, agent := range agents {
 		hasSource := false
-		for _, teammateSrc := range teammate.Sources {
-			if teammateSrc == sourceUUID {
+		for _, agentSrc := range agent.Sources {
+			if agentSrc == sourceUUID {
 				hasSource = true
 				break
 			}
 		}
 		if hasSource {
-			// Add source details to teammate for context
-			teammate.Sources = append(teammate.Sources, source.UUID)
-			connectedTeammates = append(connectedTeammates, teammate)
+			// Add source details to agent for context
+			agent.Sources = append(agent.Sources, source.UUID)
+			connectedAgents = append(connectedAgents, agent)
 		}
 	}
 
 	if c.debug {
-		fmt.Printf("Found %d teammates connected to source %s\n", len(connectedTeammates), sourceUUID)
-		for _, t := range connectedTeammates {
+		fmt.Printf("Found %d agents connected to source %s\n", len(connectedAgents), sourceUUID)
+		for _, t := range connectedAgents {
 			fmt.Printf("- %s (UUID: %s)\n", t.Name, t.UUID)
 		}
 	}
 
-	return connectedTeammates, nil
+	return connectedAgents, nil
 }
 
-// Example helper method to check if a teammate exists
-func (c *Client) TeammateExists(ctx context.Context, nameOrID string) (*Teammate, error) {
-	teammates, err := c.GetTeammates(ctx)
+// Example helper method to check if a agent exists
+func (c *Client) AgentExists(ctx context.Context, nameOrID string) (*Agent, error) {
+	agents, err := c.GetAgents(ctx)
 	if err != nil {
 		return nil, err
 	}
-	for _, t := range teammates {
+	for _, t := range agents {
 		if t.UUID == nameOrID || t.Name == nameOrID {
 			return &t, nil
 		}
 	}
-	return nil, fmt.Errorf("teammate not found: %s", nameOrID)
+	return nil, fmt.Errorf("agent not found: %s", nameOrID)
 }
 
 // Example method to discover a source
@@ -1003,10 +1017,11 @@ func (c *Client) GenerateTool(ctx context.Context, description, sessionID string
 		req.Header.Set("Cache-Control", "no-cache")
 		req.Header.Set("Connection", "keep-alive")
 
-		// We'll use a client with no (or very large) timeout for SSE
-		sseClient := &http.Client{Timeout: 0}
-
-		resp, err := sseClient.Do(req)
+		// Execute request with extended timeout for long-running tools
+		httpClient := &http.Client{
+			Timeout: 0, // No timeout for streaming connections
+		}
+		resp, err := httpClient.Do(req)
 		if err != nil {
 			messages <- ToolGenerationChatMessage{Type: "error", GeneratedToolContent: []GeneratedToolContent{{Content: fmt.Sprintf("failed to execute request: %v", err)}}}
 			return
@@ -1651,4 +1666,263 @@ func validateVariableType(value, expectedType string) (bool, string) {
 	}
 
 	return true, ""
+}
+
+// isRunnerHealthy checks if a runner is healthy based on various status fields
+func (c *Client) isRunnerHealthy(runner Runner) bool {
+	// Check various status fields that indicate health
+	status := strings.ToLower(runner.RunnerHealth.Status)
+	health := strings.ToLower(runner.RunnerHealth.Health)
+
+	// Accept various indicators of health
+	return status == "healthy" || status == "ok" || status == "ready" ||
+		health == "healthy" || health == "true" || health == "ok" ||
+		(status == "" && health == "") // Sometimes no status means it's running fine
+}
+
+// findHealthyRunnerQuickly attempts to quickly find a healthy runner with short timeouts
+func (c *Client) findHealthyRunnerQuickly(ctx context.Context) (string, error) {
+	// Create a context with a short timeout for the entire operation
+	quickCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+
+	// Get list of runners quickly
+	runners, err := c.ListRunners(quickCtx)
+	if err != nil {
+		return "", fmt.Errorf("failed to list runners quickly: %w", err)
+	}
+
+	// Define priority order for runners
+	priorityRunners := []string{"kubiya-hosted", "kubiya-hosted-1", "kubiya-cloud"}
+
+	// First, check priority runners
+	for _, runnerName := range priorityRunners {
+		for _, runner := range runners {
+			if runner.Name == runnerName && c.isRunnerHealthy(runner) {
+				return runner.Name, nil
+			}
+		}
+	}
+
+	// Then check any other healthy runner
+	for _, runner := range runners {
+		if c.isRunnerHealthy(runner) {
+			return runner.Name, nil
+		}
+	}
+
+	return "", fmt.Errorf("no healthy runners found")
+}
+
+// ExecuteToolWithTimeout executes a tool directly using the tool execution API with a configurable timeout
+func (c *Client) ExecuteToolWithTimeout(ctx context.Context, toolName string, toolDef map[string]interface{}, runner string, timeout time.Duration) (<-chan WorkflowSSEEvent, error) {
+	// Handle "auto" runner selection with fast failover
+	selectedRunner := runner
+	if runner == "auto" {
+		// Try to quickly find a healthy runner
+		healthyRunner, err := c.findHealthyRunnerQuickly(ctx)
+		if err != nil {
+			// If we can't find a healthy runner quickly, try kubiya-hosted first
+			selectedRunner = "kubiya-hosted"
+			if c.debug {
+				fmt.Printf("[DEBUG] No healthy runner found quickly, trying kubiya-hosted\n")
+			}
+		} else {
+			selectedRunner = healthyRunner
+			if c.debug {
+				fmt.Printf("[DEBUG] Selected healthy runner: %s\n", selectedRunner)
+			}
+		}
+	}
+
+	// Build URL with query parameters
+	params := url.Values{}
+	params.Set("runner", selectedRunner)
+	execURL := fmt.Sprintf("%s/tools/exec?%s", c.baseURL, params.Encode())
+
+	// Create request body
+	body := map[string]interface{}{
+		"tool_name": toolName,
+		"tool_def":  toolDef,
+	}
+
+	// If auto was selected and we're using a fallback runner, prepare a list of runners to try
+	var runnersToTry []string
+	if runner == "auto" {
+		// If we already selected a healthy runner, just use it
+		runnersToTry = []string{selectedRunner}
+		// But also prepare fallbacks in case it fails
+		if selectedRunner == "kubiya-hosted" {
+			runnersToTry = append(runnersToTry, "kubiya-hosted-1", "kubiya-cloud")
+		}
+	} else {
+		// For specific runner, only try that one
+		runnersToTry = []string{selectedRunner}
+	}
+
+	var lastErr error
+	for i, tryRunner := range runnersToTry {
+		if i > 0 {
+			// Log retry attempt
+			if c.debug {
+				fmt.Printf("[DEBUG] Retrying with runner: %s (attempt %d/%d)\n", tryRunner, i+1, len(runnersToTry))
+			}
+		}
+
+		// Update the URL with the current runner
+		params.Set("runner", tryRunner)
+		execURL = fmt.Sprintf("%s/tools/exec?%s", c.baseURL, params.Encode())
+
+		jsonBody, err := json.Marshal(body)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal request: %w", err)
+		}
+
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, execURL, bytes.NewReader(jsonBody))
+		if err != nil {
+			return nil, fmt.Errorf("failed to create request: %w", err)
+		}
+
+		// Set headers for SSE
+		req.Header.Set("Authorization", "UserKey "+c.cfg.APIKey)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept", "text/event-stream")
+
+		// Use a shorter timeout for initial connection to fail fast
+		connectTimeout := 10 * time.Second
+		if timeout > 0 && timeout < connectTimeout {
+			connectTimeout = timeout
+		}
+
+		// Execute request with shorter timeout for connection
+		httpClient := &http.Client{
+			Timeout: connectTimeout,
+		}
+		resp, err := httpClient.Do(req)
+		if err != nil {
+			lastErr = fmt.Errorf("runner %s: failed to connect: %w", tryRunner, err)
+			if i < len(runnersToTry)-1 && runner == "auto" {
+				// Try next runner
+				continue
+			}
+			return nil, lastErr
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			lastErr = fmt.Errorf("runner %s: execution failed with status %d: %s", tryRunner, resp.StatusCode, string(body))
+			if i < len(runnersToTry)-1 && runner == "auto" && resp.StatusCode >= 500 {
+				// Server error, try next runner
+				continue
+			}
+			return nil, lastErr
+		}
+
+		// Success! Create streaming channel
+		return c.streamToolExecution(resp, timeout, tryRunner)
+	}
+
+	// All runners failed
+	return nil, fmt.Errorf("all runners failed, last error: %w", lastErr)
+}
+
+// streamToolExecution handles the SSE streaming from successful connection
+func (c *Client) streamToolExecution(resp *http.Response, timeout time.Duration, runnerName string) (<-chan WorkflowSSEEvent, error) {
+	// Create channel for streaming events
+	events := make(chan WorkflowSSEEvent)
+	lastEventTime := time.Now()
+
+	// Send initial event about runner selection
+	go func() {
+		events <- WorkflowSSEEvent{
+			Type: "data",
+			Data: fmt.Sprintf(`{"type":"runner","runner":"%s"}`, runnerName),
+		}
+	}()
+
+	go func() {
+		defer close(events)
+		defer resp.Body.Close()
+
+		// Create a reader that will keep the connection alive
+		reader := bufio.NewReader(resp.Body)
+
+		// Start a goroutine to monitor for timeouts only if timeout > 0
+		if timeout > 0 {
+			ticker := time.NewTicker(time.Second)
+			defer ticker.Stop()
+
+			go func() {
+				for range ticker.C {
+					if time.Since(lastEventTime) > timeout {
+						resp.Body.Close() // Force close the connection
+						return
+					}
+				}
+			}()
+		}
+
+		for {
+			line, err := reader.ReadString('\n')
+			if err != nil {
+				if err != io.EOF {
+					if c.debug {
+						fmt.Printf("[DEBUG] Read error: %v\n", err)
+					}
+					events <- WorkflowSSEEvent{Type: "error", Data: err.Error()}
+				}
+				return
+			}
+
+			// Update last event time - we received data
+			lastEventTime = time.Now()
+
+			line = strings.TrimSpace(line)
+
+			// Debug logging
+			if c.debug {
+				fmt.Printf("[DEBUG] SSE Line: %s\n", line)
+			}
+
+			// Skip empty lines
+			if line == "" {
+				continue
+			}
+
+			// Parse SSE format
+			if strings.HasPrefix(line, "data: ") {
+				data := strings.TrimPrefix(line, "data: ")
+
+				// Check if it's the end marker
+				if data == "[DONE]" || data == "end of stream" {
+					events <- WorkflowSSEEvent{Type: "done", Data: ""}
+					return
+				}
+
+				// Send data event
+				events <- WorkflowSSEEvent{Type: "data", Data: data}
+			} else if strings.HasPrefix(line, "event: ") {
+				eventType := strings.TrimPrefix(line, "event: ")
+				
+				// Handle close event specially
+				if eventType == "close" {
+					events <- WorkflowSSEEvent{Type: "done", Data: ""}
+					return
+				}
+				
+				// Next line should contain the data
+				if dataLine, err := reader.ReadString('\n'); err == nil {
+					dataLine = strings.TrimSpace(dataLine)
+					if strings.HasPrefix(dataLine, "data: ") {
+						data := strings.TrimPrefix(dataLine, "data: ")
+						events <- WorkflowSSEEvent{Type: eventType, Data: data}
+						lastEventTime = time.Now() // Update on data received
+					}
+				}
+			}
+		}
+	}()
+
+	return events, nil
 }

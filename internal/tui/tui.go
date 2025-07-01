@@ -19,7 +19,7 @@ type ChatSession struct {
 	SessionID string
 }
 
-// ChatAgent represents a Kubiya teammate in chat
+// ChatAgent represents a Kubiya agent in chat
 type ChatAgent struct {
 	UUID           string
 	Name           string
@@ -39,7 +39,7 @@ func (a ChatAgent) Title() string {
 func (a ChatAgent) Description() string { return a.Desc }
 func (a ChatAgent) FilterValue() string { return a.Name }
 
-type chatTeammatesMsg []list.Item
+type chatAgentsMsg []list.Item
 type chatErrMsg struct{ error }
 
 // Rest of the chat-related code...

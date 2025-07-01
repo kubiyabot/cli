@@ -20,30 +20,30 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-func newTeammateCommand(cfg *config.Config) *cobra.Command {
+func newAgentCommand(cfg *config.Config) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:     "teammate",
-		Aliases: []string{"teammates", "tm"},
-		Short:   "👥 Manage teammates",
-		Long:    `Create, edit, delete, and list teammates in your Kubiya workspace.`,
+		Use:     "agent",
+		Aliases: []string{"agents", "ag"},
+		Short:   "🤖 Manage agents",
+		Long:    `Create, edit, delete, and list agents in your Kubiya workspace.`,
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-			// Check if API key is configured before running any teammate command
+			// Check if API key is configured before running any agent command
 			return requireAPIKey(cmd, cfg)
 		},
 	}
 
 	cmd.AddCommand(
-		newListTeammatesCommand(cfg),
-		newCreateTeammateCommand(cfg),
-		newEditTeammateCommand(cfg),
-		newDeleteTeammateCommand(cfg),
-		newGetTeammateCommand(cfg),
+		newListAgentsCommand(cfg),
+		newCreateAgentCommand(cfg),
+		newEditAgentCommand(cfg),
+		newDeleteAgentCommand(cfg),
+		newGetAgentCommand(cfg),
 	)
 
 	return cmd
 }
 
-func newCreateTeammateCommand(cfg *config.Config) *cobra.Command {
+func newCreateAgentCommand(cfg *config.Config) *cobra.Command {
 	var (
 		name                string
 		description         string
@@ -71,9 +71,9 @@ func newCreateTeammateCommand(cfg *config.Config) *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "create",
-		Short: "➕ Create new teammate",
+		Short: "➕ Create new agent",
 		Example: `  # Create interactively with advanced form
-  kubiya teammate create --interactive
+  kubiya agent create --interactive
   
   # Interactive mode allows creating sources directly:
   # - Add existing sources by UUID
@@ -82,68 +82,68 @@ func newCreateTeammateCommand(cfg *config.Config) *cobra.Command {
   # - Create inline sources with custom code or YAML
 
   # Create from JSON/YAML file
-  kubiya teammate create --file teammate.json
-  kubiya teammate create --file teammate.yaml --format yaml
+  kubiya agent create --file agent.json
+  kubiya agent create --file agent.yaml --format yaml
 
   # Create from stdin
-  cat teammate.json | kubiya teammate create --stdin
+  cat agent.json | kubiya agent create --stdin
 
   # Create with parameters
-  kubiya teammate create --name "DevOps Bot" --desc "Handles DevOps tasks" \
+  kubiya agent create --name "DevOps Bot" --desc "Handles DevOps tasks" \
     --source abc-123 --source def-456 \
     --secret DB_PASSWORD --env "LOG_LEVEL=debug" \
     --integration github
 
   # Create with webhook - system will generate a webhook URL as output
-  kubiya teammate create --name "Slack Bot" \
+  kubiya agent create --name "Slack Bot" \
     --webhook-dest "#alerts" --webhook-method slack \
     --webhook-prompt "Please analyze this alert"
 
   # Create HTTP webhook (system provides the webhook URL)
-  kubiya teammate create --name "API Bot" --webhook-method http \
+  kubiya agent create --name "API Bot" --webhook-method http \
     --webhook-prompt "Process this API request"
 
   # Create with multiple webhook types
-  kubiya teammate create --name "Notification Bot" \
+  kubiya agent create --name "Notification Bot" \
     --webhook-method http \
     --webhook-dest "#dev-alerts" --webhook-method slack \
     --webhook-prompt "Process this notification"
 
   # Create with webhooks from file
-  kubiya teammate create --name "WebhookBot" --webhook-file webhooks.json
+  kubiya agent create --name "WebhookBot" --webhook-file webhooks.json
 
   # Create with knowledge item
-  kubiya teammate create --name "Docs Bot" --knowledge-file docs.md`,
+  kubiya agent create --name "Docs Bot" --knowledge-file docs.md`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			client := kubiya.NewClient(cfg)
 
-			var teammate kubiya.Teammate
+			var agent kubiya.Agent
 			var err error
 			var createdResources []string // Track resources created to show in summary
 
 			// Process input based on flags
 			if inputFile != "" || fromStdin {
 				if inputFile != "" {
-					teammate, err = readTeammateFromFile(inputFile, inputFormat)
+					agent, err = readAgentFromFile(inputFile, inputFormat)
 				} else {
-					teammate, err = readTeammateFromStdin(inputFormat)
+					agent, err = readAgentFromStdin(inputFormat)
 				}
 				if err != nil {
-					return fmt.Errorf("failed to read teammate configuration: %w", err)
+					return fmt.Errorf("failed to read agent configuration: %w", err)
 				}
 			} else if interactive {
-				form := tui.NewTeammateForm(cfg)
+				form := tui.NewAgentForm(cfg)
 				result, err := form.Run()
 				if err != nil {
 					return fmt.Errorf("failed to run interactive form: %w", err)
 				}
 				if result == nil {
-					return fmt.Errorf("teammate creation cancelled")
+					return fmt.Errorf("agent creation cancelled")
 				}
-				teammate = *result
+				agent = *result
 			} else {
-				// Create teammate from command line arguments
-				teammate = kubiya.Teammate{
+				// Create agent from command line arguments
+				agent = kubiya.Agent{
 					Name:            name,
 					Description:     description,
 					LLMModel:        llmModel,
@@ -155,20 +155,20 @@ func newCreateTeammateCommand(cfg *config.Config) *cobra.Command {
 				}
 			}
 
-			// Validate the teammate configuration
-			if err := validateTeammate(client, cmd.Context(), &teammate); err != nil {
-				return fmt.Errorf("invalid teammate configuration: %w", err)
+			// Validate the agent configuration
+			if err := validateAgent(client, cmd.Context(), &agent); err != nil {
+				return fmt.Errorf("invalid agent configuration: %w", err)
 			}
 
-			// Create the teammate
-			fmt.Printf("Creating teammate '%s'...\n", teammate.Name)
-			created, err := client.CreateTeammate(cmd.Context(), teammate)
+			// Create the agent
+			fmt.Printf("Creating agent '%s'...\n", agent.Name)
+			created, err := client.CreateAgent(cmd.Context(), agent)
 			if err != nil {
-				return fmt.Errorf("failed to create teammate: %w", err)
+				return fmt.Errorf("failed to create agent: %w", err)
 			}
 
-			fmt.Printf("✅ Created teammate: %s (UUID: %s)\n", created.Name, created.UUID)
-			createdResources = append(createdResources, fmt.Sprintf("Teammate: %s (%s)", created.Name, created.UUID))
+			fmt.Printf("✅ Created agent: %s (UUID: %s)\n", created.Name, created.UUID)
+			createdResources = append(createdResources, fmt.Sprintf("Agent: %s (%s)", created.Name, created.UUID))
 
 			// Handle inline sources if provided
 			if inlineSourceFile != "" || inlineSourceStdin {
@@ -178,7 +178,7 @@ func newCreateTeammateCommand(cfg *config.Config) *cobra.Command {
 				if name != "" {
 					sourceName = fmt.Sprintf("%s - Inline Source", name)
 				} else {
-					sourceName = "Inline Source for Teammate"
+					sourceName = "Inline Source for Agent"
 				}
 
 				// Set up command to use sources functionality
@@ -219,12 +219,12 @@ func newCreateTeammateCommand(cfg *config.Config) *cobra.Command {
 				fmt.Printf("✅ Created inline source with UUID: %s\n", sourceUUID)
 				createdResources = append(createdResources, fmt.Sprintf("Source: %s", sourceUUID))
 
-				// Bind the source to the teammate
-				fmt.Printf("Attaching source %s to teammate %s...\n", sourceUUID, created.UUID)
-				if err := client.BindSourceToTeammate(cmd.Context(), sourceUUID, created.UUID); err != nil {
-					return fmt.Errorf("failed to bind source to teammate: %w", err)
+				// Bind the source to the agent
+				fmt.Printf("Attaching source %s to agent %s...\n", sourceUUID, created.UUID)
+				if err := client.BindSourceToAgent(cmd.Context(), sourceUUID, created.UUID); err != nil {
+					return fmt.Errorf("failed to bind source to agent: %w", err)
 				}
-				fmt.Printf("✅ Attached source %s to teammate %s\n", sourceUUID, created.UUID)
+				fmt.Printf("✅ Attached source %s to agent %s\n", sourceUUID, created.UUID)
 			}
 
 			// Process knowledge files if provided
@@ -244,11 +244,11 @@ func newCreateTeammateCommand(cfg *config.Config) *cobra.Command {
 					// Create the knowledge item
 					item := kubiya.Knowledge{
 						Name:        itemName,
-						Description: fmt.Sprintf("Knowledge for teammate: %s", name),
+						Description: fmt.Sprintf("Knowledge for agent: %s", name),
 						Labels:      knowledgeLabels,
 						Content:     string(content),
 						Type:        "knowledge",
-						Source:      "teammate_creation",
+						Source:      "agent_creation",
 					}
 
 					created, err := client.CreateKnowledge(cmd.Context(), item)
@@ -275,14 +275,14 @@ func newCreateTeammateCommand(cfg *config.Config) *cobra.Command {
 				}
 
 				if created.UUID == "" {
-					fmt.Printf("⚠️ Cannot attach webhooks: teammate UUID is empty\n")
+					fmt.Printf("⚠️ Cannot attach webhooks: agent UUID is empty\n")
 				} else {
 					// Attach existing webhooks
 					for _, webhookID := range webhooks {
-						if err := attachWebhookToTeammate(cmd.Context(), client, webhookID, created.UUID); err != nil {
+						if err := attachWebhookToAgent(cmd.Context(), client, webhookID, created.UUID); err != nil {
 							fmt.Printf("⚠️ Failed to attach webhook %s: %v\n", webhookID, err)
 						} else {
-							fmt.Printf("✅ Attached webhook %s to teammate\n", webhookID)
+							fmt.Printf("✅ Attached webhook %s to agent\n", webhookID)
 							createdResources = append(createdResources, fmt.Sprintf("Attached webhook: %s", webhookID))
 						}
 					}
@@ -345,7 +345,7 @@ func newCreateTeammateCommand(cfg *config.Config) *cobra.Command {
 							fmt.Printf("⚠️ Failed to read webhook file: %v\n", err)
 						} else {
 							for _, webhook := range webhooks {
-								webhook.AgentID = created.UUID // Set the teammate ID
+								webhook.AgentID = created.UUID // Set the agent ID
 								createdWebhook, err := client.CreateWebhook(cmd.Context(), webhook)
 								if err != nil {
 									fmt.Printf("⚠️ Failed to create webhook from file: %v\n", err)
@@ -377,14 +377,14 @@ func newCreateTeammateCommand(cfg *config.Config) *cobra.Command {
 			fmt.Printf("\n%s\n", style.SubtitleStyle.Render("Next Steps"))
 			if created.UUID != "" {
 				fmt.Printf("• View details: %s\n",
-					style.CommandStyle.Render(fmt.Sprintf("kubiya teammate get %s", created.UUID)))
-				fmt.Printf("• Edit teammate: %s\n",
-					style.CommandStyle.Render(fmt.Sprintf("kubiya teammate edit %s --interactive", created.UUID)))
+					style.CommandStyle.Render(fmt.Sprintf("kubiya agent get %s", created.UUID)))
+				fmt.Printf("• Edit agent: %s\n",
+					style.CommandStyle.Render(fmt.Sprintf("kubiya agent edit %s --interactive", created.UUID)))
 			} else {
-				fmt.Printf("• List all teammates: %s\n",
-					style.CommandStyle.Render("kubiya teammate list"))
-				fmt.Printf("• Create another teammate: %s\n",
-					style.CommandStyle.Render("kubiya teammate create --interactive"))
+				fmt.Printf("• List all agents: %s\n",
+					style.CommandStyle.Render("kubiya agent list"))
+				fmt.Printf("• Create another agent: %s\n",
+					style.CommandStyle.Render("kubiya agent create --interactive"))
 			}
 
 			return nil
@@ -392,14 +392,14 @@ func newCreateTeammateCommand(cfg *config.Config) *cobra.Command {
 	}
 
 	// Basic info flags
-	cmd.Flags().StringVarP(&name, "name", "n", "", "Teammate name")
-	cmd.Flags().StringVarP(&description, "desc", "d", "", "Teammate description")
+	cmd.Flags().StringVarP(&name, "name", "n", "", "Agent name")
+	cmd.Flags().StringVarP(&description, "desc", "d", "", "Agent description")
 	cmd.Flags().BoolVarP(&interactive, "interactive", "i", false, "Use interactive form")
 	cmd.Flags().StringVar(&llmModel, "llm", "azure/gpt-4", "LLM model to use")
 	cmd.Flags().StringVar(&instructionType, "type", "tools", "Instruction type")
 
 	// Input file flags
-	cmd.Flags().StringVarP(&inputFile, "file", "f", "", "File containing teammate configuration (JSON or YAML)")
+	cmd.Flags().StringVarP(&inputFile, "file", "f", "", "File containing agent configuration (JSON or YAML)")
 	cmd.Flags().StringVar(&inputFormat, "format", "json", "Input format (json|yaml)")
 	cmd.Flags().BoolVar(&fromStdin, "stdin", false, "Read configuration from stdin")
 
@@ -434,8 +434,8 @@ func newCreateTeammateCommand(cfg *config.Config) *cobra.Command {
 	return cmd
 }
 
-// Helper function to attach a webhook to a teammate
-func attachWebhookToTeammate(ctx context.Context, client *kubiya.Client, webhookID, teammateID string) error {
+// Helper function to attach a webhook to a agent
+func attachWebhookToAgent(ctx context.Context, client *kubiya.Client, webhookID, agentID string) error {
 	// Get the webhook
 	webhook, err := client.GetWebhook(ctx, webhookID)
 	if err != nil {
@@ -443,7 +443,7 @@ func attachWebhookToTeammate(ctx context.Context, client *kubiya.Client, webhook
 	}
 
 	// Update the webhook's agent ID
-	webhook.AgentID = teammateID
+	webhook.AgentID = agentID
 
 	// Save the updated webhook
 	_, err = client.UpdateWebhook(ctx, webhookID, *webhook)
@@ -454,12 +454,12 @@ func attachWebhookToTeammate(ctx context.Context, client *kubiya.Client, webhook
 	return nil
 }
 
-// Helper function to create a webhook for a teammate
-func createWebhook(ctx context.Context, client *kubiya.Client, teammateID, destination, method, prompt string) (*kubiya.Webhook, error) {
+// Helper function to create a webhook for a agent
+func createWebhook(ctx context.Context, client *kubiya.Client, agentID, destination, method, prompt string) (*kubiya.Webhook, error) {
 	// Create a new webhook
 	webhook := kubiya.Webhook{
-		Name:    fmt.Sprintf("%s webhook for %s", method, teammateID),
-		AgentID: teammateID,
+		Name:    fmt.Sprintf("%s webhook for %s", method, agentID),
+		AgentID: agentID,
 		Communication: kubiya.Communication{
 			Method:      method,
 			Destination: destination,
@@ -484,70 +484,70 @@ func createWebhook(ctx context.Context, client *kubiya.Client, teammateID, desti
 	return createdWebhook, nil
 }
 
-// readTeammateFromFile reads and parses a teammate configuration from a file
-func readTeammateFromFile(filepath, format string) (kubiya.Teammate, error) {
+// readAgentFromFile reads and parses a agent configuration from a file
+func readAgentFromFile(filepath, format string) (kubiya.Agent, error) {
 	data, err := os.ReadFile(filepath)
 	if err != nil {
-		return kubiya.Teammate{}, fmt.Errorf("failed to read file: %w", err)
+		return kubiya.Agent{}, fmt.Errorf("failed to read file: %w", err)
 	}
 
-	return parseTeammateData(data, format)
+	return parseAgentData(data, format)
 }
 
-// readTeammateFromStdin reads and parses a teammate configuration from stdin
-func readTeammateFromStdin(format string) (kubiya.Teammate, error) {
+// readAgentFromStdin reads and parses a agent configuration from stdin
+func readAgentFromStdin(format string) (kubiya.Agent, error) {
 	data, err := io.ReadAll(os.Stdin)
 	if err != nil {
-		return kubiya.Teammate{}, fmt.Errorf("failed to read from stdin: %w", err)
+		return kubiya.Agent{}, fmt.Errorf("failed to read from stdin: %w", err)
 	}
 
-	return parseTeammateData(data, format)
+	return parseAgentData(data, format)
 }
 
-// parseTeammateData parses teammate data from JSON or YAML
-func parseTeammateData(data []byte, format string) (kubiya.Teammate, error) {
-	var teammate kubiya.Teammate
+// parseAgentData parses agent data from JSON or YAML
+func parseAgentData(data []byte, format string) (kubiya.Agent, error) {
+	var agent kubiya.Agent
 
 	switch format {
 	case "json", "":
-		if err := json.Unmarshal(data, &teammate); err != nil {
-			return kubiya.Teammate{}, fmt.Errorf("invalid JSON: %w", err)
+		if err := json.Unmarshal(data, &agent); err != nil {
+			return kubiya.Agent{}, fmt.Errorf("invalid JSON: %w", err)
 		}
 	case "yaml", "yml":
-		if err := yaml.Unmarshal(data, &teammate); err != nil {
-			return kubiya.Teammate{}, fmt.Errorf("invalid YAML: %w", err)
+		if err := yaml.Unmarshal(data, &agent); err != nil {
+			return kubiya.Agent{}, fmt.Errorf("invalid YAML: %w", err)
 		}
 	default:
-		return kubiya.Teammate{}, fmt.Errorf("unsupported format: %s", format)
+		return kubiya.Agent{}, fmt.Errorf("unsupported format: %s", format)
 	}
 
-	return teammate, nil
+	return agent, nil
 }
 
-// validateTeammate performs basic validation on a teammate
-func validateTeammate(client *kubiya.Client, ctx context.Context, teammate *kubiya.Teammate) error {
-	if teammate.Name == "" {
-		return fmt.Errorf("teammate name cannot be empty")
+// validateAgent performs basic validation on a agent
+func validateAgent(client *kubiya.Client, ctx context.Context, agent *kubiya.Agent) error {
+	if agent.Name == "" {
+		return fmt.Errorf("agent name cannot be empty")
 	}
 
 	// Set defaults if not provided
-	if teammate.LLMModel == "" {
-		teammate.LLMModel = "azure/gpt-4"
+	if agent.LLMModel == "" {
+		agent.LLMModel = "azure/gpt-4"
 	}
 
-	if teammate.InstructionType == "" {
-		teammate.InstructionType = "tools"
+	if agent.InstructionType == "" {
+		agent.InstructionType = "tools"
 	}
 
 	// Ensure we have at least one owner
 	// If no owners specified, use the current user ID (if available)
-	if len(teammate.Owners) == 0 {
+	if len(agent.Owners) == 0 {
 		// For now, we'll leave this empty and let the API handle it
 		// The API should set the current user as owner
 	}
 
 	// Validate all sources have non-empty UUIDs and match the expected UUID format
-	for i, sourceID := range teammate.Sources {
+	for i, sourceID := range agent.Sources {
 		if sourceID == "" {
 			return fmt.Errorf("source at index %d has empty UUID", i)
 		}
@@ -562,7 +562,7 @@ func validateTeammate(client *kubiya.Client, ctx context.Context, teammate *kubi
 	}
 
 	// Validate all secrets have non-empty names
-	for i, secret := range teammate.Secrets {
+	for i, secret := range agent.Secrets {
 		if secret == "" {
 			return fmt.Errorf("secret at index %d has empty name", i)
 		}
@@ -572,7 +572,7 @@ func validateTeammate(client *kubiya.Client, ctx context.Context, teammate *kubi
 	}
 
 	// Validate all integrations have non-empty names and actually exist
-	if len(teammate.Integrations) > 0 {
+	if len(agent.Integrations) > 0 {
 		// Get all available integrations
 		integrations, err := client.ListIntegrations(ctx)
 		if err != nil {
@@ -584,7 +584,7 @@ func validateTeammate(client *kubiya.Client, ctx context.Context, teammate *kubi
 			availableIntegrations[integration.Name] = true
 		}
 
-		for i, integration := range teammate.Integrations {
+		for i, integration := range agent.Integrations {
 			if integration == "" {
 				return fmt.Errorf("integration at index %d has empty name", i)
 			}
@@ -597,7 +597,7 @@ func validateTeammate(client *kubiya.Client, ctx context.Context, teammate *kubi
 	}
 
 	// Validate environment variables have non-empty keys and values
-	for key, value := range teammate.Environment {
+	for key, value := range agent.Environment {
 		if key == "" {
 			return fmt.Errorf("environment variable has empty key")
 		}
@@ -607,8 +607,8 @@ func validateTeammate(client *kubiya.Client, ctx context.Context, teammate *kubi
 	}
 
 	// Ensure the starters field is initialized properly
-	if teammate.Starters == nil {
-		teammate.Starters = []interface{}{}
+	if agent.Starters == nil {
+		agent.Starters = []interface{}{}
 	}
 
 	return nil
@@ -633,7 +633,7 @@ func isValidUUID(id string) bool {
 	return len(id) > 8 && len(id) <= 36
 }
 
-func newEditTeammateCommand(cfg *config.Config) *cobra.Command {
+func newEditAgentCommand(cfg *config.Config) *cobra.Command {
 	var (
 		interactive        bool
 		editor             bool
@@ -661,9 +661,9 @@ func newEditTeammateCommand(cfg *config.Config) *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "edit [uuid]",
-		Short: "✏️ Edit teammate",
+		Short: "✏️ Edit agent",
 		Example: `  # Edit interactively with form
-  kubiya teammate edit abc-123 --interactive
+  kubiya agent edit abc-123 --interactive
   
   # Interactive mode allows managing sources directly:
   # - Add existing sources by UUID
@@ -672,37 +672,37 @@ func newEditTeammateCommand(cfg *config.Config) *cobra.Command {
   # - Create inline sources with custom code or YAML
 
   # Edit using JSON editor
-  kubiya teammate edit abc-123 --editor`,
+  kubiya agent edit abc-123 --editor`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			client := kubiya.NewClient(cfg)
 			uuid := args[0]
 
-			// Get existing teammate
-			teammate, err := client.GetTeammate(cmd.Context(), uuid)
+			// Get existing agent
+			agent, err := client.GetAgent(cmd.Context(), uuid)
 			if err != nil {
-				return fmt.Errorf("failed to get teammate: %w", err)
+				return fmt.Errorf("failed to get agent: %w", err)
 			}
 
-			var updated kubiya.Teammate
+			var updated kubiya.Agent
 			var createdResources []string // Track resources created to show in summary
 
 			if interactive {
 				// Use TUI form
-				fmt.Println("🖥️ Starting interactive teammate editing form...")
-				form := tui.NewTeammateForm(cfg)
-				form.SetDefaults(teammate)
+				fmt.Println("🖥️ Starting interactive agent editing form...")
+				form := tui.NewAgentForm(cfg)
+				form.SetDefaults(agent)
 				result, err := form.Run()
 				if err != nil {
 					return err
 				}
 				if result == nil {
-					return fmt.Errorf("teammate editing cancelled")
+					return fmt.Errorf("agent editing cancelled")
 				}
 				updated = *result
 			} else if editor {
 				// Use JSON editor
-				updated, err = editTeammateJSON(teammate)
+				updated, err = editAgentJSON(agent)
 				if err != nil {
 					return err
 				}
@@ -712,7 +712,7 @@ func newEditTeammateCommand(cfg *config.Config) *cobra.Command {
 				hasWebhookChanges(addWebhooks, removeWebhooks, webhookDestinations, webhookMethod, webhookPrompt) {
 
 				// Apply command-line changes
-				updated = *teammate
+				updated = *agent
 
 				// Update basic fields if provided
 				if name != "" {
@@ -819,10 +819,10 @@ func newEditTeammateCommand(cfg *config.Config) *cobra.Command {
 			}
 
 			// Generate a diff for display
-			diff := generateTeammateDiff(teammate, &updated)
+			diff := generateAgentDiff(agent, &updated)
 
 			// Show changes
-			fmt.Printf("\n%s\n\n", style.TitleStyle.Render(" 🔄 Updating Teammate "))
+			fmt.Printf("\n%s\n\n", style.TitleStyle.Render(" 🔄 Updating Agent "))
 
 			if len(diff) == 0 && !hasWebhookChanges(addWebhooks, removeWebhooks, webhookDestinations, webhookMethod, webhookPrompt) {
 				fmt.Println("No changes detected. Update cancelled.")
@@ -842,23 +842,23 @@ func newEditTeammateCommand(cfg *config.Config) *cobra.Command {
 				return fmt.Errorf("update cancelled")
 			}
 
-			// Update the teammate
-			result, err := client.UpdateTeammate(cmd.Context(), uuid, updated)
+			// Update the agent
+			result, err := client.UpdateAgent(cmd.Context(), uuid, updated)
 			if err != nil {
-				return fmt.Errorf("failed to update teammate: %w", err)
+				return fmt.Errorf("failed to update agent: %w", err)
 			}
 
-			fmt.Printf("%s Updated teammate: %s\n\n",
+			fmt.Printf("%s Updated agent: %s\n\n",
 				style.SuccessStyle.Render("✅"),
 				style.HighlightStyle.Render(result.Name))
 
-			// Process webhook changes after the teammate update
+			// Process webhook changes after the agent update
 			// Process existing webhook attachments/detachments
 			for _, webhookID := range addWebhooks {
-				if err := attachWebhookToTeammate(cmd.Context(), client, webhookID, uuid); err != nil {
+				if err := attachWebhookToAgent(cmd.Context(), client, webhookID, uuid); err != nil {
 					fmt.Printf("⚠️ Failed to attach webhook %s: %v\n", webhookID, err)
 				} else {
-					fmt.Printf("✅ Attached webhook %s to teammate\n", webhookID)
+					fmt.Printf("✅ Attached webhook %s to agent\n", webhookID)
 					createdResources = append(createdResources, fmt.Sprintf("Attached webhook: %s", webhookID))
 				}
 			}
@@ -871,17 +871,17 @@ func newEditTeammateCommand(cfg *config.Config) *cobra.Command {
 					continue
 				}
 
-				// Only detach if it's actually attached to this teammate
+				// Only detach if it's actually attached to this agent
 				if webhook.AgentID == uuid {
 					webhook.AgentID = ""
 					if _, err := client.UpdateWebhook(cmd.Context(), webhookID, *webhook); err != nil {
 						fmt.Printf("⚠️ Failed to detach webhook %s: %v\n", webhookID, err)
 					} else {
-						fmt.Printf("✅ Detached webhook %s from teammate\n", webhookID)
+						fmt.Printf("✅ Detached webhook %s from agent\n", webhookID)
 						createdResources = append(createdResources, fmt.Sprintf("Detached webhook: %s", webhookID))
 					}
 				} else {
-					fmt.Printf("⚠️ Webhook %s is not attached to this teammate\n", webhookID)
+					fmt.Printf("⚠️ Webhook %s is not attached to this agent\n", webhookID)
 				}
 			}
 
@@ -970,7 +970,7 @@ func newEditTeammateCommand(cfg *config.Config) *cobra.Command {
 
 				// Create each webhook
 				for i, webhook := range webhooks {
-					// Set the teammate ID
+					// Set the agent ID
 					webhook.AgentID = uuid
 
 					// Set defaults if needed
@@ -1017,9 +1017,9 @@ func newEditTeammateCommand(cfg *config.Config) *cobra.Command {
 			// Provide next steps
 			fmt.Printf("%s\n", style.SubtitleStyle.Render("Next Steps"))
 			fmt.Printf("• View details: %s\n",
-				style.CommandStyle.Render(fmt.Sprintf("kubiya teammate get %s", uuid)))
-			fmt.Printf("• List teammates: %s\n",
-				style.CommandStyle.Render("kubiya teammate list"))
+				style.CommandStyle.Render(fmt.Sprintf("kubiya agent get %s", uuid)))
+			fmt.Printf("• List agents: %s\n",
+				style.CommandStyle.Render("kubiya agent list"))
 
 			return nil
 		},
@@ -1031,8 +1031,8 @@ func newEditTeammateCommand(cfg *config.Config) *cobra.Command {
 	cmd.Flags().StringVarP(&outputFormat, "output", "o", "text", "Output format (text|json)")
 
 	// Basic field flags
-	cmd.Flags().StringVarP(&name, "name", "n", "", "Update teammate name")
-	cmd.Flags().StringVarP(&description, "desc", "d", "", "Update teammate description")
+	cmd.Flags().StringVarP(&name, "name", "n", "", "Update agent name")
+	cmd.Flags().StringVarP(&description, "desc", "d", "", "Update agent description")
 	cmd.Flags().StringVar(&llmModel, "llm", "", "Update LLM model")
 	cmd.Flags().StringVar(&instructions, "instructions", "", "Update custom AI instructions")
 
@@ -1110,8 +1110,8 @@ func hasWebhookChanges(addWebhooks, removeWebhooks, webhookDestinations []string
 	return false
 }
 
-// Generate a human-readable diff between two teammates
-func generateTeammateDiff(original, updated *kubiya.Teammate) []string {
+// Generate a human-readable diff between two agents
+func generateAgentDiff(original, updated *kubiya.Agent) []string {
 	var changes []string
 
 	// Compare basic fields
@@ -1238,22 +1238,22 @@ func diffEnvVars(original, updated map[string]string) (added, removed, changed [
 	return added, removed, changed
 }
 
-func editTeammateJSON(teammate *kubiya.Teammate) (kubiya.Teammate, error) {
+func editAgentJSON(agent *kubiya.Agent) (kubiya.Agent, error) {
 	// Create temporary file
 	tmpfile, err := os.CreateTemp("", "kubiya-*.json")
 	if err != nil {
-		return kubiya.Teammate{}, fmt.Errorf("failed to create temp file: %w", err)
+		return kubiya.Agent{}, fmt.Errorf("failed to create temp file: %w", err)
 	}
 	defer os.Remove(tmpfile.Name())
 
-	// Write current teammate as JSON
-	data, err := json.MarshalIndent(teammate, "", "  ")
+	// Write current agent as JSON
+	data, err := json.MarshalIndent(agent, "", "  ")
 	if err != nil {
-		return kubiya.Teammate{}, fmt.Errorf("failed to marshal JSON: %w", err)
+		return kubiya.Agent{}, fmt.Errorf("failed to marshal JSON: %w", err)
 	}
 
 	if _, err := tmpfile.Write(data); err != nil {
-		return kubiya.Teammate{}, fmt.Errorf("failed to write temp file: %w", err)
+		return kubiya.Agent{}, fmt.Errorf("failed to write temp file: %w", err)
 	}
 	tmpfile.Close()
 
@@ -1269,44 +1269,44 @@ func editTeammateJSON(teammate *kubiya.Teammate) (kubiya.Teammate, error) {
 	cmd.Stderr = os.Stderr
 
 	if err := cmd.Run(); err != nil {
-		return kubiya.Teammate{}, fmt.Errorf("editor failed: %w", err)
+		return kubiya.Agent{}, fmt.Errorf("editor failed: %w", err)
 	}
 
 	// Read updated content
 	content, err := os.ReadFile(tmpfile.Name())
 	if err != nil {
-		return kubiya.Teammate{}, fmt.Errorf("failed to read updated file: %w", err)
+		return kubiya.Agent{}, fmt.Errorf("failed to read updated file: %w", err)
 	}
 
-	var updated kubiya.Teammate
+	var updated kubiya.Agent
 	if err := json.Unmarshal(content, &updated); err != nil {
-		return kubiya.Teammate{}, fmt.Errorf("invalid JSON: %w", err)
+		return kubiya.Agent{}, fmt.Errorf("invalid JSON: %w", err)
 	}
 
 	return updated, nil
 }
 
-func newDeleteTeammateCommand(cfg *config.Config) *cobra.Command {
+func newDeleteAgentCommand(cfg *config.Config) *cobra.Command {
 	var force bool
 
 	cmd := &cobra.Command{
 		Use:     "delete [uuid]",
-		Short:   "🗑️ Delete teammate",
-		Example: "  kubiya teammate delete abc-123\n  kubiya teammate delete abc-123 --force",
+		Short:   "🗑️ Delete agent",
+		Example: "  kubiya agent delete abc-123\n  kubiya agent delete abc-123 --force",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			client := kubiya.NewClient(cfg)
 
-			// Get teammate details first
-			teammate, err := client.GetTeammate(cmd.Context(), args[0])
+			// Get agent details first
+			agent, err := client.GetAgent(cmd.Context(), args[0])
 			if err != nil {
 				return err
 			}
 
 			if !force {
-				fmt.Printf("About to delete teammate:\n")
-				fmt.Printf("  Name: %s\n", teammate.Name)
-				fmt.Printf("  Description: %s\n", teammate.Description)
+				fmt.Printf("About to delete agent:\n")
+				fmt.Printf("  Name: %s\n", agent.Name)
+				fmt.Printf("  Description: %s\n", agent.Description)
 				fmt.Print("\nAre you sure? [y/N] ")
 				var confirm string
 				fmt.Scanln(&confirm)
@@ -1315,11 +1315,11 @@ func newDeleteTeammateCommand(cfg *config.Config) *cobra.Command {
 				}
 			}
 
-			if err := client.DeleteTeammate(cmd.Context(), args[0]); err != nil {
+			if err := client.DeleteAgent(cmd.Context(), args[0]); err != nil {
 				return err
 			}
 
-			fmt.Printf("✅ Deleted teammate: %s\n", teammate.Name)
+			fmt.Printf("✅ Deleted agent: %s\n", agent.Name)
 			return nil
 		},
 	}
@@ -1328,7 +1328,7 @@ func newDeleteTeammateCommand(cfg *config.Config) *cobra.Command {
 	return cmd
 }
 
-func newListTeammatesCommand(cfg *config.Config) *cobra.Command {
+func newListAgentsCommand(cfg *config.Config) *cobra.Command {
 	var (
 		outputFormat string
 		showAll      bool
@@ -1340,31 +1340,31 @@ func newListTeammatesCommand(cfg *config.Config) *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "list",
-		Short: "📋 List all teammates",
-		Example: `  # List teammates
-  kubiya teammate list
+		Short: "📋 List all agents",
+		Example: `  # List agents
+  kubiya agent list
 
   # Show all details including capabilities
-  kubiya teammate list --all
+  kubiya agent list --all
 
-  # Show only active teammates
-  kubiya teammate list --active
+  # Show only active agents
+  kubiya agent list --active
 
-  # Filter teammates (supports partial matching)
-  kubiya teammate list --filter "kubernetes"
+  # Filter agents (supports partial matching)
+  kubiya agent list --filter "kubernetes"
 
   # Sort by name, creation date, or last updated
-  kubiya teammate list --sort name
-  kubiya teammate list --sort created
-  kubiya teammate list --sort updated
+  kubiya agent list --sort name
+  kubiya agent list --sort created
+  kubiya agent list --sort updated
 
   # Output in JSON format
-  kubiya teammate list --output json`,
+  kubiya agent list --output json`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			client := kubiya.NewClient(cfg)
-			teammates, err := client.ListTeammates(cmd.Context())
+			agents, err := client.ListAgents(cmd.Context())
 			if err != nil {
-				return fmt.Errorf("failed to fetch teammates: %w", err)
+				return fmt.Errorf("failed to fetch agents: %w", err)
 			}
 
 			// Get all sources to map IDs to names
@@ -1378,11 +1378,11 @@ func newListTeammatesCommand(cfg *config.Config) *cobra.Command {
 				sourceMap[s.UUID] = s
 			}
 
-			// Filter teammates if requested
+			// Filter agents if requested
 			if filter != "" {
 				filterLower := strings.ToLower(filter)
-				var filtered []kubiya.Teammate
-				for _, t := range teammates {
+				var filtered []kubiya.Agent
+				for _, t := range agents {
 					// Match against name, description, type, etc.
 					if strings.Contains(strings.ToLower(t.Name), filterLower) ||
 						strings.Contains(strings.ToLower(t.Description), filterLower) ||
@@ -1410,50 +1410,50 @@ func newListTeammatesCommand(cfg *config.Config) *cobra.Command {
 						}
 					}
 				}
-				teammates = filtered
+				agents = filtered
 			}
 
-			// Filter active teammates if requested
+			// Filter active agents if requested
 			if showActive {
-				var active []kubiya.Teammate
-				for _, t := range teammates {
-					status := getTeammateStatus(t)
+				var active []kubiya.Agent
+				for _, t := range agents {
+					status := getAgentStatus(t)
 					if !strings.Contains(status, "inactive") {
 						active = append(active, t)
 					}
 				}
-				teammates = active
+				agents = active
 			}
 
-			// Sort teammates if requested
+			// Sort agents if requested
 			switch strings.ToLower(sortBy) {
 			case "name":
-				sort.Slice(teammates, func(i, j int) bool {
-					return teammates[i].Name < teammates[j].Name
+				sort.Slice(agents, func(i, j int) bool {
+					return agents[i].Name < agents[j].Name
 				})
 			case "created":
-				sort.Slice(teammates, func(i, j int) bool {
-					return teammates[i].Metadata.CreatedAt > teammates[j].Metadata.CreatedAt
+				sort.Slice(agents, func(i, j int) bool {
+					return agents[i].Metadata.CreatedAt > agents[j].Metadata.CreatedAt
 				})
 			case "updated":
-				sort.Slice(teammates, func(i, j int) bool {
-					return teammates[i].Metadata.LastUpdated > teammates[j].Metadata.LastUpdated
+				sort.Slice(agents, func(i, j int) bool {
+					return agents[i].Metadata.LastUpdated > agents[j].Metadata.LastUpdated
 				})
 			}
 
 			// Limit results if requested
-			if limit > 0 && limit < len(teammates) {
-				teammates = teammates[:limit]
+			if limit > 0 && limit < len(agents) {
+				agents = agents[:limit]
 			}
 
 			switch outputFormat {
 			case "json":
-				return json.NewEncoder(os.Stdout).Encode(teammates)
+				return json.NewEncoder(os.Stdout).Encode(agents)
 			case "text":
-				// Count active teammates
+				// Count active agents
 				activeCount := 0
-				for _, t := range teammates {
-					if !strings.Contains(getTeammateStatus(t), "inactive") {
+				for _, t := range agents {
+					if !strings.Contains(getAgentStatus(t), "inactive") {
 						activeCount++
 					}
 				}
@@ -1462,7 +1462,7 @@ func newListTeammatesCommand(cfg *config.Config) *cobra.Command {
 				w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 
 				// Show title with counts
-				fmt.Fprintln(w, style.TitleStyle.Render(fmt.Sprintf(" 👥 Teammates (%d total, %d active) ", len(teammates), activeCount)))
+				fmt.Fprintln(w, style.TitleStyle.Render(fmt.Sprintf(" 👥 Agents (%d total, %d active) ", len(agents), activeCount)))
 
 				// Change the header based on display mode
 				if showAll {
@@ -1472,16 +1472,16 @@ func newListTeammatesCommand(cfg *config.Config) *cobra.Command {
 				}
 
 				// Add debug output if debug mode is enabled
-				for _, t := range teammates {
+				for _, t := range agents {
 					if cfg.Debug {
-						debugTeammate(t)
+						debugAgent(t)
 					}
 
 					// Basic info
 					uuid := style.DimStyle.Render(t.UUID)
 					name := style.HighlightStyle.Render(t.Name)
-					typeIcon := getTeammateTypeIcon(t.InstructionType)
-					status := getTeammateStatus(t)
+					typeIcon := getAgentTypeIcon(t.InstructionType)
+					status := getAgentStatus(t)
 					description := truncateDescription(t.Description, 50)
 
 					// Extended info for "all" mode
@@ -1555,20 +1555,20 @@ func newListTeammatesCommand(cfg *config.Config) *cobra.Command {
 					return err
 				}
 
-				if len(teammates) == 0 {
-					fmt.Println("\nNo teammates found. Create one with: kubiya teammate create --interactive")
+				if len(agents) == 0 {
+					fmt.Println("\nNo agents found. Create one with: kubiya agent create --interactive")
 				} else {
 					fmt.Printf("\n%s\n", style.SubtitleStyle.Render("Helpful Commands"))
-					fmt.Printf("• Create a new teammate: %s\n",
-						style.CommandStyle.Render("kubiya teammate create --interactive"))
-					fmt.Printf("• View teammate details: %s\n",
-						style.CommandStyle.Render("kubiya teammate get <uuid>"))
+					fmt.Printf("• Create a new agent: %s\n",
+						style.CommandStyle.Render("kubiya agent create --interactive"))
+					fmt.Printf("• View agent details: %s\n",
+						style.CommandStyle.Render("kubiya agent get <uuid>"))
 					fmt.Printf("• Show detailed listing: %s\n",
-						style.CommandStyle.Render("kubiya teammate list --all"))
+						style.CommandStyle.Render("kubiya agent list --all"))
 
 					if !showActive && activeCount > 0 {
-						fmt.Printf("• Show only active teammates: %s\n",
-							style.CommandStyle.Render("kubiya teammate list --active"))
+						fmt.Printf("• Show only active agents: %s\n",
+							style.CommandStyle.Render("kubiya agent list --active"))
 					}
 				}
 
@@ -1580,10 +1580,10 @@ func newListTeammatesCommand(cfg *config.Config) *cobra.Command {
 	}
 
 	cmd.Flags().StringVarP(&outputFormat, "output", "o", "text", "Output format (text|json)")
-	cmd.Flags().BoolVarP(&showAll, "all", "a", false, "Show detailed information for all teammates")
-	cmd.Flags().BoolVar(&showActive, "active", false, "Show only active teammates")
+	cmd.Flags().BoolVarP(&showAll, "all", "a", false, "Show detailed information for all agents")
+	cmd.Flags().BoolVar(&showActive, "active", false, "Show only active agents")
 	cmd.Flags().StringVarP(&sortBy, "sort", "s", "", "Sort by field (name|created|updated)")
-	cmd.Flags().StringVarP(&filter, "filter", "f", "", "Filter teammates by name, description, or type")
+	cmd.Flags().StringVarP(&filter, "filter", "f", "", "Filter agents by name, description, or type")
 	cmd.Flags().IntVarP(&limit, "limit", "l", 0, "Limit number of results")
 
 	return cmd
@@ -1591,7 +1591,7 @@ func newListTeammatesCommand(cfg *config.Config) *cobra.Command {
 
 // Helper functions to improve the display
 
-func getTeammateTypeIcon(instructionType string) string {
+func getAgentTypeIcon(instructionType string) string {
 	switch strings.ToLower(instructionType) {
 	case "tools":
 		return "🛠️ Tools"
@@ -1604,16 +1604,16 @@ func getTeammateTypeIcon(instructionType string) string {
 	}
 }
 
-func getTeammateStatus(t kubiya.Teammate) string {
-	// Force all teammates to be active regardless of properties
+func getAgentStatus(t kubiya.Agent) string {
+	// Force all agents to be active regardless of properties
 	return style.ActiveStyle.Render("active")
 }
 
-func getTeammateCapabilities(t kubiya.Teammate, sourceMap map[string]kubiya.Source) string {
+func getAgentCapabilities(t kubiya.Agent, sourceMap map[string]kubiya.Source) string {
 	var capabilities []string
 
 	// Debug output if needed
-	// fmt.Printf("Debug - Teammate %s:\nSources: %v\nTools: %v\nEnv: %v\nSecrets: %v\nIntegrations: %v\n",
+	// fmt.Printf("Debug - Agent %s:\nSources: %v\nTools: %v\nEnv: %v\nSecrets: %v\nIntegrations: %v\n",
 	//     t.Name, t.Sources, t.Tools, t.Environment, t.Secrets, t.Integrations)
 
 	// Check direct tools
@@ -1746,47 +1746,47 @@ func truncateDescription(desc string, maxLen int) string {
 	return desc[:maxLen-3] + "..."
 }
 
-func newGetTeammateCommand(cfg *config.Config) *cobra.Command {
+func newGetAgentCommand(cfg *config.Config) *cobra.Command {
 	var outputFormat string
 
 	cmd := &cobra.Command{
 		Use:     "get [uuid]",
-		Short:   "🔍 Get teammate details",
-		Example: "  kubiya teammate get abc-123\n  kubiya teammate get abc-123 --output json",
+		Short:   "🔍 Get agent details",
+		Example: "  kubiya agent get abc-123\n  kubiya agent get abc-123 --output json",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			client := kubiya.NewClient(cfg)
-			teammate, err := client.GetTeammate(cmd.Context(), args[0])
+			agent, err := client.GetAgent(cmd.Context(), args[0])
 			if err != nil {
-				return fmt.Errorf("failed to get teammate: %w", err)
+				return fmt.Errorf("failed to get agent: %w", err)
 			}
 
 			switch outputFormat {
 			case "json":
-				return json.NewEncoder(os.Stdout).Encode(teammate)
+				return json.NewEncoder(os.Stdout).Encode(agent)
 
 			case "text":
-				fmt.Printf("\n%s\n\n", style.TitleStyle.Render(fmt.Sprintf(" 👤 Teammate: %s ", teammate.Name)))
+				fmt.Printf("\n%s\n\n", style.TitleStyle.Render(fmt.Sprintf(" 👤 Agent: %s ", agent.Name)))
 
 				fmt.Printf("%s\n", style.SubtitleStyle.Render("Basic Information"))
-				fmt.Printf("  UUID: %s\n", style.DimStyle.Render(teammate.UUID))
-				fmt.Printf("  Name: %s\n", style.HighlightStyle.Render(teammate.Name))
-				fmt.Printf("  Description: %s\n", teammate.Description)
-				fmt.Printf("  Type: %s\n", getTeammateTypeIcon(teammate.InstructionType))
-				fmt.Printf("  LLM Model: %s\n", getModelWithIcon(teammate.LLMModel))
-				if teammate.Image != "" {
-					fmt.Printf("  Image: %s\n", teammate.Image)
+				fmt.Printf("  UUID: %s\n", style.DimStyle.Render(agent.UUID))
+				fmt.Printf("  Name: %s\n", style.HighlightStyle.Render(agent.Name))
+				fmt.Printf("  Description: %s\n", agent.Description)
+				fmt.Printf("  Type: %s\n", getAgentTypeIcon(agent.InstructionType))
+				fmt.Printf("  LLM Model: %s\n", getModelWithIcon(agent.LLMModel))
+				if agent.Image != "" {
+					fmt.Printf("  Image: %s\n", agent.Image)
 				}
-				if teammate.ManagedBy != "" {
-					fmt.Printf("  Managed By: %s\n", teammate.ManagedBy)
+				if agent.ManagedBy != "" {
+					fmt.Printf("  Managed By: %s\n", agent.ManagedBy)
 				}
-				if teammate.IsDebugMode {
+				if agent.IsDebugMode {
 					fmt.Printf("  Debug Mode: %s\n", style.WarningStyle.Render("Enabled"))
 				}
 				fmt.Println()
 
 				// Get sources with details
-				if len(teammate.Sources) > 0 {
+				if len(agent.Sources) > 0 {
 					fmt.Printf("%s\n", style.SubtitleStyle.Render("Sources"))
 
 					// Get all sources to map IDs to names
@@ -1800,7 +1800,7 @@ func newGetTeammateCommand(cfg *config.Config) *cobra.Command {
 						sourceMap[s.UUID] = s
 					}
 
-					for _, sourceID := range teammate.Sources {
+					for _, sourceID := range agent.Sources {
 						if source, ok := sourceMap[sourceID]; ok {
 							fmt.Printf("  • %s\n", style.HighlightStyle.Render(source.Name))
 							fmt.Printf("    UUID: %s\n", style.DimStyle.Render(source.UUID))
@@ -1825,9 +1825,9 @@ func newGetTeammateCommand(cfg *config.Config) *cobra.Command {
 				}
 
 				// Get all direct tools
-				if len(teammate.Tools) > 0 {
+				if len(agent.Tools) > 0 {
 					fmt.Printf("%s\n", style.SubtitleStyle.Render("Direct Tools"))
-					for _, toolID := range teammate.Tools {
+					for _, toolID := range agent.Tools {
 						fmt.Printf("  • %s\n", style.HighlightStyle.Render(toolID))
 						// Try to fetch tool details if possible
 						// This would depend on client.GetTool implementation
@@ -1837,11 +1837,11 @@ func newGetTeammateCommand(cfg *config.Config) *cobra.Command {
 				}
 
 				// Environment variables with improved display
-				if len(teammate.Environment) > 0 {
+				if len(agent.Environment) > 0 {
 					fmt.Printf("%s\n", style.SubtitleStyle.Render("Environment Variables"))
 					w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 					fmt.Fprintln(w, "  KEY\tVALUE")
-					for k, v := range teammate.Environment {
+					for k, v := range agent.Environment {
 						maskedValue := v
 						// Mask sensitive values
 						if strings.Contains(strings.ToLower(k), "password") ||
@@ -1860,9 +1860,9 @@ func newGetTeammateCommand(cfg *config.Config) *cobra.Command {
 				}
 
 				// Secrets with descriptions
-				if len(teammate.Secrets) > 0 {
+				if len(agent.Secrets) > 0 {
 					fmt.Printf("%s\n", style.SubtitleStyle.Render("Secrets"))
-					for _, secret := range teammate.Secrets {
+					for _, secret := range agent.Secrets {
 						// Try to get secret details
 						secretInfo, err := client.GetSecret(cmd.Context(), secret)
 						if err == nil && secretInfo.Description != "" {
@@ -1877,9 +1877,9 @@ func newGetTeammateCommand(cfg *config.Config) *cobra.Command {
 				}
 
 				// Integrations with icons
-				if len(teammate.Integrations) > 0 {
+				if len(agent.Integrations) > 0 {
 					fmt.Printf("%s\n", style.SubtitleStyle.Render("Integrations"))
-					for _, integration := range teammate.Integrations {
+					for _, integration := range agent.Integrations {
 						icon := getIntegrationIcon(integration)
 						fmt.Printf("  • %s %s\n", icon, integration)
 					}
@@ -1887,57 +1887,57 @@ func newGetTeammateCommand(cfg *config.Config) *cobra.Command {
 				}
 
 				// Access control
-				if len(teammate.AllowedGroups) > 0 || len(teammate.AllowedUsers) > 0 || len(teammate.Owners) > 0 {
+				if len(agent.AllowedGroups) > 0 || len(agent.AllowedUsers) > 0 || len(agent.Owners) > 0 {
 					fmt.Printf("%s\n", style.SubtitleStyle.Render("Access Control"))
 
-					if len(teammate.Owners) > 0 {
-						fmt.Printf("  Owners: %s\n", strings.Join(teammate.Owners, ", "))
+					if len(agent.Owners) > 0 {
+						fmt.Printf("  Owners: %s\n", strings.Join(agent.Owners, ", "))
 					}
 
-					if len(teammate.AllowedGroups) > 0 {
-						fmt.Printf("  Allowed Groups: %s\n", strings.Join(teammate.AllowedGroups, ", "))
+					if len(agent.AllowedGroups) > 0 {
+						fmt.Printf("  Allowed Groups: %s\n", strings.Join(agent.AllowedGroups, ", "))
 					}
 
-					if len(teammate.AllowedUsers) > 0 {
-						fmt.Printf("  Allowed Users: %s\n", strings.Join(teammate.AllowedUsers, ", "))
+					if len(agent.AllowedUsers) > 0 {
+						fmt.Printf("  Allowed Users: %s\n", strings.Join(agent.AllowedUsers, ", "))
 					}
 
 					fmt.Println()
 				}
 
 				// Runners
-				if len(teammate.Runners) > 0 {
+				if len(agent.Runners) > 0 {
 					fmt.Printf("%s\n", style.SubtitleStyle.Render("Runners"))
-					for _, runner := range teammate.Runners {
+					for _, runner := range agent.Runners {
 						fmt.Printf("  • %s\n", runner)
 					}
 					fmt.Println()
 				}
 
 				// Timestamps
-				if teammate.Metadata.CreatedAt != "" || teammate.Metadata.LastUpdated != "" {
+				if agent.Metadata.CreatedAt != "" || agent.Metadata.LastUpdated != "" {
 					fmt.Printf("%s\n", style.SubtitleStyle.Render("Timestamps"))
-					if teammate.Metadata.CreatedAt != "" {
-						fmt.Printf("  Created: %s\n", teammate.Metadata.CreatedAt)
+					if agent.Metadata.CreatedAt != "" {
+						fmt.Printf("  Created: %s\n", agent.Metadata.CreatedAt)
 					}
-					if teammate.Metadata.LastUpdated != "" {
-						fmt.Printf("  Updated: %s\n", teammate.Metadata.LastUpdated)
+					if agent.Metadata.LastUpdated != "" {
+						fmt.Printf("  Updated: %s\n", agent.Metadata.LastUpdated)
 					}
 					fmt.Println()
 				}
 
 				// AI Instructions (if available and not empty)
-				if teammate.AIInstructions != "" {
+				if agent.AIInstructions != "" {
 					fmt.Printf("%s\n", style.SubtitleStyle.Render("AI Instructions"))
-					fmt.Printf("  %s\n\n", teammate.AIInstructions)
+					fmt.Printf("  %s\n\n", agent.AIInstructions)
 				}
 
 				// Helpful commands
 				fmt.Printf("%s\n", style.SubtitleStyle.Render("Helpful Commands"))
 				fmt.Printf("  • Edit: %s\n",
-					style.CommandStyle.Render(fmt.Sprintf("kubiya teammate edit %s --interactive", teammate.UUID)))
+					style.CommandStyle.Render(fmt.Sprintf("kubiya agent edit %s --interactive", agent.UUID)))
 				fmt.Printf("  • Delete: %s\n",
-					style.CommandStyle.Render(fmt.Sprintf("kubiya teammate delete %s", teammate.UUID)))
+					style.CommandStyle.Render(fmt.Sprintf("kubiya agent delete %s", agent.UUID)))
 				fmt.Println()
 
 				return nil
@@ -2001,8 +2001,8 @@ func getIntegrationIcon(integration string) string {
 }
 
 // Add this debug function
-func debugTeammate(t kubiya.Teammate) {
-	fmt.Printf("\nDebug - Teammate: %s\n", t.Name)
+func debugAgent(t kubiya.Agent) {
+	fmt.Printf("\nDebug - Agent: %s\n", t.Name)
 	fmt.Printf("Sources: %v\n", t.Sources)
 	fmt.Printf("Tools: %v\n", t.Tools)
 	fmt.Printf("Environment: %d vars\n", len(t.Environment))

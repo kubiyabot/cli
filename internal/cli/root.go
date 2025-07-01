@@ -16,13 +16,13 @@ func Execute(cfg *config.Config) error {
 		Short: "🤖 Kubiya CLI - Your Agentic AI Automation Companion",
 		Long: `Welcome to Kubiya CLI! 👋
 
-A powerful tool for interacting with your Kubiya teammates and managing your automation sources.
+A powerful tool for interacting with your Kubiya agents and managing your automation sources.
 Use 'kubiya --help' to see all available commands.
 
 Quick Start:
   • Chat:             kubiya chat --interactive
   • Browse sources:    kubiya browse  # Interactive source browser
-  • Manage teammates: kubiya teammate list
+  • Manage agents: kubiya agent list
   • Manage tools:     kubiya tool list
   • Manage knowledge: kubiya knowledge list
   • Manage runners:   kubiya runner list
@@ -61,7 +61,7 @@ Need help? Visit: https://docs.kubiya.ai`,
 	// Add other subcommands
 	rootCmd.AddCommand(
 		newChatCommand(cfg),
-		newTeammateCommand(cfg),
+		newAgentCommand(cfg),
 		newSourcesCommand(cfg),
 		newToolsCommand(cfg),
 		newKnowledgeCommand(cfg),
@@ -78,6 +78,7 @@ Need help? Visit: https://docs.kubiya.ai`,
 		newInitCommand(cfg),
 		newMcpCommand(cfg),
 		newWorkflowCommand(cfg),
+		newPolicyCommand(cfg),
 	)
 
 	return rootCmd.Execute()

@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"sort"
+	"strconv"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -14,6 +15,7 @@ import (
 	"github.com/kubiyabot/cli/internal/config"
 	"github.com/kubiyabot/cli/internal/kubiya"
 	"github.com/kubiyabot/cli/internal/style"
+	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 )
 
@@ -61,6 +63,8 @@ func newToolsCommand(cfg *config.Config) *cobra.Command {
 		newSearchToolsCommand(cfg),
 		newDescribeToolCommand(cfg),
 		newGenerateToolCommand(cfg),
+		newExecToolCommand(cfg),
+		newToolIntegrationsCommand(cfg),
 	)
 
 	return cmd
@@ -572,22 +576,707 @@ func renderToolArgs(args []struct {
 }
 
 func formatToolUsage(tool *kubiya.Tool) string {
-	var b strings.Builder
-	b.WriteString(fmt.Sprintf("Usage: %s", tool.Name))
-
-	// Add required args
+	usage := tool.Name
 	for _, arg := range tool.Args {
 		if arg.Required {
-			b.WriteString(fmt.Sprintf(" <%s>", arg.Name))
+			usage += fmt.Sprintf(" <%s>", arg.Name)
+		} else {
+			usage += fmt.Sprintf(" [%s]", arg.Name)
+		}
+	}
+	return usage
+}
+
+func newExecToolCommand(cfg *config.Config) *cobra.Command {
+	var (
+		runner          string
+		toolName        string
+		toolDesc        string
+		toolType        string
+		image           string
+		content         string
+		watch           bool
+		jsonFile        string
+		jsonInput       string
+		outputFormat    string
+		skipHealthCheck bool
+		skipPolicyCheck bool
+		timeout         int
+		integrations    []string
+		withFiles       []string
+		withVolumes     []string
+		withServices    []string
+		envVars         []string
+		args            []string
+		iconURL         string
+	)
+
+	cmd := &cobra.Command{
+		Use:   "exec",
+		Short: "🚀 Execute a tool with streaming output",
+		Long: `Execute a tool directly by providing its definition.
+The tool execution will stream output in real-time.
+
+By default, the runner is set to "auto" which will:
+1. Try to use 'kubiya-hosted' if it's healthy
+2. Fall back to the first available healthy runner if kubiya-hosted is not available
+3. Show which runner was selected and why
+
+Environment Variables:
+  KUBIYA_TOOL_TIMEOUT       - Default timeout in seconds (default: 300)
+  KUBIYA_TOOL_RUNNER        - Default runner (default: auto) 
+  KUBIYA_DEFAULT_RUNNER     - Default runner when "default" is specified or runner is empty
+  KUBIYA_TOOL_OUTPUT_FORMAT - Default output format: text or stream-json (default: text)
+  KUBIYA_TOOL_TYPE          - Default tool type (default: docker)
+  KUBIYA_SKIP_HEALTH_CHECK  - Skip runner health check if set to "true" or "1"`,
+		Example: `  # Execute a simple bash tool (auto runner selection)
+  kubiya tool exec --name "hello" --content "echo Hello World"
+
+  # Execute a Python tool with custom image
+  kubiya tool exec --name "python-script" --type docker --image python:3.11 \
+    --content "print('Hello from Python')"
+
+  # Execute with a specific runner
+  kubiya tool exec --name "test" --content "date" --runner core-testing-1
+
+  # Execute a tool from JSON file
+  kubiya tool exec --json-file tool.json
+
+  # Execute with direct JSON input
+  kubiya tool exec --json '{"name":"test","type":"docker","image":"alpine","content":"echo hello"}' 
+
+  # Execute with raw JSON stream output
+  kubiya tool exec --name "test" --content "date" --output stream-json
+
+  # Execute with custom timeout (in seconds)
+  kubiya tool exec --name "long-job" --content "sleep 60" --timeout 120
+
+  # Execute with Kubernetes integration (in-cluster auth)
+  kubiya tool exec --name "k8s-pods" --content "kubectl get pods -A" \
+    --integration k8s/incluster
+
+  # Execute with AWS credentials
+  kubiya tool exec --name "aws-s3" --content "aws s3 ls" \
+    --integration aws/creds
+
+  # Execute with multiple integrations
+  kubiya tool exec --name "deploy" --content "./deploy.sh" \
+    --integration k8s/incluster --integration aws/creds
+
+  # Execute with file mappings
+  kubiya tool exec --name "config-tool" --content "cat /app/config.yaml" \
+    --with-file ~/.config/myapp.yaml:/app/config.yaml
+
+  # Execute with volumes (read-only)
+  kubiya tool exec --name "docker-inspect" --content "docker ps -a" \
+    --with-volume /var/run/docker.sock:/var/run/docker.sock:ro
+
+  # Execute with environment variables
+  kubiya tool exec --name "env-test" --content "echo \$MY_VAR" \
+    --env MY_VAR=hello --env ANOTHER_VAR=world
+
+  # Complex AWS tool with arguments
+  kubiya tool exec --name "ec2-describe" --type docker \
+    --image amazon/aws-cli:latest \
+    --content 'aws ec2 describe-instances $([[ -n "$instance_ids" ]] && echo "--instance-ids $instance_ids")' \
+    --arg instance_ids:string:"Comma-separated instance IDs":false \
+    --with-file ~/.aws/credentials:/root/.aws/credentials \
+    --env AWS_PROFILE=production`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := cmd.Context()
+			client := kubiya.NewClient(cfg)
+
+			// Apply environment variable defaults if flags were not set
+			if cmd.Flags().Changed("timeout") == false {
+				if envTimeout := os.Getenv("KUBIYA_TOOL_TIMEOUT"); envTimeout != "" {
+					if t, err := strconv.Atoi(envTimeout); err == nil {
+						timeout = t
+						fmt.Printf("%s Using timeout from KUBIYA_TOOL_TIMEOUT: %d seconds\n",
+							style.DimStyle.Render("🔧"), timeout)
+					}
+				}
+			}
+
+			if cmd.Flags().Changed("runner") == false && runner == "" {
+				if envRunner := os.Getenv("KUBIYA_TOOL_RUNNER"); envRunner != "" {
+					runner = envRunner
+					fmt.Printf("%s Using runner from KUBIYA_TOOL_RUNNER: %s\n",
+						style.DimStyle.Render("🔧"), runner)
+				}
+			}
+
+			if cmd.Flags().Changed("output") == false {
+				if envOutput := os.Getenv("KUBIYA_TOOL_OUTPUT_FORMAT"); envOutput != "" {
+					outputFormat = envOutput
+					fmt.Printf("%s Using output format from KUBIYA_TOOL_OUTPUT_FORMAT: %s\n",
+						style.DimStyle.Render("🔧"), outputFormat)
+				}
+			}
+
+			if cmd.Flags().Changed("type") == false && toolType == "" {
+				if envType := os.Getenv("KUBIYA_TOOL_TYPE"); envType != "" {
+					toolType = envType
+					fmt.Printf("%s Using tool type from KUBIYA_TOOL_TYPE: %s\n",
+						style.DimStyle.Render("🔧"), toolType)
+				}
+			}
+
+			if cmd.Flags().Changed("skip-health-check") == false {
+				if envSkip := os.Getenv("KUBIYA_SKIP_HEALTH_CHECK"); envSkip != "" {
+					skipHealthCheck = strings.ToLower(envSkip) == "true" || envSkip == "1"
+					if skipHealthCheck {
+						fmt.Printf("%s Health check disabled by KUBIYA_SKIP_HEALTH_CHECK\n",
+							style.DimStyle.Render("🔧"))
+					}
+				}
+			}
+
+			// Build tool definition
+			var toolDef map[string]interface{}
+
+			if jsonInput != "" {
+				// Parse direct JSON input
+				if err := json.Unmarshal([]byte(jsonInput), &toolDef); err != nil {
+					return fmt.Errorf("failed to parse JSON input: %w", err)
+				}
+				// Extract tool name if not provided
+				if toolName == "" {
+					if name, ok := toolDef["name"].(string); ok {
+						toolName = name
+					}
+				}
+			} else if jsonFile != "" {
+				// Read tool definition from file
+				data, err := os.ReadFile(jsonFile)
+				if err != nil {
+					return fmt.Errorf("failed to read JSON file: %w", err)
+				}
+				if err := json.Unmarshal(data, &toolDef); err != nil {
+					return fmt.Errorf("failed to parse JSON file: %w", err)
+				}
+				// Extract tool name if not provided
+				if toolName == "" {
+					if name, ok := toolDef["name"].(string); ok {
+						toolName = name
+					}
+				}
+			} else {
+				// Build tool definition from flags
+				if toolName == "" {
+					return fmt.Errorf("tool name is required")
+				}
+				if content == "" {
+					return fmt.Errorf("tool content is required")
+				}
+
+				toolDef = map[string]interface{}{
+					"name":        toolName,
+					"description": toolDesc,
+					"content":     content,
+				}
+
+				if toolType != "" {
+					toolDef["type"] = toolType
+				} else {
+					toolDef["type"] = "docker" // Default type
+				}
+				if image != "" {
+					toolDef["image"] = image
+				}
+			}
+
+			// Apply integration templates
+			if len(integrations) > 0 {
+				fmt.Printf("%s Applying integration templates...\n", style.InfoStyle.Render("🔌"))
+				fs := afero.NewOsFs()
+				allIntegrations, err := GetAllToolIntegrations(fs)
+				if err != nil {
+					return fmt.Errorf("failed to load integrations: %w", err)
+				}
+
+				for _, integrationName := range integrations {
+					integration, ok := allIntegrations[integrationName]
+					if !ok {
+						return fmt.Errorf("integration '%s' not found", integrationName)
+					}
+
+					fmt.Printf("%s Applying %s integration (%s)\n",
+						style.SuccessStyle.Render("✓"),
+						style.HighlightStyle.Render(integrationName),
+						integration.Description)
+
+					if err := ApplyIntegrationToTool(toolDef, integration); err != nil {
+						return fmt.Errorf("failed to apply integration '%s': %w", integrationName, err)
+					}
+				}
+			}
+
+			// Apply additional tool properties from flags
+			if err := applyToolPropertiesFromFlags(toolDef, withFiles, withVolumes, withServices, envVars, args, iconURL); err != nil {
+				return fmt.Errorf("failed to apply tool properties: %w", err)
+			}
+
+			// Default runner if not specified
+			if runner == "" {
+				// Check for default runner env var
+				if defaultRunner := os.Getenv("KUBIYA_DEFAULT_RUNNER"); defaultRunner != "" {
+					runner = defaultRunner
+					fmt.Printf("%s Using default runner from KUBIYA_DEFAULT_RUNNER: %s\n",
+						style.DimStyle.Render("🔧"), runner)
+				} else {
+					runner = "auto"
+				}
+			}
+
+			// Handle "default" runner value
+			if runner == "default" {
+				defaultRunner := os.Getenv("KUBIYA_DEFAULT_RUNNER")
+				if defaultRunner != "" {
+					runner = defaultRunner
+					fmt.Printf("%s Using default runner from KUBIYA_DEFAULT_RUNNER: %s\n",
+						style.DimStyle.Render("🔧"), runner)
+				} else {
+					runner = "auto"
+					fmt.Printf("%s No KUBIYA_DEFAULT_RUNNER set, using auto selection\n",
+						style.DimStyle.Render("🔧"))
+				}
+			}
+
+			// Handle auto runner selection
+			selectedRunner := runner
+			if runner == "auto" {
+				fmt.Printf("%s Auto-selecting runner...\n", style.InfoStyle.Render("🔍"))
+
+				// Try kubiya-hosted first
+				runnerInfo, err := client.GetRunner(ctx, "kubiya-hosted")
+				if err == nil && isRunnerHealthy(runnerInfo) {
+					selectedRunner = "kubiya-hosted"
+					fmt.Printf("%s Selected primary runner: %s (healthy)\n",
+						style.SuccessStyle.Render("✓"), style.HighlightStyle.Render(selectedRunner))
+				} else {
+					// kubiya-hosted is not healthy, find an alternative
+					if err != nil {
+						fmt.Printf("%s Primary runner 'kubiya-hosted' not accessible: %v\n",
+							style.WarningStyle.Render("⚠️"), err)
+					} else {
+						fmt.Printf("%s Primary runner 'kubiya-hosted' is not healthy (status: %s)\n",
+							style.WarningStyle.Render("⚠️"), runnerInfo.RunnerHealth.Status)
+					}
+
+					// List all runners and find a healthy one
+					fmt.Printf("%s Searching for alternative runners...\n", style.DimStyle.Render("›"))
+					runners, err := client.ListRunners(ctx)
+					if err != nil {
+						return fmt.Errorf("failed to list runners: %w", err)
+					}
+
+					// Find the first healthy runner
+					for _, r := range runners {
+						if r.Name != "kubiya-hosted" && isRunnerHealthy(r) {
+							selectedRunner = r.Name
+							fmt.Printf("%s Selected fallback runner: %s (healthy, %s)\n",
+								style.SuccessStyle.Render("✓"),
+								style.HighlightStyle.Render(selectedRunner),
+								r.RunnerType)
+							break
+						}
+					}
+
+					// If no healthy runner found
+					if selectedRunner == "auto" {
+						return fmt.Errorf("no healthy runners available")
+					}
+				}
+			} else if !skipHealthCheck {
+				// For explicitly specified runners, check health
+				runnerInfo, err := client.GetRunner(ctx, selectedRunner)
+				if err != nil {
+					fmt.Printf("%s Warning: Could not check runner health: %v\n",
+						style.WarningStyle.Render("⚠️"), err)
+				} else {
+					// Check runner health status
+					if !isRunnerHealthy(runnerInfo) {
+						if runnerInfo.RunnerHealth.Error != "" {
+							return fmt.Errorf("runner '%s' is not healthy: %s (error: %s)",
+								selectedRunner, runnerInfo.RunnerHealth.Status, runnerInfo.RunnerHealth.Error)
+						}
+						return fmt.Errorf("runner '%s' is not healthy: %s",
+							selectedRunner, runnerInfo.RunnerHealth.Status)
+					}
+					fmt.Printf("%s Runner '%s' is healthy (v%s)\n",
+						style.SuccessStyle.Render("✓"), selectedRunner, runnerInfo.Version)
+				}
+			}
+
+			// Policy validation (if enabled)
+			if !skipPolicyCheck {
+				// Check if OPA enforcement is enabled
+				opaEnforce := os.Getenv("KUBIYA_OPA_ENFORCE")
+				if opaEnforce == "true" || opaEnforce == "1" {
+					fmt.Printf("%s Validating tool execution permissions...\n", style.InfoStyle.Render("🛡️"))
+					
+					// Extract args from toolDef for validation
+					toolArgs := make(map[string]interface{})
+					if args, ok := toolDef["args"].(map[string]interface{}); ok {
+						toolArgs = args
+					}
+					
+					allowed, message, err := client.ValidateToolExecution(ctx, toolName, toolArgs, selectedRunner)
+					if err != nil {
+						fmt.Printf("%s Policy validation failed: %v\n", style.WarningStyle.Render("⚠️"), err)
+						fmt.Printf("%s Proceeding without policy validation...\n", style.DimStyle.Render("›"))
+					} else if !allowed {
+						fmt.Printf("%s Tool execution denied by policy\n", style.ErrorStyle.Render("❌"))
+						if message != "" {
+							fmt.Printf("%s Reason: %s\n", style.DimStyle.Render("›"), message)
+						}
+						return fmt.Errorf("tool execution denied by policy")
+					} else {
+						fmt.Printf("%s Tool execution authorized\n", style.SuccessStyle.Render("✅"))
+						if message != "" {
+							fmt.Printf("%s %s\n", style.DimStyle.Render("›"), message)
+						}
+					}
+				} else {
+					fmt.Printf("%s Policy enforcement disabled (KUBIYA_OPA_ENFORCE not set)\n", style.DimStyle.Render("🔧"))
+				}
+			}
+
+			// Show execution info
+			fmt.Printf("\n%s Executing tool: %s\n", style.StatusStyle.Render("🚀"), style.HighlightStyle.Render(toolName))
+			fmt.Printf("%s Runner: %s", style.DimStyle.Render("📍"), style.HighlightStyle.Render(selectedRunner))
+			if runner == "auto" && selectedRunner != "kubiya-hosted" {
+				fmt.Printf(" %s", style.DimStyle.Render("(auto-selected fallback)"))
+			}
+			fmt.Printf("\n%s Timeout: ", style.DimStyle.Render("⏱️"))
+			if timeout == 0 {
+				fmt.Printf("%s\n", style.DimStyle.Render("none"))
+			} else {
+				fmt.Printf("%s\n", style.DimStyle.Render(fmt.Sprintf("%d seconds", timeout)))
+			}
+			fmt.Println()
+
+			// Execute tool with streaming
+			events, err := client.ExecuteToolWithTimeout(ctx, toolName, toolDef, selectedRunner, time.Duration(timeout)*time.Second)
+			if err != nil {
+				return fmt.Errorf("failed to execute tool: %w", err)
+			}
+
+			// Process streaming events based on output format
+			if outputFormat == "stream-json" {
+				// Raw JSON stream output
+				for event := range events {
+					if event.Type == "data" {
+						fmt.Println(event.Data)
+					} else if event.Type == "error" {
+						fmt.Fprintf(os.Stderr, `{"type":"error","message":"%s"}`+"\n", event.Data)
+						return fmt.Errorf("tool execution failed")
+					}
+				}
+				return nil
+			}
+
+			// Text output format (default)
+			var hasError bool
+			startTime := time.Now()
+			var outputLines []string
+
+			for event := range events {
+				switch event.Type {
+				case "data":
+					if watch {
+						// Try to parse as JSON for structured output
+						var jsonData map[string]interface{}
+						if err := json.Unmarshal([]byte(event.Data), &jsonData); err == nil {
+							// Handle different event types from the API
+							if eventType, ok := jsonData["type"].(string); ok {
+								switch eventType {
+								case "log":
+									// Display log messages
+									if content, ok := jsonData["content"].(string); ok {
+										// Skip connection logs for cleaner output
+										if strings.Contains(content, "Connected to cloud") ||
+											strings.Contains(content, "starting session") ||
+											strings.Contains(content, "connect") {
+											fmt.Printf("%s %s\n", style.DimStyle.Render("›"), style.DimStyle.Render(content))
+										} else if strings.Contains(content, "Creating new Engine session") {
+											fmt.Printf("%s %s\n", style.InfoStyle.Render("🔧"), content)
+										} else {
+											fmt.Printf("%s %s\n", style.DimStyle.Render("📝"), content)
+										}
+									}
+								case "tool-output":
+									// Display tool output
+									if content, ok := jsonData["content"].(string); ok {
+										// Remove trailing newline for cleaner output
+										content = strings.TrimRight(content, "\n")
+										lines := strings.Split(content, "\n")
+										for _, line := range lines {
+											if line != "" {
+												fmt.Printf("%s %s\n", style.OutputStyle.Render("│"), line)
+												outputLines = append(outputLines, line)
+											}
+										}
+									}
+								case "status":
+									// Handle completion status
+									if status, ok := jsonData["status"].(string); ok {
+										if endVal, ok := jsonData["end"].(bool); ok && endVal {
+											duration := time.Since(startTime)
+											fmt.Println() // Add spacing
+											if status == "success" {
+												fmt.Printf("%s Tool executed successfully in %0.2fs\n",
+													style.SuccessStyle.Render("✅"), duration.Seconds())
+												if len(outputLines) > 0 {
+													fmt.Printf("%s %d lines of output generated\n",
+														style.DimStyle.Render("📊"), len(outputLines))
+												}
+											} else {
+												hasError = true
+												fmt.Printf("%s Tool execution failed after %0.2fs\n",
+													style.ErrorStyle.Render("❌"), duration.Seconds())
+											}
+											return nil
+										}
+									}
+								default:
+									// For other event types, show content if available
+									if content, ok := jsonData["content"].(string); ok && content != "" {
+										fmt.Printf("%s [%s] %s\n", style.DimStyle.Render("›"), eventType, content)
+									}
+								}
+							}
+						} else {
+							// If not JSON, display as plain text
+							fmt.Printf("%s %s\n", style.OutputStyle.Render("│"), event.Data)
+						}
+					}
+				case "error":
+					hasError = true
+					fmt.Printf("\n%s Error: %s\n", style.ErrorStyle.Render("✗"), event.Data)
+				case "complete", "done":
+					duration := time.Since(startTime)
+					fmt.Println() // Add spacing
+					if !hasError {
+						fmt.Printf("%s Tool executed successfully in %0.2fs\n",
+							style.SuccessStyle.Render("✅"), duration.Seconds())
+					} else {
+						fmt.Printf("%s Tool execution failed after %0.2fs\n",
+							style.ErrorStyle.Render("❌"), duration.Seconds())
+					}
+					return nil
+				default:
+					// Handle other event types if needed
+					if watch && event.Data != "" {
+						fmt.Printf("%s [%s] %s\n", style.DimStyle.Render("›"), event.Type, event.Data)
+					}
+				}
+			}
+
+			if hasError {
+				return fmt.Errorf("tool execution failed")
+			}
+
+			return nil
+		},
+	}
+
+	cmd.Flags().StringVar(&toolName, "name", "", "Tool name")
+	cmd.Flags().StringVar(&toolDesc, "description", "CLI executed tool", "Tool description")
+	cmd.Flags().StringVar(&toolType, "type", "", "Tool type (docker, python, bash, etc.) - defaults to docker")
+	cmd.Flags().StringVar(&image, "image", "", "Docker image for the tool")
+	cmd.Flags().StringVar(&content, "content", "", "Tool content/script to execute")
+	cmd.Flags().StringVar(&runner, "runner", "", "Runner to use for execution (default: auto)")
+	cmd.Flags().BoolVar(&watch, "watch", true, "Watch and stream output in real-time")
+	cmd.Flags().StringVar(&jsonFile, "json-file", "", "Path to JSON file with tool definition")
+	cmd.Flags().StringVar(&jsonInput, "json", "", "Tool definition as JSON string")
+	cmd.Flags().StringVar(&outputFormat, "output", "text", "Output format: text (default) or stream-json")
+	cmd.Flags().BoolVar(&skipHealthCheck, "skip-health-check", false, "Skip runner health check")
+	cmd.Flags().BoolVar(&skipPolicyCheck, "skip-policy-check", false, "Skip policy validation check")
+	cmd.Flags().IntVar(&timeout, "timeout", 300, "Timeout in seconds for tool execution (0 for no timeout)")
+	cmd.Flags().StringSliceVar(&integrations, "integration", []string{}, "Integration templates to apply (can be specified multiple times)")
+	cmd.Flags().StringSliceVar(&withFiles, "with-file", []string{}, "File mappings in format 'source:destination' (can be specified multiple times)")
+	cmd.Flags().StringSliceVar(&withVolumes, "with-volume", []string{}, "Volume mappings in format 'source:destination[:ro]' (can be specified multiple times)")
+	cmd.Flags().StringSliceVar(&withServices, "with-service", []string{}, "Service dependencies (can be specified multiple times)")
+	cmd.Flags().StringSliceVar(&envVars, "env", []string{}, "Environment variables in format 'KEY=VALUE' (can be specified multiple times)")
+	cmd.Flags().StringSliceVar(&args, "arg", []string{}, "Tool arguments in format 'name:type:description:required' (can be specified multiple times)")
+	cmd.Flags().StringVar(&iconURL, "icon-url", "", "Icon URL for the tool")
+
+	return cmd
+}
+
+func isRunnerHealthy(runner kubiya.Runner) bool {
+	// Check various status fields that indicate health
+	status := strings.ToLower(runner.RunnerHealth.Status)
+	health := strings.ToLower(runner.RunnerHealth.Health)
+
+	// Accept various indicators of health
+	return status == "healthy" || status == "ok" || status == "ready" ||
+		health == "healthy" || health == "true" || health == "ok" ||
+		(status == "" && health == "") // Sometimes no status means it's running fine
+}
+
+// applyToolPropertiesFromFlags applies tool properties from command-line flags
+func applyToolPropertiesFromFlags(toolDef map[string]interface{}, withFiles, withVolumes, withServices, envVars, args []string, iconURL string) error {
+	// Apply file mappings
+	if len(withFiles) > 0 {
+		fileMappings := []interface{}{}
+		for _, fileMapping := range withFiles {
+			parts := strings.SplitN(fileMapping, ":", 2)
+			if len(parts) != 2 {
+				return fmt.Errorf("invalid file mapping format: %s (expected source:destination)", fileMapping)
+			}
+
+			source := expandPath(parts[0])
+			dest := parts[1]
+
+			fileMap := map[string]interface{}{
+				"source":      source,
+				"destination": dest,
+			}
+
+			// Check if source is a local file that should be read
+			if isLocalPath(source) {
+				content, err := os.ReadFile(source)
+				if err != nil {
+					fmt.Printf("%s Warning: Could not read local file %s: %v\n", style.WarningStyle.Render("⚠"), source, err)
+				} else {
+					fileMap["content"] = string(content)
+					fmt.Printf("%s Loaded content from local file: %s\n", style.SuccessStyle.Render("✓"), source)
+				}
+			}
+
+			fileMappings = append(fileMappings, fileMap)
+		}
+
+		// Merge with existing file mappings
+		if existing, ok := toolDef["with_files"].([]interface{}); ok {
+			fileMappings = append(existing, fileMappings...)
+		}
+		toolDef["with_files"] = fileMappings
+	}
+
+	// Apply volume mappings
+	if len(withVolumes) > 0 {
+		volumeMappings := []interface{}{}
+		for _, volumeMapping := range withVolumes {
+			parts := strings.Split(volumeMapping, ":")
+			if len(parts) < 2 || len(parts) > 3 {
+				return fmt.Errorf("invalid volume mapping format: %s (expected source:destination[:ro])", volumeMapping)
+			}
+
+			volMap := map[string]interface{}{
+				"source":      expandPath(parts[0]),
+				"destination": parts[1],
+			}
+
+			if len(parts) == 3 && parts[2] == "ro" {
+				volMap["read_only"] = true
+			}
+
+			volumeMappings = append(volumeMappings, volMap)
+		}
+
+		// Merge with existing volume mappings
+		if existing, ok := toolDef["with_volumes"].([]interface{}); ok {
+			volumeMappings = append(existing, volumeMappings...)
+		}
+		toolDef["with_volumes"] = volumeMappings
+	}
+
+	// Apply service dependencies
+	if len(withServices) > 0 {
+		services := []interface{}{}
+		for _, service := range withServices {
+			services = append(services, service)
+		}
+
+		// Merge with existing services
+		if existing, ok := toolDef["with_services"].([]interface{}); ok {
+			services = append(existing, services...)
+		}
+		toolDef["with_services"] = services
+	}
+
+	// Apply environment variables
+	if len(envVars) > 0 {
+		env := []interface{}{}
+		for _, envVar := range envVars {
+			env = append(env, envVar)
+		}
+
+		// Merge with existing env vars
+		if existing, ok := toolDef["env"].([]interface{}); ok {
+			env = append(existing, env...)
+		}
+		toolDef["env"] = env
+	}
+
+	// Apply tool arguments
+	if len(args) > 0 {
+		toolArgs := []interface{}{}
+		for _, arg := range args {
+			parts := strings.Split(arg, ":")
+			if len(parts) < 3 {
+				return fmt.Errorf("invalid argument format: %s (expected name:type:description[:required])", arg)
+			}
+
+			argDef := map[string]interface{}{
+				"name":        parts[0],
+				"type":        parts[1],
+				"description": parts[2],
+			}
+
+			if len(parts) > 3 && parts[3] == "true" {
+				argDef["required"] = true
+			}
+
+			toolArgs = append(toolArgs, argDef)
+		}
+
+		// Merge with existing args
+		if existing, ok := toolDef["args"].([]interface{}); ok {
+			toolArgs = append(existing, toolArgs...)
+		}
+		toolDef["args"] = toolArgs
+	}
+
+	// Apply icon URL
+	if iconURL != "" {
+		toolDef["icon_url"] = iconURL
+	}
+
+	return nil
+}
+
+// isLocalPath checks if a path refers to a local file
+func isLocalPath(path string) bool {
+	// Paths that start with these are typically remote/container paths
+	remotePathPrefixes := []string{
+		"/var/run/",
+		"/tmp/kubernetes",
+		"/etc/",
+		"/opt/",
+		"/usr/",
+		"/sys/",
+		"/proc/",
+	}
+
+	for _, prefix := range remotePathPrefixes {
+		if strings.HasPrefix(path, prefix) {
+			return false
 		}
 	}
 
-	// Add optional args
-	for _, arg := range tool.Args {
-		if !arg.Required {
-			b.WriteString(fmt.Sprintf(" [%s]", arg.Name))
-		}
+	// Check if path starts with $HOME or ~ (local user paths)
+	if strings.HasPrefix(path, "$HOME") || strings.HasPrefix(path, "~") {
+		return true
 	}
 
-	return b.String()
+	// Check if file exists locally
+	if _, err := os.Stat(path); err == nil {
+		return true
+	}
+
+	return false
 }

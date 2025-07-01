@@ -42,7 +42,7 @@ func newListKnowledgeCommand(cfg *config.Config) *cobra.Command {
 		Example: "  kubiya knowledge list\n  kubiya knowledge list --output json",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			client := kubiya.NewClient(cfg)
-			items, err := client.ListKnowledge(cmd.Context())
+			items, err := client.ListKnowledge(cmd.Context(), "", 100)
 			if err != nil {
 				return err
 			}

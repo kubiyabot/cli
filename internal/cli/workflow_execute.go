@@ -16,41 +16,45 @@ import (
 
 func newWorkflowExecuteCommand(cfg *config.Config) *cobra.Command {
 	var (
-		runner    string
-		variables []string
-		watch     bool
+		runner          string
+		variables       []string
+		watch           bool
+		skipPolicyCheck bool
 	)
 
 	cmd := &cobra.Command{
 		Use:   "execute [workflow-file]",
 		Short: "Execute a workflow from a file",
-		Long: `Execute a workflow defined in a YAML file.
+		Long: `Execute a workflow defined in a YAML or JSON file.
 
 This command loads a workflow from a file and executes it using the Kubiya API.
+The file can be in YAML (.yaml, .yml) or JSON (.json) format, or the format will be auto-detected.
 You can provide variables and choose the runner for execution.`,
-		Example: `  # Execute a workflow
+		Example: `  # Execute a YAML workflow
   kubiya workflow execute deploy.yaml
+
+  # Execute a JSON workflow
+  kubiya workflow execute backup.json
 
   # Execute with variables
   kubiya workflow execute backup.yaml --var env=production --var retention=30
 
   # Execute with specific runner
-  kubiya workflow execute migrate.yaml --runner prod-runner
+  kubiya workflow execute migrate.json --runner prod-runner
 
-  # Execute and watch output
-  kubiya workflow execute long-running.yaml --watch`,
+  # Execute and watch output (auto-detects format)
+  kubiya workflow execute long-running --watch
+
+  # Skip policy validation
+  kubiya workflow execute deploy.yaml --skip-policy-check`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			client := kubiya.NewClient(cfg)
 			ctx := context.Background()
 
-			// Read workflow file
+			// Read and parse workflow file
 			workflowFile := args[0]
-			data, err := os.ReadFile(workflowFile)
-			if err != nil {
-				return fmt.Errorf("failed to read workflow file: %w", err)
-			}
-
+			
 			// Parse variables first
 			vars := make(map[string]interface{})
 			for _, v := range variables {
@@ -60,36 +64,26 @@ You can provide variables and choose the runner for execution.`,
 				}
 			}
 
-			// Parse workflow based on file extension
-			var workflow Workflow
-			var req kubiya.WorkflowExecutionRequest
+			// Parse workflow file (supports both JSON and YAML with auto-detection)
+			workflow, workflowReq, format, err := parseWorkflowFile(workflowFile, vars)
+			if err != nil {
+				return err
+			}
 
-			if strings.HasSuffix(strings.ToLower(workflowFile), ".json") {
-				// Try to parse as JSON
-				if err := json.Unmarshal(data, &workflow); err != nil {
-					// JSON workflows might be in a different format, try parsing as raw execution request
-					if err2 := json.Unmarshal(data, &req); err2 != nil {
-						return fmt.Errorf("failed to parse workflow JSON: %w (also tried as raw request: %w)", err, err2)
-					}
-					// Use the raw request directly
-					if req.Variables == nil {
-						req.Variables = vars
-					} else {
-						// Merge variables
-						for k, v := range vars {
-							req.Variables[k] = v
-						}
-					}
-				} else {
-					// Parsed as Workflow struct, convert to request
-					req = buildExecutionRequest(workflow, vars, runner)
-				}
+			var req kubiya.WorkflowExecutionRequest
+			if workflowReq != nil {
+				// Already in WorkflowExecutionRequest format
+				req = *workflowReq
+			} else if workflow != nil {
+				// Convert from Workflow struct
+				req = buildExecutionRequest(*workflow, vars, runner)
 			} else {
-				// Parse as YAML
-				if err := yaml.Unmarshal(data, &workflow); err != nil {
-					return fmt.Errorf("failed to parse workflow YAML: %w", err)
-				}
-				req = buildExecutionRequest(workflow, vars, runner)
+				return fmt.Errorf("failed to parse workflow file")
+			}
+
+			// Show format detection info if helpful
+			if format != "" {
+				fmt.Printf("%s Detected format: %s\n", style.DimStyle.Render("📄"), format)
 			}
 
 			fmt.Printf("%s Executing workflow: %s\n", style.StatusStyle.Render("🚀"), style.HighlightStyle.Render(req.Name))
@@ -97,13 +91,51 @@ You can provide variables and choose the runner for execution.`,
 			if runner != "" {
 				fmt.Printf("%s %s\n", style.DimStyle.Render("Runner:"), runner)
 			}
-			if len(req.Variables) > 0 {
-				fmt.Printf("%s\n", style.DimStyle.Render("Variables:"))
-				for k, v := range req.Variables {
+			if len(req.Params) > 0 {
+				fmt.Printf("%s\n", style.DimStyle.Render("Params:"))
+				for k, v := range req.Params {
 					fmt.Printf("  %s = %v\n", style.KeyStyle.Render(k), v)
 				}
 			}
 			fmt.Println()
+
+			// Policy validation (if enabled)
+			if !skipPolicyCheck {
+				opaEnforce := os.Getenv("KUBIYA_OPA_ENFORCE")
+				if opaEnforce == "true" || opaEnforce == "1" {
+					fmt.Printf("%s Validating workflow execution permissions...\n", style.InfoStyle.Render("🛡️"))
+					
+					// Convert workflow to map for validation
+					workflowDef := map[string]interface{}{
+						"name":        req.Name,
+						"description": req.Description,
+						"steps":       req.Steps,
+					}
+					
+					allowed, issues, err := client.ValidateWorkflowExecution(ctx, workflowDef, req.Params, runner)
+					if err != nil {
+						return fmt.Errorf("workflow permission validation failed: %w", err)
+					}
+					
+					if !allowed {
+						fmt.Printf("%s Workflow execution denied by policy:\n", style.ErrorStyle.Render("❌"))
+						for _, issue := range issues {
+							fmt.Printf("  • %s\n", issue)
+						}
+						return fmt.Errorf("workflow execution denied by policy")
+					}
+					
+					if len(issues) > 0 {
+						fmt.Printf("%s Workflow execution permitted with warnings:\n", style.WarningStyle.Render("⚠️"))
+						for _, issue := range issues {
+							fmt.Printf("  • %s\n", issue)
+						}
+					} else {
+						fmt.Printf("%s Workflow execution permissions validated\n", style.SuccessStyle.Render("✅"))
+					}
+					fmt.Println()
+				}
+			}
 
 			// Execute workflow
 			events, err := client.Workflow().ExecuteWorkflow(ctx, req, runner)
@@ -187,10 +219,94 @@ You can provide variables and choose the runner for execution.`,
 	}
 
 	cmd.Flags().StringVar(&runner, "runner", "", "Runner to use for execution")
-	cmd.Flags().StringArrayVar(&variables, "var", []string{}, "Variables in key=value format")
+	cmd.Flags().StringArrayVar(&variables, "var", []string{}, "Params in key=value format")
 	cmd.Flags().BoolVarP(&watch, "watch", "w", true, "Watch execution output")
+	cmd.Flags().BoolVar(&skipPolicyCheck, "skip-policy-check", false, "Skip policy validation before execution")
 
 	return cmd
+}
+
+// parseWorkflowFile parses a workflow file that can be in JSON or YAML format
+// It returns either a Workflow struct or a WorkflowExecutionRequest, along with format info
+func parseWorkflowFile(filePath string, vars map[string]interface{}) (*Workflow, *kubiya.WorkflowExecutionRequest, string, error) {
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		return nil, nil, "", fmt.Errorf("failed to read workflow file: %w", err)
+	}
+
+	// First, try to determine format by file extension
+	isJSON := strings.HasSuffix(strings.ToLower(filePath), ".json")
+	isYAML := strings.HasSuffix(strings.ToLower(filePath), ".yaml") || strings.HasSuffix(strings.ToLower(filePath), ".yml")
+
+	// If no clear extension, try to auto-detect format
+	if !isJSON && !isYAML {
+		// Try JSON first by looking for typical JSON markers
+		trimmed := strings.TrimSpace(string(data))
+		if strings.HasPrefix(trimmed, "{") && strings.HasSuffix(trimmed, "}") {
+			isJSON = true
+		} else {
+			isYAML = true // Default to YAML
+		}
+	}
+
+	if isJSON {
+		return parseJSONWorkflow(data, vars)
+	}
+	return parseYAMLWorkflow(data, vars)
+}
+
+// parseJSONWorkflow parses JSON workflow data
+func parseJSONWorkflow(data []byte, vars map[string]interface{}) (*Workflow, *kubiya.WorkflowExecutionRequest, string, error) {
+	// Try to parse as Workflow struct first
+	var workflow Workflow
+	if err := json.Unmarshal(data, &workflow); err == nil {
+		// Successfully parsed as Workflow struct
+		return &workflow, nil, "json-workflow", nil
+	}
+
+	// Try to parse as WorkflowExecutionRequest
+	var req kubiya.WorkflowExecutionRequest
+	if err := json.Unmarshal(data, &req); err != nil {
+		return nil, nil, "", fmt.Errorf("failed to parse JSON as either Workflow or WorkflowExecutionRequest: %w", err)
+	}
+
+	// Merge variables into the request
+	if req.Params == nil {
+		req.Params = vars
+	} else {
+		for k, v := range vars {
+			req.Params[k] = v
+		}
+	}
+
+	return nil, &req, "json-request", nil
+}
+
+// parseYAMLWorkflow parses YAML workflow data
+func parseYAMLWorkflow(data []byte, vars map[string]interface{}) (*Workflow, *kubiya.WorkflowExecutionRequest, string, error) {
+	// Try to parse as Workflow struct first
+	var workflow Workflow
+	if err := yaml.Unmarshal(data, &workflow); err == nil && workflow.Name != "" {
+		// Successfully parsed as Workflow struct
+		return &workflow, nil, "yaml-workflow", nil
+	}
+
+	// Try to parse as WorkflowExecutionRequest
+	var req kubiya.WorkflowExecutionRequest
+	if err := yaml.Unmarshal(data, &req); err != nil {
+		return nil, nil, "", fmt.Errorf("failed to parse YAML as either Workflow or WorkflowExecutionRequest: %w", err)
+	}
+
+	// Merge variables into the request
+	if req.Params == nil {
+		req.Params = vars
+	} else {
+		for k, v := range vars {
+			req.Params[k] = v
+		}
+	}
+
+	return nil, &req, "yaml-request", nil
 }
 
 // buildExecutionRequest converts a Workflow to WorkflowExecutionRequest
@@ -226,6 +342,6 @@ func buildExecutionRequest(workflow Workflow, vars map[string]interface{}, runne
 		Name:        workflow.Name,
 		Description: fmt.Sprintf("Execution of %s", workflow.Name),
 		Steps:       steps,
-		Variables:   vars,
+		Params:   vars,
 	}
 }
