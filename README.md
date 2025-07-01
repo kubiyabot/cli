@@ -53,6 +53,52 @@ This integration works by:
 2.  **Configuring applications:** The CLI automatically updates the configuration files of supported applications (e.g., `~/.cursor/mcp.json` for Cursor) to point to this local gateway server.
 3.  **Proxying requests:** The local gateway receives requests from the application, injects your Kubiya API key and selected teammate context, and forwards the requests to the actual Kubiya API.
 
+### Auto-Download Executors
+
+For seamless integration with AI tools, we provide **MCP executors** that automatically download and update the Kubiya CLI:
+
+- **`mcp-kubiya-executor`** - Bash script for Unix-like systems (Linux, macOS)
+- **`mcp-kubiya-executor.py`** - Python script for cross-platform support
+
+These executors:
+- ✅ Automatically download the latest Kubiya CLI if not found
+- ✅ Support version pinning via `KUBIYA_CLI_VERSION` environment variable
+- ✅ Handle platform-specific binaries (Linux, macOS, Windows)
+- ✅ Pass through all MCP server arguments
+
+#### Quick Setup with Executors
+
+**For Claude Desktop:**
+```json
+{
+  "mcpServers": {
+    "kubiya": {
+      "command": "/path/to/mcp-kubiya-executor",
+      "env": {
+        "KUBIYA_API_KEY": "your-api-key"
+      }
+    }
+  }
+}
+```
+
+**For Windows users:**
+```json
+{
+  "mcpServers": {
+    "kubiya": {
+      "command": "python",
+      "args": ["C:\\path\\to\\mcp-kubiya-executor.py"],
+      "env": {
+        "KUBIYA_API_KEY": "your-api-key"
+      }
+    }
+  }
+}
+```
+
+See the [MCP Executor Guide](docs/mcp-executor-guide.md) for detailed setup instructions.
+
 ### Quick Start
 
 Getting started is designed to be simple, it only has three steps:
