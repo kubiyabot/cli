@@ -24,3 +24,4 @@ go.work
 kubiya_chat.log
 vendor
 .DS_Store
+docs/
