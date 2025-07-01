@@ -386,7 +386,7 @@ func generateLocalWorkflowTemplate(description string, vars map[string]interface
 			notifyStep.Executor = WorkflowExecutor{
 				Type: "agent",
 				Config: map[string]interface{}{
-					"teammate_name": "{{.teammate_name}}",
+					"agent_name": "{{.agent_name}}",
 					"message":       "Send workflow completion notification to Slack channel {{.slack_channel}}",
 				},
 			}

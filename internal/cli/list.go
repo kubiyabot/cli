@@ -16,23 +16,23 @@ func newListCommand(cfg *config.Config) *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:     "list",
-		Short:   "👥 List available teammates",
+		Short:   "👥 List available agents",
 		Example: "  kubiya list\n  kubiya list --output json",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			client := kubiya.NewClient(cfg)
-			teammates, err := client.ListTeammates(cmd.Context())
+			agents, err := client.ListAgents(cmd.Context())
 			if err != nil {
 				return err
 			}
 
 			switch outputFormat {
 			case "json":
-				return json.NewEncoder(os.Stdout).Encode(teammates)
+				return json.NewEncoder(os.Stdout).Encode(agents)
 			case "text":
 				w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-				fmt.Fprintln(w, "👥 TEAMMATES")
+				fmt.Fprintln(w, "👥 AGENTS")
 				fmt.Fprintln(w, "UUID\tNAME\tSTATUS\tDESCRIPTION")
-				for _, t := range teammates {
+				for _, t := range agents {
 					status := "🟢"
 					if t.AIInstructions != "" {
 						status = "🌟"

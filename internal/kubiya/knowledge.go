@@ -9,9 +9,58 @@ import (
 )
 
 // Knowledge-related client methods
-func (c *Client) ListKnowledge(ctx context.Context) ([]Knowledge, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET",
-		fmt.Sprintf("%s/knowledge", c.cfg.BaseURL), nil)
+func (c *Client) ListKnowledge(ctx context.Context, query string, limit int) ([]Knowledge, error) {
+	url := fmt.Sprintf("%s/knowledge", c.cfg.BaseURL)
+	
+	// Add query parameters
+	if query != "" || limit > 0 {
+		params := make([]string, 0)
+		if query != "" {
+			params = append(params, fmt.Sprintf("query=%s", query))
+		}
+		if limit > 0 {
+			params = append(params, fmt.Sprintf("limit=%d", limit))
+		}
+		if len(params) > 0 {
+			url += "?" + fmt.Sprintf("%s", params[0])
+			for i := 1; i < len(params); i++ {
+				url += "&" + params[i]
+			}
+		}
+	}
+	
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Set("Authorization", "UserKey "+c.cfg.APIKey)
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+	}
+
+	var items []Knowledge
+	if err := json.NewDecoder(resp.Body).Decode(&items); err != nil {
+		return nil, err
+	}
+
+	return items, nil
+}
+
+func (c *Client) SearchKnowledge(ctx context.Context, query string, limit int) ([]Knowledge, error) {
+	url := fmt.Sprintf("%s/knowledge/search?query=%s", c.cfg.BaseURL, query)
+	if limit > 0 {
+		url += fmt.Sprintf("&limit=%d", limit)
+	}
+	
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return nil, err
 	}

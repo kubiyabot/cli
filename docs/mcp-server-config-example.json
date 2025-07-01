@@ -1,0 +1,166 @@
+{
+  "enable_runners": true,
+  "whitelisted_tools": [
+    {
+      "name": "k8s_cluster_health",
+      "description": "Check Kubernetes cluster health and resource usage",
+      "tool_name": "cluster_health_check",
+      "integrations": ["k8s/incluster"],
+      "parameters": {
+        "type": "bash",
+        "image": "bitnami/kubectl:latest",
+        "content": "#!/bin/bash\necho '=== Cluster Health Check ==='\nkubectl cluster-info\necho '\n=== Node Status ==='\nkubectl get nodes\necho '\n=== Resource Usage ==='\nkubectl top nodes\necho '\n=== Pod Status Summary ==='\nkubectl get pods --all-namespaces | awk 'NR==1; NR>1 {count[$4]++} END {print \"\\nSummary:\"; for (status in count) print status \": \" count[status]}'"
+      }
+    },
+    {
+      "name": "aws_s3_list",
+      "description": "List S3 buckets and optionally their contents",
+      "tool_name": "s3_bucket_lister",
+      "integrations": ["aws/creds"],
+      "parameters": {
+        "type": "bash",
+        "image": "amazon/aws-cli:latest",
+        "content": "#!/bin/bash\nif [ -z \"$bucket_name\" ]; then\n  echo '=== S3 Buckets ==='\n  aws s3 ls\nelse\n  echo \"=== Contents of $bucket_name ===\"\n  aws s3 ls s3://$bucket_name --recursive --human-readable\nfi",
+        "args": [
+          {
+            "name": "bucket_name",
+            "type": "string",
+            "description": "Optional: specific bucket to list contents of",
+            "required": false
+          }
+        ]
+      }
+    },
+    {
+      "name": "docker_cleanup",
+      "description": "Clean up unused Docker resources",
+      "tool_name": "docker_prune",
+      "integrations": ["docker/socket"],
+      "parameters": {
+        "type": "bash", 
+        "content": "#!/bin/bash\necho '=== Docker Resource Cleanup ==='\necho 'Removing stopped containers...'\ndocker container prune -f\necho '\nRemoving unused images...'\ndocker image prune -f\necho '\nRemoving unused volumes...'\ndocker volume prune -f\necho '\nRemoving unused networks...'\ndocker network prune -f\necho '\nCleanup complete!'",
+        "with_volumes": [
+          {
+            "source": "/var/run/docker.sock",
+            "destination": "/var/run/docker.sock"
+          }
+        ]
+      }
+    },
+    {
+      "name": "database_backup",
+      "description": "Backup PostgreSQL database",
+      "tool_name": "pg_backup",
+      "integrations": [],
+      "parameters": {
+        "type": "bash",
+        "image": "postgres:15",
+        "content": "#!/bin/bash\nDATETIME=$(date +%Y%m%d_%H%M%S)\nBACKUP_FILE=\"/backups/${db_name}_${DATETIME}.sql\"\necho \"Backing up database $db_name to $BACKUP_FILE...\"\nPGPASSWORD=$db_password pg_dump -h $db_host -U $db_user -d $db_name > $BACKUP_FILE\nif [ $? -eq 0 ]; then\n  echo \"Backup completed successfully!\"\n  echo \"File: $BACKUP_FILE\"\n  echo \"Size: $(ls -lh $BACKUP_FILE | awk '{print $5}')\"\nelse\n  echo \"Backup failed!\"\n  exit 1\nfi",
+        "args": [
+          {
+            "name": "db_host",
+            "type": "string",
+            "description": "Database host",
+            "required": true
+          },
+          {
+            "name": "db_name",
+            "type": "string", 
+            "description": "Database name",
+            "required": true
+          },
+          {
+            "name": "db_user",
+            "type": "string",
+            "description": "Database user",
+            "required": true
+          },
+          {
+            "name": "db_password",
+            "type": "string",
+            "description": "Database password",
+            "required": true
+          }
+        ],
+        "with_volumes": [
+          {
+            "source": "./backups",
+            "destination": "/backups"
+          }
+        ]
+      }
+    },
+    {
+      "name": "terraform_plan",
+      "description": "Run Terraform plan with AWS credentials",
+      "tool_name": "tf_plan",
+      "integrations": ["aws/creds"],
+      "parameters": {
+        "type": "bash",
+        "image": "hashicorp/terraform:latest",
+        "content": "#!/bin/bash\ncd /workspace\nterraform init -upgrade\nterraform plan -out=tfplan",
+        "with_volumes": [
+          {
+            "source": "./terraform",
+            "destination": "/workspace"
+          }
+        ]
+      }
+    }
+  ],
+  "tool_contexts": [
+    {
+      "type": "kubernetes",
+      "description": "Kubernetes tools require cluster access via kubeconfig or in-cluster authentication",
+      "examples": [
+        {
+          "name": "List pods",
+          "description": "List all pods in the cluster",
+          "command": "kubectl get pods -A"
+        },
+        {
+          "name": "Check node resources",
+          "description": "Show resource usage for nodes",
+          "command": "kubectl top nodes"
+        },
+        {
+          "name": "Get logs",
+          "description": "Get logs from a specific pod",
+          "command": "kubectl logs -n <namespace> <pod-name>"
+        }
+      ]
+    },
+    {
+      "type": "aws",
+      "description": "AWS tools require valid AWS credentials via environment variables or credential files",
+      "examples": [
+        {
+          "name": "List EC2 instances",
+          "description": "List all EC2 instances in the current region",
+          "command": "aws ec2 describe-instances --query 'Reservations[*].Instances[*].[InstanceId,State.Name,InstanceType]' --output table"
+        },
+        {
+          "name": "S3 bucket size",
+          "description": "Get the total size of an S3 bucket",
+          "command": "aws s3 ls s3://<bucket-name> --recursive --summarize | grep 'Total Size'"
+        }
+      ]
+    },
+    {
+      "type": "docker",
+      "description": "Docker tools require access to the Docker socket",
+      "examples": [
+        {
+          "name": "List containers",
+          "description": "List all running containers",
+          "command": "docker ps"
+        },
+        {
+          "name": "Container logs",
+          "description": "Get logs from a container",
+          "command": "docker logs <container-name>"
+        }
+      ]
+    }
+  ]
+} 

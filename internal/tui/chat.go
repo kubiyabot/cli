@@ -17,7 +17,7 @@ import (
 type screenState int
 
 const (
-	teammateSelectScreen screenState = iota
+	agentSelectScreen screenState = iota
 	chatScreen
 )
 
@@ -40,8 +40,8 @@ type ChatUI struct {
 	spinner              spinner.Model
 	list                 list.Model
 	err                  error
-	teammates            []kubiya.Teammate
-	selected             kubiya.Teammate
+	agents            []kubiya.Agent
+	selected             kubiya.Agent
 	width                int
 	height               int
 	state                screenState
@@ -66,7 +66,7 @@ func NewChatUI(cfg *config.Config) *ChatUI {
 	delegate.Styles.SelectedTitle = lipgloss.NewStyle().Foreground(lipgloss.Color("205")).Bold(true)
 
 	uiList := list.New([]list.Item{}, delegate, 0, 0)
-	uiList.Title = "Select a Teammate"
+	uiList.Title = "Select a Agent"
 	uiList.SetShowStatusBar(false)
 	uiList.SetFilteringEnabled(true)
 	uiList.Styles.Title = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("205"))
@@ -75,7 +75,7 @@ func NewChatUI(cfg *config.Config) *ChatUI {
 		cfg:                  cfg,
 		client:               kubiya.NewClient(cfg),
 		spinner:              s,
-		state:                teammateSelectScreen,
+		state:                agentSelectScreen,
 		list:                 uiList,
 		toolExecutions:       make(map[string]*toolExecution),
 		currentToolMessageID: "",
@@ -83,7 +83,7 @@ func NewChatUI(cfg *config.Config) *ChatUI {
 }
 
 func (ui *ChatUI) Init() tea.Cmd {
-	return tea.Batch(ui.spinner.Tick, ui.fetchTeammates)
+	return tea.Batch(ui.spinner.Tick, ui.fetchAgents)
 }
 
 func (ui *ChatUI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -97,11 +97,11 @@ func (ui *ChatUI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		ui.height = msg.Height
 		ui.list.SetSize(ui.width, ui.height-4)
 
-	case []kubiya.Teammate:
-		ui.teammates = msg
+	case []kubiya.Agent:
+		ui.agents = msg
 		items := make([]list.Item, len(msg))
 		for i, t := range msg {
-			items[i] = teammateItem{teammate: t}
+			items[i] = agentItem{agent: t}
 		}
 
 		ui.list.SetItems(items)
@@ -124,14 +124,14 @@ func (ui *ChatUI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		switch ui.state {
 
-		case teammateSelectScreen:
+		case agentSelectScreen:
 			switch msg.String() {
 			case "ctrl+c", "q":
 				ui.cancelContexts()
 				return ui, tea.Quit
 			case "enter":
-				if item, ok := ui.list.SelectedItem().(teammateItem); ok {
-					ui.selected = item.teammate
+				if item, ok := ui.list.SelectedItem().(agentItem); ok {
+					ui.selected = item.agent
 					ui.state = chatScreen
 					ui.messages = nil
 					ui.inputBuffer = ""
@@ -152,7 +152,7 @@ func (ui *ChatUI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return ui, tea.Quit
 			case "esc":
 				ui.cancelContexts()
-				ui.state = teammateSelectScreen
+				ui.state = agentSelectScreen
 			case "enter":
 				if strings.TrimSpace(ui.inputBuffer) != "" {
 					message := ui.inputBuffer
@@ -194,7 +194,7 @@ func (ui *ChatUI) View() string {
 	}
 
 	switch ui.state {
-	case teammateSelectScreen:
+	case agentSelectScreen:
 		return ui.list.View()
 
 	case chatScreen:
@@ -228,7 +228,7 @@ func (ui *ChatUI) sendMessage(message string) tea.Cmd {
 						ui.P.Send(finalizeMessage{})
 						return
 					}
-					// Set the sender name to the teammate's name
+					// Set the sender name to the agent's name
 					msg.SenderName = ui.selected.Name
 					ui.P.Send(msg)
 				}
@@ -395,12 +395,12 @@ func (ui *ChatUI) Run() error {
 	return p.Start()
 }
 
-func (ui *ChatUI) fetchTeammates() tea.Msg {
-	teammates, err := ui.client.ListTeammates(context.Background())
+func (ui *ChatUI) fetchAgents() tea.Msg {
+	agents, err := ui.client.ListAgents(context.Background())
 	if err != nil {
 		return err
 	}
-	return teammates
+	return agents
 }
 
 func (ui *ChatUI) cancelContexts() {
@@ -410,16 +410,16 @@ func (ui *ChatUI) cancelContexts() {
 	ui.cancelFuncs = nil
 }
 
-// finalizeMessage is used to mark the last teammate message as final when msgChan closes
+// finalizeMessage is used to mark the last agent message as final when msgChan closes
 type finalizeMessage struct{}
 
-type teammateItem struct {
-	teammate kubiya.Teammate
+type agentItem struct {
+	agent kubiya.Agent
 }
 
-func (t teammateItem) Title() string       { return t.teammate.Name }
-func (t teammateItem) Description() string { return t.teammate.Description }
-func (t teammateItem) FilterValue() string { return t.teammate.Name }
+func (t agentItem) Title() string       { return t.agent.Name }
+func (t agentItem) Description() string { return t.agent.Description }
+func (t agentItem) FilterValue() string { return t.agent.Name }
 
 // Rendering the chat screen with enhanced UI and typing indicator
 func (ui *ChatUI) renderChatScreen() string {
@@ -549,7 +549,7 @@ func (ui *ChatUI) renderChatScreen() string {
 	footerStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("#6B7280"))
 
-	b.WriteString(footerStyle.Render("\n\nPress 'esc' to go back to teammate selection."))
+	b.WriteString(footerStyle.Render("\n\nPress 'esc' to go back to agent selection."))
 
 	return b.String()
 }

@@ -1340,13 +1340,13 @@ func newWizardWebhookCommand(cfg *config.Config) *cobra.Command {
 
 			// Get agent ID
 			fmt.Println("\n📋 Available agents:")
-			teammates, err := client.GetTeammates(cmd.Context())
+			agents, err := client.GetAgents(cmd.Context())
 			if err != nil {
 				fmt.Println("⚠️ Could not fetch agents. You'll need to enter the agent ID manually.")
 			} else {
 				w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 				fmt.Fprintln(w, "ID\tNAME\tDESCRIPTION")
-				for _, t := range teammates {
+				for _, t := range agents {
 					// Truncate description if it's too long
 					description := t.Description
 					if len(description) > 40 {
