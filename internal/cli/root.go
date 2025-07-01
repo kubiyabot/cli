@@ -24,7 +24,6 @@ Quick Start:
   • Browse sources:    kubiya browse  # Interactive source browser
   • Manage agents: kubiya agent list
   • Manage tools:     kubiya tool list
-  • Manage knowledge: kubiya knowledge list
   • Manage runners:   kubiya runner list
   • Manage webhooks:  kubiya webhook list
   • Manage workflows: kubiya workflow generate|test|execute|compose

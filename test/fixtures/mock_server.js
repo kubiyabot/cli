@@ -6,7 +6,7 @@ const PORT = process.env.MOCK_PORT || 8080;
 
 // Mock responses for different endpoints
 const mockResponses = {
-    '/api/v1/teammates': {
+    '/api/v1/agents': {
         status: 200,
         body: [
             { uuid: 'devops-123', name: 'DevOps Bot' },
