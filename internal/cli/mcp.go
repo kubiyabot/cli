@@ -32,6 +32,6 @@ configuration files of these local tools.`,
 
 	// Add subcommands
 	cmd.AddCommand(newMcpSetupCommand(cfg, fs))
-	cmd.AddCommand(newMcpServeCommand(cfg, fs))
+	cmd.AddCommand(NewMCPServeCmd())
 	return cmd
 }
