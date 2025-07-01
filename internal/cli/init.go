@@ -411,7 +411,7 @@ echo "Running {{ .example_arg }}"`,
 func newInitWorkflowCommand(cfg *config.Config) *cobra.Command {
 	var (
 		name           string
-		teammate       string
+		agent       string
 		outputFile     string
 		nonInteractive bool
 	)
@@ -423,7 +423,7 @@ func newInitWorkflowCommand(cfg *config.Config) *cobra.Command {
   kubiya init workflow
 
   # Create a workflow non-interactively
-  kubiya init workflow --non-interactive --name my-workflow --teammate demo_teammate`,
+  kubiya init workflow --non-interactive --name my-workflow --agent demo_agent`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			var err error
 
@@ -446,12 +446,12 @@ func newInitWorkflowCommand(cfg *config.Config) *cobra.Command {
 					}
 				}
 
-				if teammate == "" {
+				if agent == "" {
 					prompt := promptui.Prompt{
-						Label:   "Teammate Name",
-						Default: "demo_teammate",
+						Label:   "Agent Name",
+						Default: "demo_agent",
 					}
-					teammate, err = prompt.Run()
+					agent, err = prompt.Run()
 					if err != nil {
 						return fmt.Errorf("prompt failed: %w", err)
 					}
@@ -472,8 +472,8 @@ func newInitWorkflowCommand(cfg *config.Config) *cobra.Command {
 				return fmt.Errorf("workflow name is required in non-interactive mode")
 			}
 
-			if teammate == "" {
-				teammate = "demo_teammate" // Default teammate
+			if agent == "" {
+				agent = "demo_agent" // Default agent
 			}
 
 			// Create workflow structure
@@ -485,7 +485,7 @@ func newInitWorkflowCommand(cfg *config.Config) *cobra.Command {
 						Executor: WorkflowExecutor{
 							Type: "agent",
 							Config: map[string]interface{}{
-								"teammate_name": teammate,
+								"agent_name": agent,
 								"message":       "run cluster health",
 							},
 						},
@@ -496,7 +496,7 @@ func newInitWorkflowCommand(cfg *config.Config) *cobra.Command {
 						Executor: WorkflowExecutor{
 							Type: "agent",
 							Config: map[string]interface{}{
-								"teammate_name": teammate,
+								"agent_name": agent,
 								"message":       "Send a Slack msg to channel #tf-test saying $AGENT_RESPONSE , before sending make ths msg nice and readable ",
 							},
 						},
@@ -553,7 +553,7 @@ func newInitWorkflowCommand(cfg *config.Config) *cobra.Command {
 
 	// Add flags but make them optional since interactive is default
 	cmd.Flags().StringVarP(&name, "name", "n", "", "Workflow name")
-	cmd.Flags().StringVarP(&teammate, "teammate", "t", "", "Teammate name (default: demo_teammate)")
+	cmd.Flags().StringVarP(&agent, "agent", "t", "", "Agent name (default: demo_agent)")
 	cmd.Flags().StringVarP(&outputFile, "output", "o", "", "Output file (default: <workflow-name>.yaml)")
 	cmd.Flags().BoolVar(&nonInteractive, "non-interactive", false, "Run in non-interactive mode")
 

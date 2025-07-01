@@ -4,14 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/kubiyabot/cli/internal/config"
 	"github.com/kubiyabot/cli/internal/kubiya"
 	"github.com/kubiyabot/cli/internal/style"
 	"github.com/spf13/cobra"
-	"gopkg.in/yaml.v3"
 )
 
 func newWorkflowTestCommand(cfg *config.Config) *cobra.Command {
@@ -25,28 +23,28 @@ func newWorkflowTestCommand(cfg *config.Config) *cobra.Command {
 		Short: "Test a workflow by executing it",
 		Long: `Test a workflow by executing it and streaming the results.
 
-This command loads a workflow from a YAML file and executes it using the Kubiya API.
+This command loads a workflow from a YAML or JSON file and executes it using the Kubiya API.
+The file can be in YAML (.yaml, .yml) or JSON (.json) format, or the format will be auto-detected.
 It provides real-time streaming output so you can monitor the workflow execution.`,
-		Example: `  # Test a workflow from file
+		Example: `  # Test a YAML workflow from file
   kubiya workflow test my-workflow.yaml
+
+  # Test a JSON workflow from file
+  kubiya workflow test my-workflow.json
 
   # Test with specific runner
   kubiya workflow test deploy.yaml --runner core-testing-2
 
-  # Test with variables
-  kubiya workflow test backup.yaml --var env=staging --var bucket=backup-staging`,
+  # Test with variables (auto-detects format)
+  kubiya workflow test backup --var env=staging --var bucket=backup-staging`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			client := kubiya.NewClient(cfg)
 			ctx := context.Background()
 
-			// Read workflow file
+			// Read and parse workflow file
 			workflowFile := args[0]
-			data, err := os.ReadFile(workflowFile)
-			if err != nil {
-				return fmt.Errorf("failed to read workflow file: %w", err)
-			}
-
+			
 			// Parse variables first
 			vars := make(map[string]interface{})
 			for _, v := range variables {
@@ -56,89 +54,32 @@ It provides real-time streaming output so you can monitor the workflow execution
 				}
 			}
 
-			// Parse workflow based on file extension
-			var workflow Workflow
-			if strings.HasSuffix(strings.ToLower(workflowFile), ".json") {
-				// Try to parse as JSON
-				if err := json.Unmarshal(data, &workflow); err != nil {
-					// JSON workflows might be in a different format, try parsing as raw execution request
-					var rawRequest kubiya.WorkflowExecutionRequest
-					if err2 := json.Unmarshal(data, &rawRequest); err2 != nil {
-						return fmt.Errorf("failed to parse workflow JSON: %w (also tried as raw request: %w)", err, err2)
-					}
-					// Use the raw request directly
-					if rawRequest.Variables == nil {
-						rawRequest.Variables = vars
-					} else {
-						// Merge variables
-						for k, v := range vars {
-							rawRequest.Variables[k] = v
-						}
-					}
+			// Parse workflow file (supports both JSON and YAML with auto-detection)
+			workflow, workflowReq, format, err := parseWorkflowFile(workflowFile, vars)
+			if err != nil {
+				return err
+			}
 
-					fmt.Printf("%s Testing workflow: %s\n", style.StatusStyle.Render("🧪"), style.HighlightStyle.Render(rawRequest.Name))
-					fmt.Printf("%s %s\n\n", style.DimStyle.Render("File:"), workflowFile)
-
-					// Execute workflow
-					events, err := client.Workflow().TestWorkflow(ctx, rawRequest, runner)
-					if err != nil {
-						return fmt.Errorf("failed to test workflow: %w", err)
-					}
-
-					// Process events directly
-					var hasError bool
-					for event := range events {
-						hasError = processWorkflowEvent(event) || hasError
-					}
-
-					if hasError {
-						return fmt.Errorf("workflow test failed")
-					}
-					return nil
-				}
+			var req kubiya.WorkflowExecutionRequest
+			if workflowReq != nil {
+				// Already in WorkflowExecutionRequest format
+				req = *workflowReq
+				// Update description for testing
+				req.Description = fmt.Sprintf("Test execution of %s", req.Name)
+			} else if workflow != nil {
+				// Convert from Workflow struct
+				req = buildExecutionRequest(*workflow, vars, runner)
+				req.Description = fmt.Sprintf("Test execution of %s", workflow.Name)
 			} else {
-				// Parse as YAML
-				if err := yaml.Unmarshal(data, &workflow); err != nil {
-					return fmt.Errorf("failed to parse workflow YAML: %w", err)
-				}
+				return fmt.Errorf("failed to parse workflow file")
 			}
 
-			// Convert WorkflowStep to interface{} for the API
-			steps := make([]interface{}, len(workflow.Steps))
-			for i, step := range workflow.Steps {
-				stepMap := map[string]interface{}{
-					"name": step.Name,
-				}
-				if step.Description != "" {
-					stepMap["description"] = step.Description
-				}
-				if step.Command != "" {
-					stepMap["command"] = step.Command
-				}
-				if step.Executor.Type != "" {
-					stepMap["executor"] = map[string]interface{}{
-						"type":   step.Executor.Type,
-						"config": step.Executor.Config,
-					}
-				}
-				if step.Output != "" {
-					stepMap["output"] = step.Output
-				}
-				if len(step.Depends) > 0 {
-					stepMap["depends"] = step.Depends
-				}
-				steps[i] = stepMap
+			// Show format detection info if helpful
+			if format != "" {
+				fmt.Printf("%s Detected format: %s\n", style.DimStyle.Render("📄"), format)
 			}
 
-			// Build execution request
-			req := kubiya.WorkflowExecutionRequest{
-				Name:        workflow.Name,
-				Description: fmt.Sprintf("Test execution of %s", workflow.Name),
-				Steps:       steps,
-				Variables:   vars,
-			}
-
-			fmt.Printf("%s Testing workflow: %s\n", style.StatusStyle.Render("🧪"), style.HighlightStyle.Render(workflow.Name))
+			fmt.Printf("%s Testing workflow: %s\n", style.StatusStyle.Render("🧪"), style.HighlightStyle.Render(req.Name))
 			fmt.Printf("%s %s\n\n", style.DimStyle.Render("File:"), workflowFile)
 
 			// Execute workflow
@@ -162,7 +103,7 @@ It provides real-time streaming output so you can monitor the workflow execution
 	}
 
 	cmd.Flags().StringVar(&runner, "runner", "", "Runner to use for execution (default: core-testing-2)")
-	cmd.Flags().StringArrayVar(&variables, "var", []string{}, "Variables in key=value format")
+	cmd.Flags().StringArrayVar(&variables, "var", []string{}, "Params in key=value format")
 
 	return cmd
 }

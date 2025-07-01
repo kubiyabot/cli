@@ -1,10 +1,8 @@
 package cli
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/kubiyabot/cli/internal/config"
@@ -122,7 +120,7 @@ Features:
 						fmt.Println(result)
 					}
 				default:
-					fmt.Println("\n" + style.RenderMarkdown(result))
+					fmt.Println("\n" + result)
 				}
 
 				return nil

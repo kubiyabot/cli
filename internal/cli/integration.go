@@ -16,7 +16,7 @@ func newIntegrationsCommand(cfg *config.Config) *cobra.Command {
 		Use:     "integration",
 		Aliases: []string{"integrations"},
 		Short:   "🔒 Manage integrations",
-		Long:    `Create, read, update, and delete integrations used by tools and teammates.`,
+		Long:    `Create, read, update, and delete integrations used by tools and agents.`,
 	}
 
 	cmd.AddCommand(

@@ -101,7 +101,7 @@ type SourceBrowser struct {
 	height        int
 	execution     executionState
 	contexts      []string
-	teammates     []kubiya.Teammate
+	agents     []kubiya.Agent
 	debug         bool
 	portForward   struct {
 		forwarder *portforward.PortForwarder
@@ -124,7 +124,7 @@ type executionState struct {
 	envVars           map[string]*kubiya.EnvVarStatus
 	envVarNames       []string
 	context           string
-	teammate          string
+	agent          string
 	executing         bool
 	output            string
 	error             error

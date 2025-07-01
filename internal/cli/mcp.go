@@ -21,7 +21,7 @@ func newMcpCommand(cfg *config.Config) *cobra.Command {
 This command group allows you to set up, configure, and manage MCP integrations
 for applications like Claude Desktop, Cursor IDE, and more.
 
-It helps bridge your Kubiya context (like teammates and API keys) with the
+It helps bridge your Kubiya context (like agents and API keys) with the
 configuration files of these local tools.`,
 		// PersistentPreRunE: // Add authentication/config loading if needed globally for mcp commands
 		RunE: func(cmd *cobra.Command, args []string) error {

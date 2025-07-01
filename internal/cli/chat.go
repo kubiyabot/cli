@@ -51,8 +51,8 @@ const (
 
 func newChatCommand(cfg *config.Config) *cobra.Command {
 	var (
-		teammateID   string
-		teammateName string
+		agentID   string
+		agentName string
 		message      string
 		noClassify   bool
 
@@ -135,11 +135,11 @@ func newChatCommand(cfg *config.Config) *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "chat",
-		Short: "💬 Chat with a teammate",
-		Long: `Start a chat session with a Kubiya teammate.
+		Short: "💬 Chat with a agent",
+		Long: `Start a chat session with a Kubiya agent.
 You can either use interactive mode, specify a message directly, or pipe input from stdin.
 Use --context to include additional files for context (supports wildcards and URLs).
-The command will automatically select the most appropriate teammate unless one is specified.`,
+The command will automatically select the most appropriate agent unless one is specified.`,
 		Example: `  # Interactive chat mode
   kubiya chat --interactive
 
@@ -159,7 +159,7 @@ The command will automatically select the most appropriate teammate unless one i
   # Pipe from stdin with context
   cat error.log | kubiya chat -n "debug" --stdin --context "config/*.yaml"
 
-  # Auto-classify the most appropriate teammate
+  # Auto-classify the most appropriate agent
   kubiya chat -m "Help me with Kubernetes deployment issues"`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg.Debug = cfg.Debug || debug
@@ -225,8 +225,8 @@ The command will automatically select the most appropriate teammate unless one i
 			// Setup client
 			client := kubiya.NewClient(cfg)
 
-			// Auto-classify by default unless teammate is explicitly specified or --no-classify is set
-			shouldClassify := teammateID == "" && teammateName == "" && !noClassify
+			// Auto-classify by default unless agent is explicitly specified or --no-classify is set
+			shouldClassify := agentID == "" && agentName == "" && !noClassify
 
 			// If auto-classify is enabled (default), use the classification endpoint
 			if shouldClassify {
@@ -248,7 +248,7 @@ The command will automatically select the most appropriate teammate unless one i
 				if strings.HasSuffix(baseURL, "/api/v1") {
 					baseURL = strings.TrimSuffix(baseURL, "/api/v1")
 				}
-				classifyURL := fmt.Sprintf("%s/api/v1/http-bridge/v1/classify/teammate", baseURL)
+				classifyURL := fmt.Sprintf("%s/api/v1/http-bridge/v1/classify/agent", baseURL)
 				req, err := http.NewRequestWithContext(cmd.Context(), http.MethodPost, classifyURL, bytes.NewBuffer(reqJSON))
 				if err != nil {
 					return fmt.Errorf("failed to create classification request: %w", err)
@@ -285,49 +285,49 @@ The command will automatically select the most appropriate teammate unless one i
 				}
 
 				// Parse response
-				var teammates []struct {
+				var agents []struct {
 					UUID        string `json:"uuid"`
 					Name        string `json:"name"`
 					Description string `json:"description"`
 				}
-				if err := json.Unmarshal(body, &teammates); err != nil {
+				if err := json.Unmarshal(body, &agents); err != nil {
 					return fmt.Errorf("failed to parse classification response: %w", err)
 				}
 
-				if len(teammates) == 0 {
+				if len(agents) == 0 {
 					if debug {
-						fmt.Println("❌ No suitable teammate found in the classification response")
+						fmt.Println("❌ No suitable agent found in the classification response")
 					}
-					return fmt.Errorf("no suitable teammate found for the task")
+					return fmt.Errorf("no suitable agent found for the task")
 				}
 
-				// Use the first (best) teammate
-				teammateID = teammates[0].UUID
-				fmt.Printf("🤖 Auto-selected teammate: %s (%s)\n", teammates[0].Name, teammates[0].Description)
+				// Use the first (best) agent
+				agentID = agents[0].UUID
+				fmt.Printf("🤖 Auto-selected agent: %s (%s)\n", agents[0].Name, agents[0].Description)
 			}
 
-			// If teammate name is provided, look up the ID
-			if teammateName != "" && teammateID == "" {
+			// If agent name is provided, look up the ID
+			if agentName != "" && agentID == "" {
 				if debug {
-					fmt.Printf("🔍 Looking up teammate by name: %s\n", teammateName)
+					fmt.Printf("🔍 Looking up agent by name: %s\n", agentName)
 				}
 
-				teammates, err := client.GetTeammates(cmd.Context())
+				agents, err := client.GetAgents(cmd.Context())
 				if err != nil {
-					return fmt.Errorf("failed to list teammates: %w", err)
+					return fmt.Errorf("failed to list agents: %w", err)
 				}
 
 				if debug {
-					fmt.Printf("📋 Found %d teammates\n", len(teammates))
+					fmt.Printf("📋 Found %d agents\n", len(agents))
 				}
 
 				found := false
-				for _, t := range teammates {
-					if strings.EqualFold(t.Name, teammateName) {
-						teammateID = t.UUID
+				for _, t := range agents {
+					if strings.EqualFold(t.Name, agentName) {
+						agentID = t.UUID
 						found = true
 						if debug {
-							fmt.Printf("✅ Found matching teammate: %s (UUID: %s)\n", t.Name, t.UUID)
+							fmt.Printf("✅ Found matching agent: %s (UUID: %s)\n", t.Name, t.UUID)
 						}
 						break
 					}
@@ -335,15 +335,15 @@ The command will automatically select the most appropriate teammate unless one i
 
 				if !found {
 					if debug {
-						fmt.Printf("❌ No teammate found with name: %s\n", teammateName)
+						fmt.Printf("❌ No agent found with name: %s\n", agentName)
 					}
-					return fmt.Errorf("teammate with name '%s' not found", teammateName)
+					return fmt.Errorf("agent with name '%s' not found", agentName)
 				}
 			}
 
-			// Ensure we have a teammate ID by this point
-			if teammateID == "" {
-				return fmt.Errorf("no teammate selected - please specify a teammate or allow auto-classification")
+			// Ensure we have a agent ID by this point
+			if agentID == "" {
+				return fmt.Errorf("no agent selected - please specify a agent or allow auto-classification")
 			}
 
 			// Add these variables
@@ -360,7 +360,7 @@ The command will automatically select the most appropriate teammate unless one i
 			}
 
 			// Send message with context
-			msgChan, err := client.SendMessageWithContext(cmd.Context(), teammateID, message, sessionID, context)
+			msgChan, err := client.SendMessageWithContext(cmd.Context(), agentID, message, sessionID, context)
 			if err != nil {
 				return err
 			}
@@ -587,7 +587,7 @@ The command will automatically select the most appropriate teammate unless one i
 											if sentence != "" {
 												// Print without [Bot] prefix
 												fmt.Printf("%s\n",
-													style.TeammateStyle.Render(sentence))
+													style.AgentStyle.Render(sentence))
 												buf.sentence.Reset()
 											}
 										}
@@ -613,7 +613,7 @@ The command will automatically select the most appropriate teammate unless one i
 										if sentence != "" {
 											// Print without [Bot] prefix
 											fmt.Printf("%s\n",
-												style.TeammateStyle.Render(sentence))
+												style.AgentStyle.Render(sentence))
 											buf.sentence.Reset()
 										}
 									}
@@ -630,8 +630,8 @@ The command will automatically select the most appropriate teammate unless one i
 							remaining := strings.TrimSpace(buf.sentence.String())
 							if remaining != "" {
 								fmt.Printf("%s %s\n",
-									style.TeammateNameStyle.Render("["+msg.SenderName+"]"),
-									style.TeammateStyle.Render(remaining))
+									style.AgentNameStyle.Render("["+msg.SenderName+"]"),
+									style.AgentStyle.Render(remaining))
 							}
 						}
 						fmt.Println()
@@ -647,8 +647,8 @@ The command will automatically select the most appropriate teammate unless one i
 		},
 	}
 
-	cmd.Flags().StringVarP(&teammateID, "teammate", "t", "", "Teammate ID (optional)")
-	cmd.Flags().StringVarP(&teammateName, "name", "n", "", "Teammate name (optional)")
+	cmd.Flags().StringVarP(&agentID, "agent", "t", "", "Agent ID (optional)")
+	cmd.Flags().StringVarP(&agentName, "name", "n", "", "Agent name (optional)")
 	cmd.Flags().StringVarP(&message, "message", "m", "", "Message to send")
 	cmd.Flags().BoolVarP(&interactive, "interactive", "i", false, "Start interactive chat mode")
 	cmd.Flags().BoolVar(&debug, "debug", false, "Enable debug logging")
@@ -661,7 +661,7 @@ The command will automatically select the most appropriate teammate unless one i
 	cmd.Flags().StringVar(&sourceUUID, "source-uuid", "", "Source UUID")
 	cmd.Flags().StringVar(&sourceName, "source-name", "", "Source name")
 	cmd.Flags().StringVar(&suggestTool, "suggest-tool", "", "Suggest a tool to use")
-	cmd.Flags().BoolVar(&noClassify, "no-classify", false, "Disable automatic teammate classification")
+	cmd.Flags().BoolVar(&noClassify, "no-classify", false, "Disable automatic agent classification")
 
 	return cmd
 }

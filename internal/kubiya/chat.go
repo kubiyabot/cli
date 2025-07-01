@@ -58,24 +58,24 @@ type SSEEvent struct {
 	SessionID string `json:"session_id,omitempty"`
 }
 
-func getOrCreateSession(teammateID string) *ChatSession {
+func getOrCreateSession(agentID string) *ChatSession {
 	mu.Lock()
 	defer mu.Unlock()
 
-	session, exists := sessions[teammateID]
+	session, exists := sessions[agentID]
 	if !exists {
 		sessionID := strconv.FormatInt(time.Now().UnixNano(), 10)
 		session = &ChatSession{
 			ID:       sessionID,
 			Messages: make([]ChatMessage, 0),
 		}
-		sessions[teammateID] = session
+		sessions[agentID] = session
 	}
 	return session
 }
 
-// SendMessage sends a message to a teammate and handles SSE responses
-func (c *Client) SendMessage(ctx context.Context, teammateID, message string, sessionID string) (<-chan ChatMessage, error) {
+// SendMessage sends a message to a agent and handles SSE responses
+func (c *Client) SendMessage(ctx context.Context, agentID, message string, sessionID string) (<-chan ChatMessage, error) {
 	messagesChan := make(chan ChatMessage, 100)
 
 	if message == "" {
@@ -83,7 +83,7 @@ func (c *Client) SendMessage(ctx context.Context, teammateID, message string, se
 		return messagesChan, nil
 	}
 
-	session := getOrCreateSession(teammateID)
+	session := getOrCreateSession(agentID)
 	if sessionID == "" {
 		sessionID = session.ID
 	}
@@ -94,7 +94,7 @@ func (c *Client) SendMessage(ctx context.Context, teammateID, message string, se
 		SessionID string `json:"session_id"`
 	}{
 		Message:   message,
-		AgentUUID: teammateID,
+		AgentUUID: agentID,
 		SessionID: sessionID,
 	}
 
@@ -232,13 +232,13 @@ func (c *Client) SendMessage(ctx context.Context, teammateID, message string, se
 }
 
 // ReceiveMessages implements SSE for receiving messages
-func (c *Client) ReceiveMessages(ctx context.Context, teammateID string) (<-chan ChatMessage, error) {
+func (c *Client) ReceiveMessages(ctx context.Context, agentID string) (<-chan ChatMessage, error) {
 	messagesChan := make(chan ChatMessage)
 
 	go func() {
 		defer close(messagesChan)
 
-		session := getOrCreateSession(teammateID)
+		session := getOrCreateSession(agentID)
 		mu.RLock()
 		messages := make([]ChatMessage, len(session.Messages))
 		copy(messages, session.Messages)
@@ -256,7 +256,7 @@ func (c *Client) ReceiveMessages(ctx context.Context, teammateID string) (<-chan
 	return messagesChan, nil
 }
 
-func (c *Client) SendMessageWithContext(ctx context.Context, teammateID, message, sessionID string, context map[string]string) (<-chan ChatMessage, error) {
+func (c *Client) SendMessageWithContext(ctx context.Context, agentID, message, sessionID string, context map[string]string) (<-chan ChatMessage, error) {
 	var contextMsg strings.Builder
 	contextMsg.WriteString(message)
 	contextMsg.WriteString("\n\nHere's some reference files for context:\n")
@@ -269,10 +269,10 @@ func (c *Client) SendMessageWithContext(ctx context.Context, teammateID, message
 		contextMsg.WriteString("\n")
 	}
 
-	return c.SendMessage(ctx, teammateID, contextMsg.String(), sessionID)
+	return c.SendMessage(ctx, agentID, contextMsg.String(), sessionID)
 }
 
-func (c *Client) GetConversationMessages(ctx context.Context, teammateID, message, sessionID string) (map[string]SSEEvent, error) {
+func (c *Client) GetConversationMessages(ctx context.Context, agentID, message, sessionID string) (map[string]SSEEvent, error) {
 	// synchronousely get the conversation messages
 	payload := struct {
 		Message   string `json:"message"`
@@ -280,7 +280,7 @@ func (c *Client) GetConversationMessages(ctx context.Context, teammateID, messag
 		SessionID string `json:"session_id"`
 	}{
 		Message:   message,
-		AgentUUID: teammateID,
+		AgentUUID: agentID,
 		SessionID: sessionID,
 	}
 	var body bytes.Buffer

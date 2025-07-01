@@ -58,7 +58,7 @@ var (
 				BorderForeground(lipgloss.Color("#10B981")).
 				Padding(0, 1)
 
-	TeammateStyle = lipgloss.NewStyle().
+	AgentStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#3B82F6"))
 
 	ToolArgsStyle = lipgloss.NewStyle().
@@ -73,7 +73,7 @@ var (
 			Foreground(lipgloss.Color("14")).
 			Italic(true)
 
-	TeammateNameStyle = lipgloss.NewStyle().
+	AgentNameStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("#3B82F6")).
 				Bold(true)
 
@@ -185,6 +185,13 @@ var (
 	ChatStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("13")).
 			Bold(true)
+
+	InfoStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("39")).
+			Bold(true)
+
+	OutputStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("147"))
 )
 
 // DisableColors disables all color styling for non-TTY environments
@@ -203,11 +210,11 @@ func DisableColors() {
 	ToolStyle = noStyle
 	ToolOutputStyle = noStyle
 	ToolCompleteStyle = noStyle
-	TeammateStyle = noStyle
+	AgentStyle = noStyle
 	ToolArgsStyle = noStyle
 	ToolNameStyle = noStyle
 	SystemStyle = noStyle
-	TeammateNameStyle = noStyle
+	AgentNameStyle = noStyle
 	ToolSummaryStyle = noStyle
 	CodeBlockStyle = noStyle
 	ToolOutputHeaderStyle = noStyle
@@ -237,6 +244,8 @@ func DisableColors() {
 	BoldStyle = noStyle
 	NumberStyle = noStyle
 	ChatStyle = noStyle
+	InfoStyle = noStyle
+	OutputStyle = noStyle
 }
 
 // Add this function to check if colors should be enabled

@@ -18,8 +18,8 @@ import (
 
 func newRunCommand(cfg *config.Config) *cobra.Command {
 	var (
-		teammateID   string
-		teammateName string
+		agentID   string
+		agentName string
 		argValues    []string
 		clearSession bool
 		sessionID    string
@@ -39,8 +39,8 @@ func newRunCommand(cfg *config.Config) *cobra.Command {
 			// Setup client
 			client := kubiya.NewClient(cfg)
 
-			// Auto-classify by default unless teammate is explicitly specified or --no-classify is set
-			shouldClassify := teammateID == "" && teammateName == "" && !noClassify
+			// Auto-classify by default unless agent is explicitly specified or --no-classify is set
+			shouldClassify := agentID == "" && agentName == "" && !noClassify
 
 			// If auto-classify is enabled (default), use the classification endpoint
 			if shouldClassify {
@@ -75,7 +75,7 @@ func newRunCommand(cfg *config.Config) *cobra.Command {
 				if strings.HasSuffix(baseURL, "/api/v1") {
 					baseURL = strings.TrimSuffix(baseURL, "/api/v1")
 				}
-				classifyURL := fmt.Sprintf("%s/api/v1/http-bridge/v1/classify/teammate", baseURL)
+				classifyURL := fmt.Sprintf("%s/api/v1/http-bridge/v1/classify/agent", baseURL)
 				req, err := http.NewRequestWithContext(cmd.Context(), http.MethodPost, classifyURL, bytes.NewBuffer(reqJSON))
 				if err != nil {
 					return fmt.Errorf("failed to create classification request: %w", err)
@@ -112,49 +112,49 @@ func newRunCommand(cfg *config.Config) *cobra.Command {
 				}
 
 				// Parse response
-				var teammates []struct {
+				var agents []struct {
 					UUID        string `json:"uuid"`
 					Name        string `json:"name"`
 					Description string `json:"description"`
 				}
-				if err := json.Unmarshal(body, &teammates); err != nil {
+				if err := json.Unmarshal(body, &agents); err != nil {
 					return fmt.Errorf("failed to parse classification response: %w", err)
 				}
 
-				if len(teammates) == 0 {
+				if len(agents) == 0 {
 					if debug {
-						fmt.Println("❌ No suitable teammate found in the classification response")
+						fmt.Println("❌ No suitable agent found in the classification response")
 					}
-					return fmt.Errorf("no suitable teammate found for the task")
+					return fmt.Errorf("no suitable agent found for the task")
 				}
 
-				// Use the first (best) teammate
-				teammateID = teammates[0].UUID
-				fmt.Printf("🤖 Auto-selected teammate: %s (%s)\n", teammates[0].Name, teammates[0].Description)
+				// Use the first (best) agent
+				agentID = agents[0].UUID
+				fmt.Printf("🤖 Auto-selected agent: %s (%s)\n", agents[0].Name, agents[0].Description)
 			}
 
-			// If teammate name is provided, look up the ID
-			if teammateName != "" && teammateID == "" {
+			// If agent name is provided, look up the ID
+			if agentName != "" && agentID == "" {
 				if debug {
-					fmt.Printf("🔍 Looking up teammate by name: %s\n", teammateName)
+					fmt.Printf("🔍 Looking up agent by name: %s\n", agentName)
 				}
 
-				teammates, err := client.GetTeammates(cmd.Context())
+				agents, err := client.GetAgents(cmd.Context())
 				if err != nil {
-					return fmt.Errorf("failed to list teammates: %w", err)
+					return fmt.Errorf("failed to list agents: %w", err)
 				}
 
 				if debug {
-					fmt.Printf("📋 Found %d teammates\n", len(teammates))
+					fmt.Printf("📋 Found %d agents\n", len(agents))
 				}
 
 				found := false
-				for _, t := range teammates {
-					if strings.EqualFold(t.Name, teammateName) {
-						teammateID = t.UUID
+				for _, t := range agents {
+					if strings.EqualFold(t.Name, agentName) {
+						agentID = t.UUID
 						found = true
 						if debug {
-							fmt.Printf("✅ Found matching teammate: %s (UUID: %s)\n", t.Name, t.UUID)
+							fmt.Printf("✅ Found matching agent: %s (UUID: %s)\n", t.Name, t.UUID)
 						}
 						break
 					}
@@ -162,15 +162,15 @@ func newRunCommand(cfg *config.Config) *cobra.Command {
 
 				if !found {
 					if debug {
-						fmt.Printf("❌ No teammate found with name: %s\n", teammateName)
+						fmt.Printf("❌ No agent found with name: %s\n", agentName)
 					}
-					return fmt.Errorf("teammate with name '%s' not found", teammateName)
+					return fmt.Errorf("agent with name '%s' not found", agentName)
 				}
 			}
 
-			// Ensure we have a teammate ID by this point
-			if teammateID == "" {
-				return fmt.Errorf("no teammate selected - please specify a teammate or allow auto-classification")
+			// Ensure we have a agent ID by this point
+			if agentID == "" {
+				return fmt.Errorf("no agent selected - please specify a agent or allow auto-classification")
 			}
 
 			// Session storage file path
@@ -221,7 +221,7 @@ func newRunCommand(cfg *config.Config) *cobra.Command {
 			fmt.Printf("🚀 Executing %s...\n", toolName)
 
 			// Send message with context
-			msgChan, err := client.SendMessageWithContext(cmd.Context(), teammateID, prompt.String(), sessionID, nil)
+			msgChan, err := client.SendMessageWithContext(cmd.Context(), agentID, prompt.String(), sessionID, nil)
 			if err != nil {
 				return fmt.Errorf("failed to execute tool: %w", err)
 			}
@@ -386,9 +386,9 @@ func newRunCommand(cfg *config.Config) *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVarP(&teammateID, "teammate", "t", "", "Teammate ID (optional)")
-	cmd.Flags().StringVarP(&teammateName, "name", "n", "", "Teammate name (optional)")
-	cmd.Flags().BoolVar(&noClassify, "no-classify", false, "Disable automatic teammate classification")
+	cmd.Flags().StringVarP(&agentID, "agent", "t", "", "Agent ID (optional)")
+	cmd.Flags().StringVarP(&agentName, "name", "n", "", "Agent name (optional)")
+	cmd.Flags().BoolVar(&noClassify, "no-classify", false, "Disable automatic agent classification")
 	cmd.Flags().StringArrayVar(&argValues, "arg", []string{}, "Tool arguments (key=value)")
 	cmd.Flags().BoolVar(&clearSession, "clear-session", false, "Clear the current session")
 	cmd.Flags().StringVar(&sessionID, "session", "", "Session ID to resume")
