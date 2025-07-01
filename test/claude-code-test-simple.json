@@ -1,0 +1,28 @@
+{
+  "enable_runners": true,
+  "allow_platform_apis": true,
+  "whitelisted_tools": [
+    {
+      "name": "hello_test",
+      "description": "Simple hello world test",
+      "tool_name": "hello_test",
+      "integrations": [],
+      "parameters": {
+        "type": "docker",
+        "image": "alpine:latest",
+        "content": "echo 'Hello from Kubiya MCP!'"
+      }
+    },
+    {
+      "name": "k8s_test",
+      "description": "Test Kubernetes integration",
+      "tool_name": "k8s_test",
+      "integrations": ["kubernetes/incluster"],
+      "parameters": {
+        "type": "docker",
+        "content": "kubectl version --client && echo 'K8s integration works!'"
+      }
+    }
+  ],
+  "tool_contexts": []
+} 
