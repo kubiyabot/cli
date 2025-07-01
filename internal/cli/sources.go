@@ -51,7 +51,7 @@ func newSourcesCommand(cfg *config.Config) *cobra.Command {
 		Aliases: []string{"sources"},
 		Short:   "📦 Manage sources",
 		Long: `Work with Kubiya sources - list, scan, add and manage your tool sources.
-Sources contain the tools and capabilities that your teammates can use.`,
+Sources contain the tools and capabilities that your agents can use.`,
 		SilenceUsage: true,
 	}
 
@@ -752,7 +752,7 @@ When scanning a local directory:
 
 					// Display explanation with enhanced platform information
 					fmt.Printf("│ %s\n",
-						style.DimStyle.Render("These tools can be used by Kubiya teammates, LLM agents, and MCP servers"))
+						style.DimStyle.Render("These tools can be used by Kubiya agents, LLM agents, and MCP servers"))
 					fmt.Printf("│ %s\n",
 						style.DimStyle.Render("once you've added this source to your workspace using the commands below"))
 					fmt.Printf("│\n")
@@ -922,7 +922,7 @@ When scanning a local directory:
 						style.DimStyle.Render("After source creation, tools will be available to:"))
 					fmt.Printf("│   %s %s\n",
 						style.DimStyle.Render("-"),
-						style.DimStyle.Render("Kubiya teammates through the CLI and web interfaces"))
+						style.DimStyle.Render("Kubiya agents through the CLI and web interfaces"))
 					fmt.Printf("│   %s %s\n",
 						style.DimStyle.Render("-"),
 						style.DimStyle.Render("AI assistants and LLM agents for automated workflows"))

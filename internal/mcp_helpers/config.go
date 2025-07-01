@@ -12,7 +12,7 @@ import (
 type KubiyaMcpConfig struct {
 	Version     string   `yaml:"version"` // Required: Version of the configuration
 	ApiKey      string   `yaml:"api_key"`
-	TeammateIds []string `yaml:"teammate_ids,omitempty"` // Optional: List of teammate IDs
+	AgentIds []string `yaml:"agent_ids,omitempty"` // Optional: List of agent IDs
 }
 
 const (
@@ -52,11 +52,11 @@ func GetMcpConfigFile(fs afero.Fs) (string, error) {
 	return ret, nil
 }
 
-func SaveMcpConfig(fs afero.Fs, apiKey string, teammateIds []string) error {
+func SaveMcpConfig(fs afero.Fs, apiKey string, agentIds []string) error {
 	payload := KubiyaMcpConfig{
 		Version:     "1.0",
 		ApiKey:      apiKey,
-		TeammateIds: teammateIds,
+		AgentIds: agentIds,
 	}
 	yamlData, err := yaml.Marshal(payload)
 	if err != nil {

@@ -39,7 +39,7 @@ func setupTestServer(t *testing.T, handler http.HandlerFunc) (*httptest.Server, 
 	return server, NewClient(cfg)
 }
 
-func TestListTeammates(t *testing.T) {
+func TestListAgents(t *testing.T) {
 	tests := []struct {
 		name       string
 		response   string
@@ -74,14 +74,14 @@ func TestListTeammates(t *testing.T) {
 			})
 			defer server.Close()
 
-			teammates, err := client.ListTeammates(context.Background())
+			agents, err := client.ListAgents(context.Background())
 			if (err != nil) != tt.wantErr {
-				t.Errorf("ListTeammates() error = %v, wantErr %v", err, tt.wantErr)
+				t.Errorf("ListAgents() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
 
-			if !tt.wantErr && len(teammates) == 0 {
-				t.Error("ListTeammates() returned empty list")
+			if !tt.wantErr && len(agents) == 0 {
+				t.Error("ListAgents() returned empty list")
 			}
 		})
 	}

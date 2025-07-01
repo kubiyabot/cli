@@ -57,7 +57,9 @@ type WorkflowExecutionRequest struct {
 	Name        string                 `json:"name"`
 	Description string                 `json:"description"`
 	Steps       []interface{}          `json:"steps"`
-	Variables   map[string]interface{} `json:"variables,omitempty"`
+	Params      map[string]interface{} `json:"params,omitempty"`      // Use 'params' instead of 'variables'
+	Secrets     map[string]interface{} `json:"secrets,omitempty"`     // Secrets passed in request body
+	Env         map[string]interface{} `json:"env,omitempty"`         // Environment variables
 }
 
 // WorkflowSSEEvent represents a workflow-specific SSE event

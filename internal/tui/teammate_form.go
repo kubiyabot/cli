@@ -48,8 +48,8 @@ const (
 	InlineSourceType
 )
 
-// TeammateForm represents the TUI form
-type TeammateForm struct {
+// AgentForm represents the TUI form
+type AgentForm struct {
 	cfg                  *config.Config
 	client               *kubiya.Client
 	inputs               []textinput.Model
@@ -94,7 +94,7 @@ type TeammateForm struct {
 	width, height int
 }
 
-func NewTeammateForm(cfg *config.Config) *TeammateForm {
+func NewAgentForm(cfg *config.Config) *AgentForm {
 	// Initialize basic inputs
 	inputs := make([]textinput.Model, 4)
 
@@ -196,7 +196,7 @@ func NewTeammateForm(cfg *config.Config) *TeammateForm {
 	secretsList.SetFilteringEnabled(true)
 	secretsList.Styles.Title = lipgloss.NewStyle().MarginLeft(2).Bold(true)
 
-	return &TeammateForm{
+	return &AgentForm{
 		cfg:                  cfg,
 		client:               kubiya.NewClient(cfg),
 		inputs:               inputs,
@@ -221,18 +221,18 @@ func NewTeammateForm(cfg *config.Config) *TeammateForm {
 	}
 }
 
-func (f *TeammateForm) SetDefaults(teammate *kubiya.Teammate) {
+func (f *AgentForm) SetDefaults(agent *kubiya.Agent) {
 	// Set basic info
-	f.inputs[0].SetValue(teammate.Name)
-	f.inputs[1].SetValue(teammate.Description)
-	f.inputs[2].SetValue(teammate.LLMModel)
-	f.inputs[3].SetValue(teammate.InstructionType)
+	f.inputs[0].SetValue(agent.Name)
+	f.inputs[1].SetValue(agent.Description)
+	f.inputs[2].SetValue(agent.LLMModel)
+	f.inputs[3].SetValue(agent.InstructionType)
 
 	// Set sources, secrets, env vars, and integrations
-	f.selectedSources = teammate.Sources
-	f.selectedSecrets = teammate.Secrets
-	f.envVars = teammate.Environment
-	f.integrations = teammate.Integrations
+	f.selectedSources = agent.Sources
+	f.selectedSecrets = agent.Secrets
+	f.envVars = agent.Environment
+	f.integrations = agent.Integrations
 
 	// Reset source input states
 	f.sourceInputType = ExistingSourceType
@@ -243,7 +243,7 @@ func (f *TeammateForm) SetDefaults(teammate *kubiya.Teammate) {
 	f.sourceLocalPathValue = ""
 }
 
-func (f *TeammateForm) Run() (*kubiya.Teammate, error) {
+func (f *AgentForm) Run() (*kubiya.Agent, error) {
 	// Fetch available sources and secrets for selection
 	go f.fetchSources()
 	go f.fetchSecrets()
@@ -254,7 +254,7 @@ func (f *TeammateForm) Run() (*kubiya.Teammate, error) {
 		return nil, err
 	}
 
-	form := m.(*TeammateForm)
+	form := m.(*AgentForm)
 	if form.err != nil {
 		return nil, form.err
 	}
@@ -275,7 +275,7 @@ func (f *TeammateForm) Run() (*kubiya.Teammate, error) {
 		}
 	}
 
-	return &kubiya.Teammate{
+	return &kubiya.Agent{
 		Name:            f.inputs[0].Value(),
 		Description:     f.inputs[1].Value(),
 		LLMModel:        f.inputs[2].Value(),
@@ -287,7 +287,7 @@ func (f *TeammateForm) Run() (*kubiya.Teammate, error) {
 	}, nil
 }
 
-func (f *TeammateForm) fetchSources() {
+func (f *AgentForm) fetchSources() {
 	ctx := context.Background()
 	sources, err := f.client.ListSources(ctx)
 	if err != nil {
@@ -336,7 +336,7 @@ func (f *TeammateForm) fetchSources() {
 	f.sourcesList.SetItems(listItems)
 }
 
-func (f *TeammateForm) fetchSecrets() {
+func (f *AgentForm) fetchSecrets() {
 	ctx := context.Background()
 	secrets, err := f.client.ListSecrets(ctx)
 	if err != nil {
@@ -368,12 +368,12 @@ func (f *TeammateForm) fetchSecrets() {
 	f.secretsList.SetItems(listItems)
 }
 
-func (f *TeammateForm) Init() tea.Cmd {
+func (f *AgentForm) Init() tea.Cmd {
 	cmds := []tea.Cmd{textinput.Blink}
 	return tea.Batch(cmds...)
 }
 
-func (f *TeammateForm) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (f *AgentForm) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 
 	switch msg := msg.(type) {
@@ -832,7 +832,7 @@ func (f *TeammateForm) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 // createInlineSource creates a source from inline content
-func (f *TeammateForm) createInlineSource(ctx context.Context, name, content string) (*kubiya.Source, error) {
+func (f *AgentForm) createInlineSource(ctx context.Context, name, content string) (*kubiya.Source, error) {
 	if content == "" {
 		return nil, fmt.Errorf("empty source content")
 	}
@@ -1031,11 +1031,11 @@ func getStringValue(m map[string]interface{}, key, fallback string) string {
 	return fallback
 }
 
-func (f *TeammateForm) View() string {
+func (f *AgentForm) View() string {
 	var s string
 
 	// Header
-	s += "🤖 Kubiya Teammate Configuration\n\n"
+	s += "🤖 Kubiya Agent Configuration\n\n"
 
 	// Navigation
 	pages := []string{"Basic Info", "Sources", "Secrets", "Env Vars", "Integrations", "Confirm"}
@@ -1253,7 +1253,7 @@ func (f *TeammateForm) View() string {
 	case ConfirmPage:
 		s += "✅ Confirmation\n\n"
 
-		s += "Teammate Configuration Summary:\n\n"
+		s += "Agent Configuration Summary:\n\n"
 		s += fmt.Sprintf("Name: %s\n", f.inputs[0].Value())
 		s += fmt.Sprintf("Description: %s\n", f.inputs[1].Value())
 		s += fmt.Sprintf("LLM Model: %s\n", f.inputs[2].Value())
@@ -1320,7 +1320,7 @@ func (f *TeammateForm) View() string {
 			s += "\n"
 		}
 
-		s += "Press Enter to confirm and create the teammate, or Left to go back\n"
+		s += "Press Enter to confirm and create the agent, or Left to go back\n"
 	}
 
 	// Footer

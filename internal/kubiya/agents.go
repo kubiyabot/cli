@@ -8,7 +8,7 @@ import (
 )
 
 // ListAgents retrieves all available agents
-func (c *Client) ListAgents(ctx context.Context) ([]Teammate, error) {
+func (c *Client) ListAgents(ctx context.Context) ([]Agent, error) {
 	req, err := http.NewRequestWithContext(ctx, "GET",
 		fmt.Sprintf("%s/agents?mode=all", c.cfg.BaseURL), nil)
 	if err != nil {
@@ -34,20 +34,27 @@ func (c *Client) ListAgents(ctx context.Context) ([]Teammate, error) {
 		return nil, err
 	}
 
-	// Convert agents to teammates
-	teammates := make([]Teammate, 0, len(agents))
-	for _, agent := range agents {
-		teammates = append(teammates, Teammate{
-			UUID:        agent.UUID,
-			Name:        agent.Name,
-			Description: agent.Desc,
-		})
-	}
-	return teammates, nil
+	return agents, nil
 }
 
-// ListTeammates is an alias for ListAgents for backward compatibility
-func (c *Client) ListTeammates(ctx context.Context) ([]Teammate, error) {
+// GetAgentByName retrieves a specific agent by name for backward compatibility
+func (c *Client) GetAgentByName(ctx context.Context, name string) (*Agent, error) {
+	agents, err := c.ListAgents(ctx)
+	if err != nil {
+		return nil, err
+	}
+	
+	for _, agent := range agents {
+		if agent.Name == name {
+			return &agent, nil
+		}
+	}
+	
+	return nil, fmt.Errorf("agent not found: %s", name)
+}
+
+// Legacy ListAgents method with different endpoint
+func (c *Client) ListAgentsLegacy(ctx context.Context) ([]Agent, error) {
 	req, err := http.NewRequestWithContext(ctx, "GET",
 		fmt.Sprintf("%s/agents", c.cfg.BaseURL), nil)
 	if err != nil {
@@ -57,7 +64,7 @@ func (c *Client) ListTeammates(ctx context.Context) ([]Teammate, error) {
 	req.Header.Set("Authorization", "UserKey "+c.cfg.APIKey)
 
 	if c.debug {
-		fmt.Printf("ListTeammates: Making request to %s\n", req.URL.String())
+		fmt.Printf("ListAgents: Making request to %s\n", req.URL.String())
 	}
 
 	resp, err := c.client.Do(req)
@@ -70,35 +77,35 @@ func (c *Client) ListTeammates(ctx context.Context) ([]Teammate, error) {
 		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 	}
 
-	var teammates []Teammate
-	if err := json.NewDecoder(resp.Body).Decode(&teammates); err != nil {
-		return nil, fmt.Errorf("failed to decode teammates: %w", err)
+	var agents []Agent
+	if err := json.NewDecoder(resp.Body).Decode(&agents); err != nil {
+		return nil, fmt.Errorf("failed to decode agents: %w", err)
 	}
 
-	// Process teammates to ensure UUID is properly set
-	validTeammates := make([]Teammate, 0, len(teammates))
-	for _, t := range teammates {
+	// Process agents to ensure UUID is properly set
+	validAgents := make([]Agent, 0, len(agents))
+	for _, t := range agents {
 		// If UUID is empty but ID is present, use ID as UUID
 		if t.UUID == "" && t.ID != "" {
 			if c.debug {
-				fmt.Printf("ListTeammates: UUID empty for %s, using ID: %s\n", t.Name, t.ID)
+				fmt.Printf("ListAgents: UUID empty for %s, using ID: %s\n", t.Name, t.ID)
 			}
 			t.UUID = t.ID
 		}
 
-		// Only include valid teammates
+		// Only include valid agents
 		if t.UUID != "" && t.Name != "" {
-			validTeammates = append(validTeammates, t)
+			validAgents = append(validAgents, t)
 		}
 	}
 
-	return validTeammates, nil
+	return validAgents, nil
 }
 
-// GetTeammate retrieves a specific teammate by ID
-func (c *Client) GetTeammate(ctx context.Context, teammateID string) (*Teammate, error) {
+// GetAgent retrieves a specific agent by ID
+func (c *Client) GetAgent(ctx context.Context, agentID string) (*Agent, error) {
 	req, err := http.NewRequestWithContext(ctx, "GET",
-		fmt.Sprintf("%s/agents/%s", c.cfg.BaseURL, teammateID), nil)
+		fmt.Sprintf("%s/agents/%s", c.cfg.BaseURL, agentID), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -106,7 +113,7 @@ func (c *Client) GetTeammate(ctx context.Context, teammateID string) (*Teammate,
 	req.Header.Set("Authorization", "UserKey "+c.cfg.APIKey)
 
 	if c.debug {
-		fmt.Printf("GetTeammate: Making request to %s\n", req.URL.String())
+		fmt.Printf("GetAgent: Making request to %s\n", req.URL.String())
 	}
 
 	resp, err := c.client.Do(req)
@@ -119,18 +126,18 @@ func (c *Client) GetTeammate(ctx context.Context, teammateID string) (*Teammate,
 		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 	}
 
-	var teammate Teammate
-	if err := json.NewDecoder(resp.Body).Decode(&teammate); err != nil {
-		return nil, fmt.Errorf("failed to decode teammate: %w", err)
+	var agent Agent
+	if err := json.NewDecoder(resp.Body).Decode(&agent); err != nil {
+		return nil, fmt.Errorf("failed to decode agent: %w", err)
 	}
 
 	// Handle ID field if UUID is empty
-	if teammate.UUID == "" && teammate.ID != "" {
+	if agent.UUID == "" && agent.ID != "" {
 		if c.debug {
-			fmt.Printf("GetTeammate: UUID empty, using ID: %s\n", teammate.ID)
+			fmt.Printf("GetAgent: UUID empty, using ID: %s\n", agent.ID)
 		}
-		teammate.UUID = teammate.ID
+		agent.UUID = agent.ID
 	}
 
-	return &teammate, nil
+	return &agent, nil
 }

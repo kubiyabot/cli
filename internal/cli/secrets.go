@@ -18,7 +18,7 @@ func newSecretsCommand(cfg *config.Config) *cobra.Command {
 		Use:     "secret",
 		Aliases: []string{"secrets"},
 		Short:   "🔒 Manage secrets",
-		Long:    `Create, read, update, and delete secrets used by tools and teammates.`,
+		Long:    `Create, read, update, and delete secrets used by tools and agents.`,
 	}
 
 	cmd.AddCommand(
