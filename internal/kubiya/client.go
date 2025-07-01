@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/kubiyabot/cli/internal/config"
+	sentryutil "github.com/kubiyabot/cli/internal/sentry"
 )
 
 // fileState tracks the accumulation of one file's content during SSE streaming.
@@ -741,7 +742,7 @@ func (c *Client) CreateAgent(ctx context.Context, agent Agent) (*Agent, error) {
 			// We got an alternative format with just an ID
 			created.ID = altResponse.ID
 			created.UUID = altResponse.ID // Also set UUID to match
-			created.Name = agent.Name  // Copy over the name from the request
+			created.Name = agent.Name     // Copy over the name from the request
 			if c.debug {
 				fmt.Printf("Parsed agent ID from alternative response format: %s\n", created.ID)
 			}
@@ -1716,6 +1717,15 @@ func (c *Client) findHealthyRunnerQuickly(ctx context.Context) (string, error) {
 
 // ExecuteToolWithTimeout executes a tool directly using the tool execution API with a configurable timeout
 func (c *Client) ExecuteToolWithTimeout(ctx context.Context, toolName string, toolDef map[string]interface{}, runner string, timeout time.Duration) (<-chan WorkflowSSEEvent, error) {
+	// Create Sentry span for tracing
+	span, ctx := sentryutil.StartSpan(ctx, "execute_tool")
+	if span != nil {
+		span.SetTag("tool.name", toolName)
+		span.SetTag("runner", runner)
+		span.SetTag("timeout", timeout.String())
+		defer span.Finish()
+	}
+
 	// Handle "auto" runner selection with fast failover
 	selectedRunner := runner
 	if runner == "auto" {
@@ -1727,11 +1737,17 @@ func (c *Client) ExecuteToolWithTimeout(ctx context.Context, toolName string, to
 			if c.debug {
 				fmt.Printf("[DEBUG] No healthy runner found quickly, trying kubiya-hosted\n")
 			}
+			sentryutil.AddBreadcrumb("runner_selection", "No healthy runner found, using default", map[string]interface{}{
+				"default_runner": selectedRunner,
+			})
 		} else {
 			selectedRunner = healthyRunner
 			if c.debug {
 				fmt.Printf("[DEBUG] Selected healthy runner: %s\n", selectedRunner)
 			}
+			sentryutil.AddBreadcrumb("runner_selection", "Selected healthy runner", map[string]interface{}{
+				"runner": selectedRunner,
+			})
 		}
 	}
 
@@ -1761,12 +1777,32 @@ func (c *Client) ExecuteToolWithTimeout(ctx context.Context, toolName string, to
 	}
 
 	var lastErr error
-	for i, tryRunner := range runnersToTry {
-		if i > 0 {
+	var resultEvents <-chan WorkflowSSEEvent
+
+	// Implement simple retry logic with exponential backoff
+	maxAttempts := len(runnersToTry)
+	retryDelay := 1 * time.Second
+
+	for attemptIndex := 0; attemptIndex < maxAttempts; attemptIndex++ {
+		tryRunner := runnersToTry[attemptIndex]
+
+		if attemptIndex > 0 {
+			// Exponential backoff
+			time.Sleep(retryDelay)
+			retryDelay = retryDelay * 2
+			if retryDelay > 10*time.Second {
+				retryDelay = 10 * time.Second
+			}
+
 			// Log retry attempt
 			if c.debug {
-				fmt.Printf("[DEBUG] Retrying with runner: %s (attempt %d/%d)\n", tryRunner, i+1, len(runnersToTry))
+				fmt.Printf("[DEBUG] Retrying with runner: %s (attempt %d/%d)\n", tryRunner, attemptIndex+1, len(runnersToTry))
 			}
+			sentryutil.AddBreadcrumb("retry", fmt.Sprintf("Retrying with runner %s", tryRunner), map[string]interface{}{
+				"attempt":      attemptIndex + 1,
+				"total":        len(runnersToTry),
+				"previous_err": lastErr.Error(),
+			})
 		}
 
 		// Update the URL with the current runner
@@ -1801,8 +1837,8 @@ func (c *Client) ExecuteToolWithTimeout(ctx context.Context, toolName string, to
 		resp, err := httpClient.Do(req)
 		if err != nil {
 			lastErr = fmt.Errorf("runner %s: failed to connect: %w", tryRunner, err)
-			if i < len(runnersToTry)-1 && runner == "auto" {
-				// Try next runner
+			// Check if it's retryable
+			if attemptIndex < maxAttempts-1 && runner == "auto" {
 				continue
 			}
 			return nil, lastErr
@@ -1812,19 +1848,47 @@ func (c *Client) ExecuteToolWithTimeout(ctx context.Context, toolName string, to
 			body, _ := io.ReadAll(resp.Body)
 			resp.Body.Close()
 			lastErr = fmt.Errorf("runner %s: execution failed with status %d: %s", tryRunner, resp.StatusCode, string(body))
-			if i < len(runnersToTry)-1 && runner == "auto" && resp.StatusCode >= 500 {
-				// Server error, try next runner
+
+			// Don't retry on client errors (4xx)
+			if resp.StatusCode >= 400 && resp.StatusCode < 500 {
+				return nil, lastErr
+			}
+
+			// Retry on server errors if we have more runners
+			if attemptIndex < maxAttempts-1 && runner == "auto" && resp.StatusCode >= 500 {
 				continue
 			}
+
 			return nil, lastErr
 		}
 
 		// Success! Create streaming channel
-		return c.streamToolExecution(resp, timeout, tryRunner)
+		events, streamErr := c.streamToolExecution(resp, timeout, tryRunner)
+		if streamErr != nil {
+			lastErr = streamErr
+			if attemptIndex < maxAttempts-1 && runner == "auto" {
+				continue
+			}
+			return nil, streamErr
+		}
+
+		// Success
+		resultEvents = events
+		break
 	}
 
-	// All runners failed
-	return nil, fmt.Errorf("all runners failed, last error: %w", lastErr)
+	if resultEvents == nil {
+		sentryutil.CaptureError(lastErr, map[string]string{
+			"tool":   toolName,
+			"runner": runner,
+		}, map[string]interface{}{
+			"attempts":      maxAttempts,
+			"runners_tried": runnersToTry,
+		})
+		return nil, fmt.Errorf("all runners failed, last error: %w", lastErr)
+	}
+
+	return resultEvents, nil
 }
 
 // streamToolExecution handles the SSE streaming from successful connection
@@ -1904,13 +1968,13 @@ func (c *Client) streamToolExecution(resp *http.Response, timeout time.Duration,
 				events <- WorkflowSSEEvent{Type: "data", Data: data}
 			} else if strings.HasPrefix(line, "event: ") {
 				eventType := strings.TrimPrefix(line, "event: ")
-				
+
 				// Handle close event specially
 				if eventType == "close" {
 					events <- WorkflowSSEEvent{Type: "done", Data: ""}
 					return
 				}
-				
+
 				// Next line should contain the data
 				if dataLine, err := reader.ReadString('\n'); err == nil {
 					dataLine = strings.TrimSpace(dataLine)
