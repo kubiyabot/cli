@@ -17,6 +17,8 @@ type Configuration struct {
 	EnableRunners     bool              `json:"enable_runners" yaml:"enable_runners"`
 	AllowPlatformAPIs bool              `json:"allow_platform_apis" yaml:"allow_platform_apis"`
 	EnableOPAPolicies bool              `json:"enable_opa_policies" yaml:"enable_opa_policies"`
+	AllowDynamicTools bool              `json:"allow_dynamic_tools" yaml:"allow_dynamic_tools"`
+	VerboseLogging    bool              `json:"verbose_logging" yaml:"verbose_logging"`
 }
 
 // Config defines complete configuration for the production MCP server
@@ -29,13 +31,16 @@ type Config struct {
 	FeatureFlags           map[string]bool            `json:"feature_flags,omitempty" yaml:"feature_flags,omitempty"`
 	ToolPermissions        map[string][]string        `json:"tool_permissions,omitempty" yaml:"tool_permissions,omitempty"`
 	ToolTimeouts           map[string]int             `json:"tool_timeouts,omitempty" yaml:"tool_timeouts,omitempty"` // in seconds
-	WhitelistedTools       map[string]WhitelistedTool `json:"whitelisted_tools,omitempty" yaml:"whitelisted_tools,omitempty"`
+	WhitelistedTools       []WhitelistedTool          `json:"whitelisted_tools,omitempty" yaml:"whitelisted_tools,omitempty"`
+	ToolContexts           []ToolContext              `json:"tool_contexts,omitempty" yaml:"tool_contexts,omitempty"`
 	RateLimit              RateLimitConfig            `json:"rate_limit" yaml:"rate_limit"`
 
-	// Legacy fields from Configuration
+	// Core functionality flags
 	EnableRunners     bool `json:"enable_runners" yaml:"enable_runners"`
 	AllowPlatformAPIs bool `json:"allow_platform_apis" yaml:"allow_platform_apis"`
 	EnableOPAPolicies bool `json:"enable_opa_policies" yaml:"enable_opa_policies"`
+	AllowDynamicTools bool `json:"allow_dynamic_tools" yaml:"allow_dynamic_tools"`
+	VerboseLogging    bool `json:"verbose_logging" yaml:"verbose_logging"`
 }
 
 // RateLimitConfig defines rate limiting configuration
@@ -69,11 +74,13 @@ type ToolContext struct {
 }
 
 // LoadConfiguration loads MCP server configuration from file and environment variables
-func LoadConfiguration(fs afero.Fs, configFile string, allowPlatformAPIsFlag bool) (*Configuration, error) {
-	// Start with default config
+func LoadConfiguration(fs afero.Fs, configFile string, disablePlatformAPIsFlag bool, whitelistedTools []string) (*Configuration, error) {
+	// Start with default config - platform APIs enabled by default, dynamic tools enabled, verbose logging disabled
 	config := &Configuration{
 		EnableRunners:     true,
-		AllowPlatformAPIs: false,
+		AllowPlatformAPIs: true,
+		AllowDynamicTools: true,
+		VerboseLogging:    false,
 	}
 
 	// Use provided config file or default location
@@ -90,10 +97,10 @@ func LoadConfiguration(fs afero.Fs, configFile string, allowPlatformAPIsFlag boo
 		data, err := afero.ReadFile(fs, configPath)
 		if err == nil {
 			if err := json.Unmarshal(data, config); err != nil {
-				return nil, fmt.Errorf("failed to parse %s: %w", configPath, err)
+				return nil, fmt.Errorf("failed to parse config file %s: %w", configPath, err)
 			}
 		} else if !os.IsNotExist(err) {
-			return nil, err
+			return nil, fmt.Errorf("failed to read config file %s: %w", configPath, err)
 		}
 	}
 
@@ -110,24 +117,37 @@ func LoadConfiguration(fs afero.Fs, configFile string, allowPlatformAPIsFlag boo
 		config.EnableOPAPolicies = envOPAPolicies == "true" || envOPAPolicies == "1"
 	}
 
-	// Override with command line flag if provided
-	if allowPlatformAPIsFlag {
-		config.AllowPlatformAPIs = true
+	// Override with command line flags
+	if disablePlatformAPIsFlag {
+		config.AllowPlatformAPIs = false
+	}
+
+	// Add whitelisted tools from command line
+	if len(whitelistedTools) > 0 {
+		for _, toolName := range whitelistedTools {
+			config.WhitelistedTools = append(config.WhitelistedTools, WhitelistedTool{
+				Name:        toolName,
+				Description: fmt.Sprintf("Tool %s added via command line", toolName),
+				ToolName:    toolName,
+			})
+		}
 	}
 
 	return config, nil
 }
 
 // LoadProductionConfig loads configuration for the production MCP server
-func LoadProductionConfig(fs afero.Fs, configFile string, allowPlatformAPIsFlag bool) (*Config, error) {
-	// Start with default config
+func LoadProductionConfig(fs afero.Fs, configFile string, disablePlatformAPIsFlag bool, whitelistedTools []string) (*Config, error) {
+	// Start with default config - platform APIs enabled by default, dynamic tools enabled, verbose logging disabled
 	config := &Config{
 		ServerName:        "Kubiya MCP Server",
 		ServerVersion:     "1.0.0",
 		SessionTimeout:    1800, // 30 minutes
 		RequireAuth:       false,
 		EnableRunners:     true,
-		AllowPlatformAPIs: false,
+		AllowPlatformAPIs: true,
+		AllowDynamicTools: true,
+		VerboseLogging:    false,
 		RateLimit: RateLimitConfig{
 			RequestsPerSecond: 10.0,
 			Burst:             20,
@@ -148,10 +168,10 @@ func LoadProductionConfig(fs afero.Fs, configFile string, allowPlatformAPIsFlag 
 		data, err := afero.ReadFile(fs, configPath)
 		if err == nil {
 			if err := json.Unmarshal(data, config); err != nil {
-				return nil, fmt.Errorf("failed to parse %s: %w", configPath, err)
+				return nil, fmt.Errorf("failed to parse config file %s: %w", configPath, err)
 			}
 		} else if !os.IsNotExist(err) {
-			return nil, err
+			return nil, fmt.Errorf("failed to read config file %s: %w", configPath, err)
 		}
 	}
 
@@ -172,9 +192,20 @@ func LoadProductionConfig(fs afero.Fs, configFile string, allowPlatformAPIsFlag 
 		config.RequireAuth = envAuth == "true"
 	}
 
-	// Override with command line flag if provided
-	if allowPlatformAPIsFlag {
-		config.AllowPlatformAPIs = true
+	// Override with command line flags
+	if disablePlatformAPIsFlag {
+		config.AllowPlatformAPIs = false
+	}
+
+	// Add whitelisted tools from command line
+	if len(whitelistedTools) > 0 {
+		for _, toolName := range whitelistedTools {
+			config.WhitelistedTools = append(config.WhitelistedTools, WhitelistedTool{
+				Name:        toolName,
+				Description: fmt.Sprintf("Tool %s added via command line", toolName),
+				ToolName:    toolName,
+			})
+		}
 	}
 
 	// Set default tool permissions if not provided

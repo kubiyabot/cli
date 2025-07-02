@@ -212,8 +212,10 @@ func (ps *ProductionServer) createToolHandler(toolName string) middleware.ToolHa
 	default:
 		// Check whitelisted tools
 		if ps.config.WhitelistedTools != nil {
-			if wt, exists := ps.config.WhitelistedTools[toolName]; exists {
-				return ps.createWhitelistedToolHandler(wt)
+			for _, wt := range ps.config.WhitelistedTools {
+				if wt.Name == toolName {
+					return ps.createWhitelistedToolHandler(wt)
+				}
 			}
 		}
 
@@ -887,8 +889,8 @@ func (ps *ProductionServer) getAllTools() []mcp.Tool {
 
 	// Add whitelisted tools
 	if ps.config.WhitelistedTools != nil {
-		for name, wt := range ps.config.WhitelistedTools {
-			tool := mcp.NewTool(name, mcp.WithDescription(wt.Description))
+		for _, wt := range ps.config.WhitelistedTools {
+			tool := mcp.NewTool(wt.Name, mcp.WithDescription(wt.Description))
 
 			// Add any custom arguments
 			if wt.Arguments != nil {
@@ -928,7 +930,7 @@ func (ps *ProductionServer) getAllTools() []mcp.Tool {
 					}
 				}
 
-				tool = mcp.NewTool(name, toolOpts...)
+				tool = mcp.NewTool(wt.Name, toolOpts...)
 			}
 
 			allTools = append(allTools, tool)
