@@ -1,0 +1,26 @@
+{
+  "defaultMode": "acceptEdits",
+  "allowRules": [
+    "mcp__kubiya",
+    "mcp__kubiya__execute_tool",
+    "mcp__kubiya__list_tools",
+    "mcp__kubiya__search_kb",
+    "mcp__kubiya__list_sources",
+    "mcp__kubiya__kubectl",
+    "mcp__kubiya__helm",
+    "mcp__kubiya__terraform",
+    "mcp__kubiya__docker",
+    "mcp__kubiya__aws"
+  ],
+  "denyRules": [],
+  "additionalDirectories": [],
+  "mcpServers": {
+    "kubiya": {
+      "command": "kubiya",
+      "args": ["mcp", "serve"],
+      "env": {
+        "KUBIYA_API_KEY": "${KUBIYA_API_KEY}"
+      }
+    }
+  }
+}

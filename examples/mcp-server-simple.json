@@ -1,0 +1,19 @@
+{
+  "enable_runners": true,
+  "allow_platform_apis": true,
+  "enable_opa_policies": false,
+  "allow_dynamic_tools": true,
+  "verbose_logging": false,
+  "whitelisted_tools": [
+    {
+      "name": "kubectl",
+      "description": "Kubernetes command-line tool",
+      "tool_name": "kubectl"
+    },
+    {
+      "name": "helm",
+      "description": "Kubernetes package manager",
+      "tool_name": "helm"
+    }
+  ]
+}

@@ -1,0 +1,105 @@
+{
+  "server_name": "Kubiya MCP Server",
+  "server_version": "1.0.0",
+  "session_timeout": 1800,
+  "require_auth": false,
+  "enable_runners": true,
+  "allow_platform_apis": true,
+  "enable_opa_policies": false,
+  "allow_dynamic_tools": true,
+  "verbose_logging": false,
+  "rate_limit": {
+    "requests_per_second": 10.0,
+    "burst": 20
+  },
+  "whitelisted_tools": [
+    {
+      "name": "kubectl",
+      "description": "Kubernetes command-line tool for cluster management",
+      "tool_name": "kubectl",
+      "integrations": ["kubernetes"],
+      "timeout": 300
+    },
+    {
+      "name": "helm",
+      "description": "Kubernetes package manager",
+      "tool_name": "helm",
+      "integrations": ["kubernetes"],
+      "timeout": 300
+    },
+    {
+      "name": "terraform",
+      "description": "Infrastructure as Code tool",
+      "tool_name": "terraform",
+      "integrations": ["aws", "gcp", "azure"],
+      "timeout": 600
+    },
+    {
+      "name": "docker",
+      "description": "Container management tool",
+      "tool_name": "docker",
+      "integrations": ["docker"],
+      "timeout": 120
+    },
+    {
+      "name": "aws-cli",
+      "description": "AWS Command Line Interface",
+      "tool_name": "aws",
+      "integrations": ["aws"],
+      "timeout": 300
+    }
+  ],
+  "tool_contexts": [
+    {
+      "type": "kubernetes",
+      "description": "Kubernetes cluster management and operations",
+      "examples": [
+        {
+          "name": "Get pods",
+          "description": "List all pods in current namespace",
+          "command": "kubectl get pods"
+        },
+        {
+          "name": "Deploy app",
+          "description": "Deploy application using Helm",
+          "command": "helm install myapp ./chart"
+        }
+      ]
+    },
+    {
+      "type": "aws",
+      "description": "AWS cloud resource management",
+      "examples": [
+        {
+          "name": "List S3 buckets",
+          "description": "List all S3 buckets in account",
+          "command": "aws s3 ls"
+        },
+        {
+          "name": "Create infrastructure",
+          "description": "Deploy infrastructure with Terraform",
+          "command": "terraform apply"
+        }
+      ]
+    }
+  ],
+  "tool_permissions": {
+    "kubectl": ["read", "write", "delete"],
+    "helm": ["read", "write"],
+    "terraform": ["read", "write", "delete"],
+    "docker": ["read", "write"],
+    "aws": ["read", "write", "delete"]
+  },
+  "tool_timeouts": {
+    "kubectl": 300,
+    "helm": 300,
+    "terraform": 600,
+    "docker": 120,
+    "aws": 300
+  },
+  "feature_flags": {
+    "advanced_logging": true,
+    "metrics_collection": true,
+    "webhook_support": false
+  }
+}
