@@ -192,6 +192,12 @@ var (
 
 	OutputStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("147"))
+
+	SectionStyle = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color("#60A5FA")).
+			MarginTop(1).
+			MarginBottom(1)
 )
 
 // DisableColors disables all color styling for non-TTY environments
@@ -246,6 +252,7 @@ func DisableColors() {
 	ChatStyle = noStyle
 	InfoStyle = noStyle
 	OutputStyle = noStyle
+	SectionStyle = noStyle
 }
 
 // Add this function to check if colors should be enabled

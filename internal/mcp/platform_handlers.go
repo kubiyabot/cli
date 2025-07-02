@@ -816,32 +816,85 @@ func (s *Server) executeWorkflowHandler(ctx context.Context, request mcp.CallToo
 		Env:         workflowEnv,
 	}
 
-	// Execute workflow using the client's workflow API
-	eventChan, err := s.client.Workflow().ExecuteWorkflow(ctx, workflowReq, runner)
+	// Create robust workflow client for better connection handling
+	robustClient, err := kubiya.NewRobustWorkflowClient(s.client.Workflow(), false)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("Failed to create robust workflow client: %v", err)), nil
+	}
+
+	// Execute workflow using robust client with connection recovery
+	eventChan, err := robustClient.ExecuteWorkflowRobust(ctx, workflowReq, runner)
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("Failed to execute workflow: %v", err)), nil
 	}
 
+	var executionID string
 	for event := range eventChan {
 		switch event.Type {
-		case "error":
-			output.WriteString(fmt.Sprintf("❌ Error: %s\n", event.Data))
-			return mcp.NewToolResultText(output.String()), nil
-		case "data":
-			// Parse data to extract meaningful information
-			if strings.Contains(event.Data, "step_start") {
-				output.WriteString(fmt.Sprintf("🔄 Starting step: %s\n", event.Data))
-			} else if strings.Contains(event.Data, "step_complete") {
-				output.WriteString(fmt.Sprintf("✅ Completed step: %s\n", event.Data))
-			} else if strings.Contains(event.Data, "step_error") {
-				output.WriteString(fmt.Sprintf("❌ Step failed: %s\n", event.Data))
-			} else {
-				output.WriteString(event.Data + "\n")
+		case "state":
+			// Initial state or state updates
+			executionID = event.ExecutionID
+			if event.State != nil {
+				output.WriteString(fmt.Sprintf("📊 %s\n", event.Message))
+				output.WriteString(fmt.Sprintf("🆔 Execution ID: %s\n", executionID))
+				output.WriteString(fmt.Sprintf("📈 Progress: %d/%d steps completed\n\n", 
+					event.State.CompletedSteps, event.State.TotalSteps))
 			}
-		case "done":
-			output.WriteString("\n🎉 Workflow execution completed successfully\n")
-		default:
-			output.WriteString(fmt.Sprintf("📝 %s: %s\n", event.Type, event.Data))
+		case "step":
+			// Step status updates
+			if event.StepStatus == "running" {
+				if event.State != nil {
+					progress := fmt.Sprintf("[%d/%d]", event.State.CompletedSteps+1, event.State.TotalSteps)
+					output.WriteString(fmt.Sprintf("▶️ %s %s\n", progress, event.StepName))
+				} else {
+					output.WriteString(fmt.Sprintf("▶️ %s\n", event.StepName))
+				}
+				output.WriteString("⏳ Running...\n")
+			} else if event.StepStatus == "completed" || event.StepStatus == "finished" {
+				if event.Data != "" {
+					// Show step output (truncated for MCP)
+					displayOutput := event.Data
+					if len(event.Data) > 500 {
+						displayOutput = event.Data[:500] + "..."
+					}
+					output.WriteString(fmt.Sprintf("📤 Output: %s\n", displayOutput))
+				}
+				output.WriteString("✅ Step completed\n\n")
+			} else if event.StepStatus == "failed" {
+				output.WriteString("❌ Step failed\n\n")
+			}
+		case "data":
+			// Raw data output
+			if event.Data != "" {
+				output.WriteString(fmt.Sprintf("📝 %s\n", event.Data))
+			}
+		case "reconnect":
+			// Connection recovery
+			if event.Reconnect {
+				output.WriteString(fmt.Sprintf("🔄 %s\n", event.Message))
+			} else {
+				output.WriteString(fmt.Sprintf("✅ %s\n", event.Message))
+			}
+		case "complete":
+			// Workflow completion
+			if event.State != nil {
+				if event.State.Status == "completed" {
+					output.WriteString("\n🎉 Workflow completed successfully!\n")
+				} else {
+					output.WriteString("\n💥 Workflow execution failed\n")
+				}
+				if event.State.RetryCount > 0 {
+					output.WriteString(fmt.Sprintf("🔄 Connection retries: %d\n", event.State.RetryCount))
+				}
+				output.WriteString(fmt.Sprintf("📊 Steps completed: %d/%d\n", 
+					event.State.CompletedSteps, event.State.TotalSteps))
+			}
+		case "error":
+			// Error events
+			if event.Error != "" {
+				output.WriteString(fmt.Sprintf("💀 Error: %s\n", event.Error))
+				return mcp.NewToolResultError(output.String()), nil
+			}
 		}
 	}
 

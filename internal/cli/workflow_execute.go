@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/kubiyabot/cli/internal/config"
 	"github.com/kubiyabot/cli/internal/kubiya"
@@ -20,6 +21,12 @@ func newWorkflowExecuteCommand(cfg *config.Config) *cobra.Command {
 		variables       []string
 		watch           bool
 		skipPolicyCheck bool
+		verbose         bool
+		startFromStep   string
+		noRetry         bool
+		maxRetries      int
+		retryDelay      int
+		interactive     bool
 	)
 
 	cmd := &cobra.Command{
@@ -42,8 +49,11 @@ You can provide variables and choose the runner for execution.`,
   # Execute with specific runner
   kubiya workflow execute migrate.json --runner prod-runner
 
-  # Execute and watch output (auto-detects format)
-  kubiya workflow execute long-running --watch
+  # Execute with verbose SSE logging
+  kubiya workflow execute long-running --verbose
+
+  # Start from a specific step
+  kubiya workflow execute deploy.yaml --start-from-step "deploy-app"
 
   # Skip policy validation
   kubiya workflow execute deploy.yaml --skip-policy-check`,
@@ -137,81 +147,246 @@ You can provide variables and choose the runner for execution.`,
 				}
 			}
 
-			// Execute workflow
-			events, err := client.Workflow().ExecuteWorkflow(ctx, req, runner)
+			// Create workflow client with verbose mode
+			workflowClient, err := kubiya.NewRobustWorkflowClient(client.Workflow(), cfg.Debug || verbose)
+			if err != nil {
+				return fmt.Errorf("failed to create workflow client: %w", err)
+			}
+
+			// Configure retry options
+			options := kubiya.RobustExecutionOptions{
+				NoRetry:     noRetry,
+				MaxRetries:  maxRetries,
+				RetryDelay:  time.Duration(retryDelay) * time.Second,
+				Verbose:     verbose,
+			}
+			
+			// Execute workflow 
+			var events <-chan kubiya.RobustWorkflowEvent
+			if startFromStep != "" {
+				// Start from specific step
+				events, err = workflowClient.ExecuteWorkflowFromStepWithOptions(ctx, req, runner, startFromStep, options)
+			} else {
+				// Normal execution
+				events, err = workflowClient.ExecuteWorkflowRobustWithOptions(ctx, req, runner, options)
+			}
 			if err != nil {
 				return fmt.Errorf("failed to execute workflow: %w", err)
 			}
 
-			// Process streaming events
+			// Process workflow events 
 			var hasError bool
 			var executionID string
+			
+			// Use interactive mode if requested
+			if interactive {
+				renderer := NewInteractiveWorkflowRenderer(req.Name, req.Steps)
+				
+				for event := range events {
+					renderer.ProcessEvent(event)
+					
+					// Track execution state
+					if event.ExecutionID != "" {
+						executionID = event.ExecutionID
+					}
+					
+					if event.Type == "error" || (event.Type == "complete" && event.State != nil && event.State.Status == "failed") {
+						hasError = true
+					}
+				}
+			} else {
+				// Standard mode processing
+				var stepStartTimes = make(map[string]time.Time)
+				var stepOutputs = make(map[string]string)
+				var isReconnecting bool
+				
+				fmt.Printf("\n%s Starting workflow execution...\n\n", 
+					style.InfoStyle.Render("🚀"))
+			
 			for event := range events {
+				// Show verbose SSE details if requested
+				if verbose {
+					fmt.Printf("[VERBOSE] Event: %s, ExecutionID: %s, Message: %s\n", 
+						event.Type, event.ExecutionID, event.Message)
+					if event.Data != "" {
+						fmt.Printf("[VERBOSE] Data: %s\n", event.Data)
+					}
+				}
+				
+				if !watch {
+					continue
+				}
+				
 				switch event.Type {
-				case "data":
-					if watch {
-						// Try to parse as JSON for structured output
-						var jsonData map[string]interface{}
-						if err := json.Unmarshal([]byte(event.Data), &jsonData); err == nil {
-							// Handle different event types from the API
-							if eventType, ok := jsonData["type"].(string); ok {
-								switch eventType {
-								case "step_running":
-									if step, ok := jsonData["step"].(map[string]interface{}); ok {
-										if stepName, ok := step["name"].(string); ok {
-											fmt.Printf("\n%s Step: %s\n", style.BulletStyle.Render("▶"), style.ToolNameStyle.Render(stepName))
-											fmt.Printf("  %s Running...\n", style.DimStyle.Render("⏳"))
-										}
-									}
-								case "step_complete":
-									if step, ok := jsonData["step"].(map[string]interface{}); ok {
-										if output, ok := step["output"].(string); ok && output != "" {
-											fmt.Printf("  %s Output: %s\n", style.DimStyle.Render("📤"), style.ToolOutputStyle.Render(output))
-										}
-										if status, ok := step["status"].(string); ok {
-											if status == "finished" {
-												fmt.Printf("  %s Step completed successfully\n", style.SuccessStyle.Render("✓"))
-											} else if status == "failed" {
-												fmt.Printf("  %s Step failed\n", style.ErrorStyle.Render("✗"))
-												hasError = true
-											}
-										}
-									}
-								case "workflow_complete":
-									if requestId, ok := jsonData["requestId"].(string); ok {
-										executionID = requestId
-									}
-									if status, ok := jsonData["status"].(string); ok {
-										if status == "finished" && jsonData["success"] == true {
-											fmt.Printf("\n%s Workflow executed successfully!\n", style.SuccessStyle.Render("✅"))
-										} else {
-											fmt.Printf("\n%s Workflow execution failed\n", style.ErrorStyle.Render("❌"))
-											hasError = true
-										}
-									}
-									if executionID != "" {
-										fmt.Printf("%s Execution ID: %s\n", style.DimStyle.Render("📋"), executionID)
-									}
-								}
+				case "state":
+					// Initial state or state updates
+					executionID = event.ExecutionID
+					if event.State != nil {
+						fmt.Printf("%s %s\n", 
+							style.InfoStyle.Render("📊"), 
+							event.Message)
+						fmt.Printf("%s Execution ID: %s\n", 
+							style.DimStyle.Render("🆔"), 
+							executionID)
+						fmt.Printf("%s Progress: %d/%d steps completed\n\n", 
+							style.DimStyle.Render("📊"), 
+							event.State.CompletedSteps, 
+							event.State.TotalSteps)
+					}
+					
+				case "step":
+					// Step status updates
+					if event.StepStatus == "running" {
+						stepStartTimes[event.StepName] = time.Now()
+						
+						// Enhanced step display with progress
+						if event.State != nil {
+							progress := fmt.Sprintf("[%d/%d]", event.State.CompletedSteps+1, event.State.TotalSteps)
+							fmt.Printf("%s %s %s\n", 
+								style.BulletStyle.Render("▶️"), 
+								style.DimStyle.Render(progress),
+								style.ToolNameStyle.Render(event.StepName))
+						}
+						
+						fmt.Printf("  %s Running...\n", style.DimStyle.Render("⏳"))
+						
+					} else if event.StepStatus == "completed" || event.StepStatus == "finished" {
+						// Calculate step duration
+						var duration time.Duration
+						if startTime, ok := stepStartTimes[event.StepName]; ok {
+							duration = time.Since(startTime)
+							delete(stepStartTimes, event.StepName)
+						}
+						
+						if event.Data != "" {
+							// Truncate long outputs for better display
+							displayOutput := event.Data
+							if len(event.Data) > 200 {
+								displayOutput = event.Data[:200] + "..."
 							}
+							fmt.Printf("  %s %s\n", 
+								style.DimStyle.Render("📤 Output:"), 
+								style.ToolOutputStyle.Render(displayOutput))
+							
+							// Store full output for summary
+							stepOutputs[event.StepName] = event.Data
+						}
+						
+						if duration > 0 {
+							fmt.Printf("  %s Step completed in %v\n\n", 
+								style.SuccessStyle.Render("✅"), 
+								duration.Round(time.Millisecond))
 						} else {
-							// Plain text output
-							if event.Data != "" {
-								fmt.Println(event.Data)
-							}
+							fmt.Printf("  %s Step completed\n\n", 
+								style.SuccessStyle.Render("✅"))
+						}
+						
+					} else if event.StepStatus == "failed" {
+						// Calculate step duration
+						var duration time.Duration
+						if startTime, ok := stepStartTimes[event.StepName]; ok {
+							duration = time.Since(startTime)
+							delete(stepStartTimes, event.StepName)
+						}
+						
+						if duration > 0 {
+							fmt.Printf("  %s Step failed after %v\n\n", 
+								style.ErrorStyle.Render("❌"), 
+								duration.Round(time.Millisecond))
+						} else {
+							fmt.Printf("  %s Step failed\n\n", 
+								style.ErrorStyle.Render("❌"))
+						}
+						hasError = true
+					}
+					
+				case "data":
+					// Raw data output
+					if event.Data != "" {
+						// Check if it's a structured log or plain text
+						if strings.Contains(event.Data, ":") {
+							fmt.Printf("  %s %s\n", style.DimStyle.Render("📝"), event.Data)
+						} else {
+							fmt.Println(event.Data)
 						}
 					}
+					
+				case "reconnect":
+					// Connection recovery
+					if event.Reconnect {
+						if !isReconnecting {
+							fmt.Printf("\n%s Connection lost, attempting to reconnect...\n", 
+								style.WarningStyle.Render("🔄"))
+							isReconnecting = true
+						}
+						fmt.Printf("  %s %s\n", 
+							style.DimStyle.Render("⏳"), 
+							event.Message)
+					} else {
+						fmt.Printf("  %s %s\n\n", 
+							style.SuccessStyle.Render("✅"), 
+							event.Message)
+						isReconnecting = false
+					}
+					
+				case "complete":
+					// Workflow completion
+					if event.State != nil {
+						totalDuration := time.Since(event.State.StartTime)
+						if event.State.EndTime != nil {
+							totalDuration = event.State.EndTime.Sub(event.State.StartTime)
+						}
+						
+						if event.State.Status == "completed" {
+							fmt.Printf("%s Workflow completed successfully!\n", 
+								style.SuccessStyle.Render("🎉"))
+						} else {
+							fmt.Printf("%s Workflow execution failed\n", 
+								style.ErrorStyle.Render("💥"))
+							hasError = true
+						}
+						
+						fmt.Printf("%s Total duration: %v\n", 
+							style.DimStyle.Render("⏱️"), 
+							totalDuration.Round(time.Millisecond))
+						fmt.Printf("%s Steps completed: %d/%d\n", 
+							style.DimStyle.Render("📊"), 
+							event.State.CompletedSteps, 
+							event.State.TotalSteps)
+						fmt.Printf("%s Execution ID: %s\n", 
+							style.DimStyle.Render("🆔"), 
+							executionID)
+						
+						if event.State.RetryCount > 0 {
+							fmt.Printf("%s Connection retries: %d\n", 
+								style.DimStyle.Render("🔄"), 
+								event.State.RetryCount)
+						}
+					}
+					
 				case "error":
-					fmt.Printf("%s Error: %s\n", style.ErrorStyle.Render("✗"), event.Data)
-					hasError = true
-				case "done":
-					// Workflow execution finished
-					break
+					// Error events
+					if event.Error != "" {
+						fmt.Printf("%s %s\n", 
+							style.ErrorStyle.Render("💀 Error:"), 
+							event.Error)
+						hasError = true
+					}
+				}
+			}
+			}
+
+			// Clean up old executions (keep for 24 hours)
+			if err := workflowClient.CleanupOldExecutions(24 * time.Hour); err != nil {
+				if cfg.Debug {
+					fmt.Printf("[DEBUG] Failed to cleanup old executions: %v\n", err)
 				}
 			}
 
 			if hasError {
-				return fmt.Errorf("workflow execution failed")
+				fmt.Printf("\n%s Workflow execution failed. Check the logs above for details.\n", 
+					style.ErrorStyle.Render("💥"))
+				os.Exit(1)
 			}
 
 			return nil
@@ -222,6 +397,12 @@ You can provide variables and choose the runner for execution.`,
 	cmd.Flags().StringArrayVar(&variables, "var", []string{}, "Params in key=value format")
 	cmd.Flags().BoolVarP(&watch, "watch", "w", true, "Watch execution output")
 	cmd.Flags().BoolVar(&skipPolicyCheck, "skip-policy-check", false, "Skip policy validation before execution")
+	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Enable verbose output with detailed SSE logs")
+	cmd.Flags().StringVar(&startFromStep, "start-from-step", "", "Start execution from a specific step (resume from step)")
+	cmd.Flags().BoolVar(&noRetry, "no-retry", false, "Disable connection retry on failures")
+	cmd.Flags().IntVar(&maxRetries, "max-retries", 10, "Maximum number of connection retry attempts")
+	cmd.Flags().IntVar(&retryDelay, "retry-delay", 2, "Initial retry delay in seconds (exponential backoff)")
+	cmd.Flags().BoolVarP(&interactive, "interactive", "i", false, "Enable interactive mode with workflow visualization")
 
 	return cmd
 }

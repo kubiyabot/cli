@@ -151,6 +151,9 @@ func (wc *WorkflowClient) GenerateWorkflow(ctx context.Context, prompt string, o
 		defer resp.Body.Close()
 
 		scanner := bufio.NewScanner(resp.Body)
+		// Increase scanner buffer size for large events
+		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+		
 		for scanner.Scan() {
 			line := scanner.Text()
 
@@ -159,8 +162,8 @@ func (wc *WorkflowClient) GenerateWorkflow(ctx context.Context, prompt string, o
 				fmt.Printf("[DEBUG] SSE Line: %s\n", line)
 			}
 
-			// Skip empty lines and retry messages
-			if line == "" || strings.HasPrefix(line, "retry:") {
+			// Skip empty lines, retry messages, and heartbeat events
+			if line == "" || strings.HasPrefix(line, "retry:") || line == ": heartbeat" || strings.HasPrefix(line, ": ") {
 				continue
 			}
 
@@ -234,8 +237,11 @@ func (wc *WorkflowClient) ExecuteWorkflow(ctx context.Context, req WorkflowExecu
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Accept", "text/event-stream")
 
-	// Execute request
-	resp, err := wc.client.client.Do(httpReq)
+	// Execute request with no timeout for streaming connections
+	streamingClient := &http.Client{
+		Timeout: 0, // No timeout for streaming connections
+	}
+	resp, err := streamingClient.Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("failed to execute request: %w", err)
 	}
@@ -254,6 +260,9 @@ func (wc *WorkflowClient) ExecuteWorkflow(ctx context.Context, req WorkflowExecu
 		defer resp.Body.Close()
 
 		scanner := bufio.NewScanner(resp.Body)
+		// Increase scanner buffer size for large events
+		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+		
 		for scanner.Scan() {
 			line := scanner.Text()
 
@@ -262,8 +271,8 @@ func (wc *WorkflowClient) ExecuteWorkflow(ctx context.Context, req WorkflowExecu
 				fmt.Printf("[DEBUG] SSE Line: %s\n", line)
 			}
 
-			// Skip empty lines and retry messages
-			if line == "" || strings.HasPrefix(line, "retry:") {
+			// Skip empty lines, retry messages, and heartbeat events
+			if line == "" || strings.HasPrefix(line, "retry:") || line == ": heartbeat" || strings.HasPrefix(line, ": ") {
 				continue
 			}
 
