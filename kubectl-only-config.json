@@ -1,0 +1,14 @@
+{
+  "enable_runners": false,
+  "allow_platform_apis": false,
+  "enable_opa_policies": false,
+  "allow_dynamic_tools": false,
+  "verbose_logging": true,
+  "whitelisted_tools": [
+    {
+      "name": "kubectl",
+      "description": "Kubernetes command-line tool",
+      "tool_name": "kubectl"
+    }
+  ]
+}

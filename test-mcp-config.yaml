@@ -1,0 +1,29 @@
+server:
+  name: "test-kubiya-mcp"
+  version: "1.0.0"
+  verbose: true
+  
+# Enable platform APIs for testing  
+enable_platform_apis: true
+
+# Allow workflow execution
+allow_workflows: true
+
+# Enable verbose logging
+logging:
+  level: "debug"
+
+# Rate limiting (generous for testing)
+rate_limiting:
+  max_requests_per_minute: 100
+
+# Tool configurations
+tool_config:
+  default_timeout: 300
+
+# Whitelisted tools for testing
+whitelisted_tools:
+  - name: "echo-test"
+    description: "Simple echo test tool"
+    tool_name: "echo"
+    timeout: 30
