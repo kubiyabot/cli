@@ -200,10 +200,36 @@ func (h *WhitelistedToolHandler) handleToolCall(ctx context.Context, request mcp
 	// 3. runner - the runner to use
 	// 4. timeout - execution timeout
 	
-	// Create a simplified tool definition that includes the arguments values
+	// Create a tool definition with the argument schema in the expected format
+	// The args field should contain the argument definitions as an array of core.Arg structures
+	toolArgDefs := make([]map[string]interface{}, len(h.tool.Args))
+	for i, arg := range h.tool.Args {
+		argDef := map[string]interface{}{
+			"name":        arg.Name,
+			"type":        arg.Type,
+			"description": arg.Description,
+			"required":    arg.Required,
+		}
+		if arg.Default != "" {
+			argDef["default"] = arg.Default
+		}
+		if len(arg.Options) > 0 {
+			argDef["options"] = arg.Options
+		}
+		toolArgDefs[i] = argDef
+	}
+	
 	simplifiedToolDef := map[string]interface{}{
 		"name": h.tool.Name,
-		"args": args, // The actual argument values from the MCP request
+		"args": toolArgDefs, // The argument definitions (schema)
+	}
+	
+	// Add the actual argument values in a separate field or structure
+	// Based on the error, it seems the tool definition should have the schema,
+	// but we need to provide the actual values somehow
+	if len(args) > 0 {
+		// Try adding the argument values as a separate field
+		simplifiedToolDef["arguments"] = args
 	}
 	
 	// Add other fields that might be needed
