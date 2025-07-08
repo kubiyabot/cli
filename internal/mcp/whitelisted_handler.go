@@ -188,39 +188,60 @@ func (h *WhitelistedToolHandler) handleToolCall(ctx context.Context, request mcp
 		runner = "default"
 	}
 	
-	// Build tool definition for execution
-	toolDef := map[string]interface{}{
-		"name":        h.tool.Name,
-		"description": h.tool.Description,
-		"type":        h.tool.Type,
-		"content":     h.tool.Content,
-		"args":        args,
-		"env":         h.tool.Env,
-		"secrets":     h.tool.Secrets,
-		"with_files":  h.tool.WithFiles,
-		"with_volumes": h.tool.WithVolumes,
-		"long_running": h.tool.LongRunning,
-		"metadata":    h.tool.Metadata,
-	}
-	
-	// Add image if specified
-	if h.tool.Image != "" {
-		toolDef["image"] = h.tool.Image
-	}
-	
-	// Add integration template if specified
-	if len(h.tool.Integrations) > 0 {
-		toolDef["integration_template"] = h.tool.Integrations[0] // Use first integration
-	}
-	
 	// Determine timeout
 	timeout := time.Duration(h.tool.Timeout) * time.Second
 	if timeout == 0 {
 		timeout = 10 * time.Minute // Default timeout
 	}
 	
+	// The ExecuteToolWithTimeout method expects:
+	// 1. toolName - the name of the tool to execute
+	// 2. toolDef - the tool definition (but this should be simpler)
+	// 3. runner - the runner to use
+	// 4. timeout - execution timeout
+	
+	// Create a simplified tool definition that includes the arguments values
+	simplifiedToolDef := map[string]interface{}{
+		"name": h.tool.Name,
+		"args": args, // The actual argument values from the MCP request
+	}
+	
+	// Add other fields that might be needed
+	if h.tool.Type != "" {
+		simplifiedToolDef["type"] = h.tool.Type
+	}
+	if h.tool.Content != "" {
+		simplifiedToolDef["content"] = h.tool.Content
+	}
+	if h.tool.Image != "" {
+		simplifiedToolDef["image"] = h.tool.Image
+	}
+	if h.tool.WithFiles != nil {
+		simplifiedToolDef["with_files"] = h.tool.WithFiles
+	}
+	if h.tool.WithVolumes != nil {
+		simplifiedToolDef["with_volumes"] = h.tool.WithVolumes
+	}
+	if len(h.tool.Env) > 0 {
+		simplifiedToolDef["env"] = h.tool.Env
+	}
+	if len(h.tool.Secrets) > 0 {
+		simplifiedToolDef["secrets"] = h.tool.Secrets
+	}
+	if h.tool.LongRunning {
+		simplifiedToolDef["long_running"] = h.tool.LongRunning
+	}
+	if h.tool.Metadata != nil {
+		simplifiedToolDef["metadata"] = h.tool.Metadata
+	}
+	
+	// Add integration template if specified
+	if len(h.tool.Integrations) > 0 {
+		simplifiedToolDef["integration_template"] = h.tool.Integrations[0]
+	}
+	
 	// Execute the tool using the client
-	result, err := h.client.ExecuteToolWithTimeout(ctx, h.tool.Name, toolDef, runner, timeout)
+	result, err := h.client.ExecuteToolWithTimeout(ctx, h.tool.Name, simplifiedToolDef, runner, timeout)
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("Tool execution failed: %s", err.Error())), nil
 	}
