@@ -1,0 +1,18 @@
+name: simple-test-workflow
+description: A simple test workflow
+steps:
+  - name: hello-step
+    description: Simple hello world step
+    executor:
+      type: tool
+      config:
+        tool_def:
+          name: hello-world
+          description: Simple hello world
+          type: docker
+          image: alpine:latest
+          content: |
+            echo "Hello from workflow step!"
+            echo "Current time: $(date)"
+            echo "Workflow test completed successfully"
+    output: HELLO_RESULT

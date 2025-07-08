@@ -1,0 +1,44 @@
+{
+  "enable_runners": true,
+  "allow_platform_apis": false,
+  "enable_opa_policies": false,
+  "allow_dynamic_tools": false,
+  "verbose_logging": true,
+  "whitelisted_tools": [
+    {
+      "name": "kubectl",
+      "source": {
+        "id": "9a7b5e93-a05a-4953-b7f4-2330748138b8",
+        "url": "https://github.com/kubiyabot/community-tools/tree/main/kubernetes"
+      },
+      "alias": "",
+      "description": "Executes kubectl commands. For namespace-scoped resources, include '-n <namespace>' in the command. Use '--all-namespaces' for cluster-wide queries. Some resources like nodes and persistent volumes are cluster-scoped and don't require a namespace.",
+      "type": "docker",
+      "content": "\nset -eu\nTOKEN_LOCATION=\"/tmp/kubernetes_context_token\"\nCERT_LOCATION=\"/tmp/kubernetes_context_cert\"\n# Inject in-cluster context using the temporary token file\nif [ -f $TOKEN_LOCATION ] && [ -f $CERT_LOCATION ]; then\n    KUBE_TOKEN=$(cat $TOKEN_LOCATION)\n    kubectl config set-cluster in-cluster --server=https://kubernetes.default.svc --certificate-authority=$CERT_LOCATION > /dev/null 2>&1\n    kubectl config set-credentials in-cluster --token=$KUBE_TOKEN > /dev/null 2>&1\n    kubectl config set-context in-cluster --cluster=in-cluster --user=in-cluster > /dev/null 2>&1\n    kubectl config use-context in-cluster > /dev/null 2>&1\nelse\n    echo \"Error: Kubernetes context token or cert file not found at $TOKEN_LOCATION or $CERT_LOCATION respectively.\"\n    exit 1\nfi\n\n\n    #!/bin/bash\n    set -e\n\n    # Show the command being executed\n    echo \"🔧 Executing: kubectl $command\"\n\n    # Run the kubectl command\n    if eval \"kubectl $command\"; then\n        echo \"✅ Command executed successfully\"\n    else\n        echo \"❌ Command failed: kubectl $command\"\n        exit 1\n    fi\n    ",
+      "args": [
+        {
+          "name": "command",
+          "type": "string",
+          "description": "The full kubectl command to execute. Examples include (but are not limited to):\n- 'get pods -n default'\n- 'create namespace test'\n- 'get pods --all-namespaces'\n- 'get nodes'  # cluster-scoped resource, no namespace needed\n- 'describe node my-node-1'",
+          "required": true
+        }
+      ],
+      "env": null,
+      "with_files": [
+        {
+          "source": "/var/run/secrets/kubernetes.io/serviceaccount/token",
+          "destination": "/tmp/kubernetes_context_token"
+        },
+        {
+          "source": "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt",
+          "destination": "/tmp/kubernetes_context_cert"
+        }
+      ],
+      "with_volumes": null,
+      "icon_url": "https://kubernetes.io/icons/icon-128x128.png",
+      "image": "kubiya/kubectl-light:latest",
+      "mermaid": "graph TD\n    %% Styles\n    classDef triggerClass fill:#3498db,color:#fff,stroke:#2980b9,stroke-width:2px,font-weight:bold\n    classDef paramClass fill:#2ecc71,color:#fff,stroke:#27ae60,stroke-width:2px\n    classDef execClass fill:#e74c3c,color:#fff,stroke:#c0392b,stroke-width:2px,font-weight:bold\n    classDef envClass fill:#f39c12,color:#fff,stroke:#f1c40f,stroke-width:2px\n\n    %% Main Components\n    Trigger(\"Trigger\"):::triggerClass\n    Params(\"Parameters\"):::paramClass\n    Exec(\"kubectl\"):::execClass\n    Env(\"Environment\"):::envClass\n\n    %% Flow\n    Trigger --> Params --> Exec\n    Env --> Exec\n\n    %% Trigger Options\n    User(\"User\")\n    API(\"API\")\n    Webhook(\"Webhook\")\n    Cron(\"Scheduled\")\n    User --> Trigger\n    API --> Trigger\n    Webhook --> Trigger\n    Cron --> Trigger\n\n    %% Parameters\n    subgraph Parameters[\"Parameters\"]\n        direction TB\n        Param0(\"command (Required)<br/>The full kubectl command to execute. Examples include (but are not limited to):<br/>- 'get pods -n default'<br/>- 'create namespace test'<br/>- 'get pods --all-namespaces'<br/>- 'get nodes'  # cluster-scoped resource, no namespace needed<br/>- 'describe node my-node-1'<br/>Type: string\"):::paramClass\n    end\n    Parameters --- Params\n\n    %% Execution\n    subgraph Execution[\"Execution\"]\n        direction TB\n        Code(\"Script: <br/>set -eu<br/>TOKEN_LOCATION=\\\"/tmp/kubernetes_context_t...\")\n        Type(\"Type: Docker\")\n        Image(\"Docker Image: kubiya/kubectl-light:latest\")\n    end\n    Execution --- Exec\n\n    %% Environment\n    subgraph Environment[\"Environment\"]\n        direction TB\n    end\n    Environment --- Env\n\n    %% Context Note\n    ContextNote(\"Parameter values can be<br/>fetched from context<br/>based on the trigger\")\n    ContextNote -.-> Params",
+      "runner": "kubiya-hosted"
+    }
+  ]
+}

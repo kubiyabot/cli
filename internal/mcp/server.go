@@ -62,6 +62,15 @@ func (s *Server) Start() error {
 
 // addTools registers all available tools
 func (s *Server) addTools() error {
+	// If whitelist is configured, only add whitelisted tools
+	if len(s.serverConfig.WhitelistedTools) > 0 {
+		log.Printf("Using whitelist mode - only adding %d whitelisted tools", len(s.serverConfig.WhitelistedTools))
+		return s.addWhitelistedToolsOnly()
+	}
+
+	// Default behavior: add all tools based on configuration
+	log.Println("Using default mode - adding all configured tools")
+	
 	// Core tool execution
 	if err := s.addExecuteTool(); err != nil {
 		return err
@@ -97,4 +106,58 @@ func (s *Server) addPrompts() error {
 func (s *Server) addResources() error {
 	resources := NewResources(s.client)
 	return resources.Register(s.server)
+}
+
+// addWhitelistedToolsOnly registers only the whitelisted tools as individual MCP tools
+func (s *Server) addWhitelistedToolsOnly() error {
+	for _, tool := range s.serverConfig.WhitelistedTools {
+		log.Printf("Adding whitelisted tool: %s (%s)", tool.Name, tool.Description)
+		
+		// Convert WhitelistedTool to Kubiya Tool format
+		kubiyaTool := kubiya.Tool{
+			Name:        tool.Name,
+			Source:      kubiya.ToolSource{ID: tool.Source.ID, URL: tool.Source.URL},
+			Description: tool.Description,
+			Args:        convertToolArgs(tool.Args),
+			Env:         tool.Env,
+			Content:     tool.Content,
+			FileName:    tool.FileName,
+			Secrets:     tool.Secrets,
+			IconURL:     tool.IconURL,
+			Type:        tool.Type,
+			Alias:       tool.Alias,
+			WithFiles:   tool.WithFiles,
+			WithVolumes: tool.WithVolumes,
+			LongRunning: tool.LongRunning,
+			Metadata:    tool.Metadata,
+			Mermaid:     tool.Mermaid,
+		}
+
+		// Create the tool handler that executes the whitelisted tool
+		handler := NewWhitelistedToolHandler(s.client, tool, kubiyaTool)
+		
+		// Register the tool as an individual MCP tool
+		if err := handler.Register(s.server); err != nil {
+			return fmt.Errorf("failed to register whitelisted tool %s: %w", tool.Name, err)
+		}
+	}
+	
+	return nil
+}
+
+// convertToolArgs converts MCP ToolArg to Kubiya ToolArg
+func convertToolArgs(mcpArgs []ToolArg) []kubiya.ToolArg {
+	args := make([]kubiya.ToolArg, len(mcpArgs))
+	for i, arg := range mcpArgs {
+		args[i] = kubiya.ToolArg{
+			Name:        arg.Name,
+			Type:        arg.Type,
+			Description: arg.Description,
+			Required:    arg.Required,
+			Default:     arg.Default,
+			Options:     arg.Options,
+			// OptionsFrom conversion would need proper mapping if needed
+		}
+	}
+	return args
 }

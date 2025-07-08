@@ -55,12 +55,10 @@ This command creates:
 					{
 						Name:        "kubectl",
 						Description: "Kubernetes command-line tool",
-						ToolName:    "kubectl",
 					},
 					{
 						Name:        "aws-cli",
 						Description: "AWS command-line interface",
-						ToolName:    "aws",
 					},
 				},
 			}
