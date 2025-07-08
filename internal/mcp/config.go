@@ -50,16 +50,55 @@ type RateLimitConfig struct {
 }
 
 // WhitelistedTool defines a preconfigured tool exposed via MCP
+// This now embeds the full Kubiya Tool definition with additional MCP-specific overrides
 type WhitelistedTool struct {
-	Name          string                            `json:"name" yaml:"name"`
-	Description   string                            `json:"description" yaml:"description"`
-	ToolName      string                            `json:"tool_name" yaml:"tool_name"`       // Kubiya tool name
-	Integrations  []string                          `json:"integrations" yaml:"integrations"` // Integration templates to apply
+	Name        string      `json:"name" yaml:"name"`
+	Source      ToolSource  `json:"source"`
+	Description string      `json:"description" yaml:"description"`
+	Args        []ToolArg   `json:"args" yaml:"args,omitempty"`
+	Env         []string    `json:"env" yaml:"env,omitempty"`
+	Content     string      `json:"content" yaml:"content,omitempty"`
+	FileName    string      `json:"file_name" yaml:"file_name,omitempty"`
+	Secrets     []string    `json:"secrets,omitempty"`
+	IconURL     string      `json:"icon_url,omitempty"`
+	Type        string      `json:"type,omitempty"`
+	Alias       string      `json:"alias,omitempty"`
+	WithFiles   interface{} `json:"with_files,omitempty"`   // Can be []string or map[string]interface{}
+	WithVolumes interface{} `json:"with_volumes,omitempty"` // Can be []string or map[string]interface{}
+	LongRunning bool        `json:"long_running,omitempty"`
+	Metadata    interface{} `json:"metadata,omitempty"` // Can be []string or other formats
+	Mermaid     string      `json:"mermaid,omitempty"`
+	Image       string      `json:"image,omitempty"`
+	
+	// MCP-specific overrides
+	Integrations  []string                          `json:"integrations,omitempty" yaml:"integrations,omitempty"` // Integration templates to apply
 	Parameters    map[string]interface{}            `json:"parameters,omitempty" yaml:"parameters,omitempty"`
 	DefaultConfig map[string]interface{}            `json:"default_config,omitempty" yaml:"default_config,omitempty"`
 	Arguments     map[string]map[string]interface{} `json:"arguments,omitempty" yaml:"arguments,omitempty"`
 	Runner        string                            `json:"runner,omitempty" yaml:"runner,omitempty"`
 	Timeout       int                               `json:"timeout,omitempty" yaml:"timeout,omitempty"` // in seconds
+}
+
+// ToolSource embedded struct for tool source information
+type ToolSource struct {
+	ID  string `json:"id"`
+	URL string `json:"url"`
+}
+
+// ToolArg embedded struct for tool arguments
+type ToolArg struct {
+	Name        string       `yaml:"name" json:"name"`
+	Type        string       `yaml:"type,omitempty" json:"type,omitempty"`
+	Description string       `yaml:"description" json:"description"`
+	Required    bool         `yaml:"required,omitempty" json:"required,omitempty"`
+	Default     string       `yaml:"default,omitempty" json:"default,omitempty"`
+	Options     []string     `yaml:"options,omitempty" json:"options,omitempty"`
+	OptionsFrom *OptionsFrom `yaml:"options_from,omitempty" json:"options_from,omitempty"`
+}
+
+// OptionsFrom struct for dynamic options
+type OptionsFrom struct {
+	// Add fields as needed for dynamic options
 }
 
 // ToolContext provides context information about tools
@@ -128,7 +167,6 @@ func LoadConfiguration(fs afero.Fs, configFile string, disablePlatformAPIsFlag b
 			config.WhitelistedTools = append(config.WhitelistedTools, WhitelistedTool{
 				Name:        toolName,
 				Description: fmt.Sprintf("Tool %s added via command line", toolName),
-				ToolName:    toolName,
 			})
 		}
 	}
@@ -203,7 +241,6 @@ func LoadProductionConfig(fs afero.Fs, configFile string, disablePlatformAPIsFla
 			config.WhitelistedTools = append(config.WhitelistedTools, WhitelistedTool{
 				Name:        toolName,
 				Description: fmt.Sprintf("Tool %s added via command line", toolName),
-				ToolName:    toolName,
 			})
 		}
 	}
