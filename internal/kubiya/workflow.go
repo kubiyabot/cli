@@ -229,7 +229,10 @@ func (wc *WorkflowClient) ExecuteWorkflow(ctx context.Context, req WorkflowExecu
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, executeURL, bytes.NewReader(body))
+	// Create a fresh context without timeout for streaming connections
+	// The original context might have a timeout that would interrupt the stream
+	streamingCtx := context.Background()
+	httpReq, err := http.NewRequestWithContext(streamingCtx, http.MethodPost, executeURL, bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -268,6 +271,13 @@ func (wc *WorkflowClient) ExecuteWorkflow(ctx context.Context, req WorkflowExecu
 		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 		
 		for scanner.Scan() {
+			// Check if original context was cancelled
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
+			
 			line := scanner.Text()
 
 			// Debug logging

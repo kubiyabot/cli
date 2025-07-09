@@ -372,7 +372,12 @@ func (rwc *RobustWorkflowClient) processWorkflowEvent(event WorkflowSSEEvent, st
 			Error:       event.Data,
 			Message:     fmt.Sprintf("Workflow execution error: %s", errorDetails),
 		}
-		// Don't return true here - let retry logic handle it
+		// Mark workflow as failed for context deadline exceeded errors
+		if strings.Contains(event.Data, "context deadline exceeded") {
+			rwc.stateManager.CompleteExecution(state, "failed")
+			return true
+		}
+		// For other errors, don't return true - let retry logic handle it
 
 	case "done":
 		// Check if workflow actually completed
@@ -446,7 +451,7 @@ func (rwc *RobustWorkflowClient) analyzeError(errorData string) string {
 	
 	// Parse common error patterns and provide helpful explanations
 	if strings.Contains(errorData, "context deadline exceeded") {
-		return "Connection timeout - workflow step took too long or connection was lost"
+		return "Connection timeout - workflow step took too long or connection was lost. This may indicate a step failure or network issue."
 	}
 	if strings.Contains(errorData, "RUNNER_CONFIG_ERROR") {
 		return "Runner configuration error - the specified runner may not exist or be unavailable"
