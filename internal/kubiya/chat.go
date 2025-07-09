@@ -12,10 +12,11 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 var logger *log.Logger
@@ -64,7 +65,7 @@ func getOrCreateSession(agentID string) *ChatSession {
 
 	session, exists := sessions[agentID]
 	if !exists {
-		sessionID := strconv.FormatInt(time.Now().UnixNano(), 10)
+		sessionID := uuid.New().String()
 		session = &ChatSession{
 			ID:       sessionID,
 			Messages: make([]ChatMessage, 0),
@@ -108,7 +109,7 @@ func (c *Client) SendMessage(ctx context.Context, agentID, message string, sessi
 		logger.Printf("Payload: %+v", payload)
 	}
 
-	reqURL := fmt.Sprintf("%s/api/v1/hb/v4/stream", c.baseURL)
+	reqURL := fmt.Sprintf("%s/hb/v4/stream", c.baseURL)
 	jsonData, err := json.Marshal(payload)
 	if err != nil {
 		if logger != nil {
