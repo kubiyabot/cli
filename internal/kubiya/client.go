@@ -37,6 +37,9 @@ type Client struct {
 
 // logAPICall logs all API calls to /tmp/klog.txt
 func logAPICall(method, url string, headers map[string]string, body []byte, responseStatus int, responseBody []byte) {
+	if os.Getenv("KUBIYA_DEBUG") != "true" {
+		return // Only log if KUBIYA_DEBUG is set to true
+	}
 	f, err := os.OpenFile("/tmp/klog.txt", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		return // Silently fail if we can't log
