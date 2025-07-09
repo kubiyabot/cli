@@ -65,6 +65,12 @@ func (rwc *RobustWorkflowClient) ExecuteWorkflowRobust(ctx context.Context, req 
 			State:       state,
 			Message:     fmt.Sprintf("Starting workflow execution: %s", state.WorkflowName),
 		}
+		
+		// Debug logging for initial state
+		if rwc.debug {
+			fmt.Printf("[DEBUG] Initial state created: ExecutionID=%s, TotalSteps=%d, CompletedSteps=%d\n", 
+				state.ExecutionID, state.TotalSteps, state.CompletedSteps)
+		}
 
 		// Start robust execution with retries
 		rwc.executeWithRetries(ctx, state, events)
@@ -275,6 +281,11 @@ func (rwc *RobustWorkflowClient) processWorkflowEvent(event WorkflowSSEEvent, st
 		// Try to parse as JSON for structured output
 		var jsonData map[string]interface{}
 		if err := json.Unmarshal([]byte(event.Data), &jsonData); err == nil {
+			// Debug logging for all JSON events
+			if rwc.debug {
+				fmt.Printf("[DEBUG] Processing JSON event: %s\n", event.Data)
+			}
+			
 			// Handle different event types from the API
 			if eventType, ok := jsonData["type"].(string); ok {
 				switch eventType {
@@ -290,6 +301,14 @@ func (rwc *RobustWorkflowClient) processWorkflowEvent(event WorkflowSSEEvent, st
 								StepStatus:  "running",
 								State:       state,
 								Message:     fmt.Sprintf("Step started: %s", stepName),
+							}
+
+							// Send a state update to ensure progress tracking is shown when step starts
+							events <- RobustWorkflowEvent{
+								Type:        "state",
+								ExecutionID: state.ExecutionID,
+								State:       state,
+								Message:     fmt.Sprintf("Running step %d/%d: %s", state.CompletedSteps+1, state.TotalSteps, stepName),
 							}
 						}
 					}
@@ -308,21 +327,46 @@ func (rwc *RobustWorkflowClient) processWorkflowEvent(event WorkflowSSEEvent, st
 							status = stat
 						}
 
-						// Update state
-						if status == "finished" {
+						// Debug logging for step completion
+						if rwc.debug {
+							fmt.Printf("[DEBUG] Step completion event: name=%s, status=%s, hasOutput=%t\n", stepName, status, output != "")
+						}
+
+						// Update state - handle both "finished" and "completed" status
+						if status == "finished" || status == "completed" {
 							rwc.stateManager.UpdateStepStatus(state, stepName, "completed", output, "")
 						} else if status == "failed" {
 							rwc.stateManager.UpdateStepStatus(state, stepName, "failed", output, "step execution failed")
+						} else {
+							// Handle unknown status
+							if rwc.debug {
+								fmt.Printf("[DEBUG] Unknown step status: %s for step %s\n", status, stepName)
+							}
+							rwc.stateManager.UpdateStepStatus(state, stepName, status, output, "")
+						}
+
+						// Map status for display - show "completed" for both "finished" and "completed" 
+						displayStatus := status
+						if status == "finished" {
+							displayStatus = "completed"
 						}
 
 						events <- RobustWorkflowEvent{
 							Type:        "step",
 							ExecutionID: state.ExecutionID,
 							StepName:    stepName,
-							StepStatus:  status,
+							StepStatus:  displayStatus,
 							Data:        output,
 							State:       state,
 							Message:     fmt.Sprintf("Step completed: %s", stepName),
+						}
+
+						// Send an additional state update to ensure progress tracking is updated
+						events <- RobustWorkflowEvent{
+							Type:        "state",
+							ExecutionID: state.ExecutionID,
+							State:       state,
+							Message:     fmt.Sprintf("Progress update: %d/%d steps completed", state.CompletedSteps, state.TotalSteps),
 						}
 					}
 

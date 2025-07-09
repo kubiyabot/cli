@@ -67,6 +67,19 @@ func newChatCommand(cfg *config.Config) *cobra.Command {
 		sourceUUID   string
 		sourceName   string
 		suggestTool  string
+		
+		// Inline agent flags
+		inline          bool
+		toolsFile       string
+		toolsJSON       string
+		aiInstructions  string
+		description     string
+		runners         []string
+		integrations    []string
+		secrets         []string
+		envVars         []string
+		llmModel        string
+		isDebugMode     bool
 	)
 
 	// Helper function to fetch content from URL
@@ -133,13 +146,60 @@ func newChatCommand(cfg *config.Config) *cobra.Command {
 		return context, nil
 	}
 
+	// Helper function to parse tools from JSON
+	parseTools := func(toolsJSON string) ([]kubiya.Tool, error) {
+		var tools []kubiya.Tool
+		if err := json.Unmarshal([]byte(toolsJSON), &tools); err != nil {
+			return nil, fmt.Errorf("failed to parse tools JSON: %w", err)
+		}
+		return tools, nil
+	}
+
+	// Helper function to validate tool definition
+	validateTool := func(tool kubiya.Tool) error {
+		if tool.Name == "" {
+			return fmt.Errorf("tool name is required")
+		}
+		if tool.Description == "" {
+			return fmt.Errorf("tool description is required")
+		}
+		if tool.Content == "" {
+			return fmt.Errorf("tool content is required")
+		}
+		// Validate required args
+		for _, arg := range tool.Args {
+			if arg.Name == "" {
+				return fmt.Errorf("tool arg name is required")
+			}
+			if arg.Description == "" {
+				return fmt.Errorf("tool arg description is required for arg: %s", arg.Name)
+			}
+		}
+		return nil
+	}
+
+	// Helper function to parse environment variables
+	parseEnvVars := func(envVars []string) (map[string]string, error) {
+		envMap := make(map[string]string)
+		for _, env := range envVars {
+			parts := strings.SplitN(env, "=", 2)
+			if len(parts) != 2 {
+				return nil, fmt.Errorf("invalid environment variable format: %s (expected KEY=VALUE)", env)
+			}
+			envMap[parts[0]] = parts[1]
+		}
+		return envMap, nil
+	}
+
 	cmd := &cobra.Command{
 		Use:   "chat",
 		Short: "💬 Chat with a agent",
 		Long: `Start a chat session with a Kubiya agent.
 You can either use interactive mode, specify a message directly, or pipe input from stdin.
 Use --context to include additional files for context (supports wildcards and URLs).
-The command will automatically select the most appropriate agent unless one is specified.`,
+The command will automatically select the most appropriate agent unless one is specified.
+
+For inline agents, use --inline with --tools-file or --tools-json to provide custom tools.`,
 		Example: `  # Interactive chat mode
   kubiya chat --interactive
 
@@ -160,13 +220,47 @@ The command will automatically select the most appropriate agent unless one is s
   cat error.log | kubiya chat -n "debug" --stdin --context "config/*.yaml"
 
   # Auto-classify the most appropriate agent
-  kubiya chat -m "Help me with Kubernetes deployment issues"`,
+  kubiya chat -m "Help me with Kubernetes deployment issues"
+
+  # Inline agent with tools from file
+  kubiya chat --inline --tools-file tools.json --ai-instructions "You are a helpful assistant" \
+    --description "Custom inline agent" --runners "kubiya-prod" -m "kubectl get pods"
+
+  # Inline agent with tools from JSON string
+  kubiya chat --inline --tools-json '[{"name":"echo","description":"Echo tool","content":"echo hello"}]' \
+    --llm-model "azure/gpt-4-32k" --debug-mode -m "Run echo command"
+
+  # Inline agent with environment variables and secrets
+  kubiya chat --inline --tools-file tools.json --env-vars "ENV1=value1" --env-vars "ENV2=value2" \
+    --secrets "SECRET1" --integrations "jira" -m "Use the tools"`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg.Debug = cfg.Debug || debug
 
 			if interactive {
 				chatUI := tui.NewChatUI(cfg)
 				return chatUI.Run()
+			}
+
+			// Handle inline agent validation
+			if inline {
+				if agentID != "" || agentName != "" {
+					return fmt.Errorf("cannot use --inline with --agent or --name")
+				}
+				if toolsFile == "" && toolsJSON == "" {
+					return fmt.Errorf("--inline requires either --tools-file or --tools-json")
+				}
+				if toolsFile != "" && toolsJSON != "" {
+					return fmt.Errorf("cannot use both --tools-file and --tools-json")
+				}
+				if description == "" {
+					description = "Inline agent"
+				}
+				if len(runners) == 0 {
+					runners = []string{"kubiya-prod"}
+				}
+				if llmModel == "" {
+					llmModel = "azure/gpt-4-32k"
+				}
 			}
 
 			// Session storage file path
@@ -224,6 +318,83 @@ The command will automatically select the most appropriate agent unless one is s
 
 			// Setup client
 			client := kubiya.NewClient(cfg)
+
+			// Handle inline agent
+			if inline {
+				var tools []kubiya.Tool
+				
+				// Parse tools from file or JSON
+				if toolsFile != "" {
+					if debug {
+						fmt.Printf("🔍 Loading tools from file: %s\n", toolsFile)
+					}
+					
+					toolsData, err := os.ReadFile(toolsFile)
+					if err != nil {
+						return fmt.Errorf("failed to read tools file: %w", err)
+					}
+					
+					tools, err = parseTools(string(toolsData))
+					if err != nil {
+						return fmt.Errorf("failed to parse tools from file: %w", err)
+					}
+				} else if toolsJSON != "" {
+					if debug {
+						fmt.Printf("🔍 Parsing tools from JSON string\n")
+					}
+					
+					tools, err = parseTools(toolsJSON)
+					if err != nil {
+						return fmt.Errorf("failed to parse tools from JSON: %w", err)
+					}
+				}
+				
+				// Validate tools
+				for i, tool := range tools {
+					if err := validateTool(tool); err != nil {
+						return fmt.Errorf("tool validation failed for tool %d (%s): %w", i, tool.Name, err)
+					}
+				}
+				
+				// Parse environment variables
+				envVarsMap, err := parseEnvVars(envVars)
+				if err != nil {
+					return fmt.Errorf("failed to parse environment variables: %w", err)
+				}
+				
+				if debug {
+					fmt.Printf("🤖 Creating inline agent with %d tools\n", len(tools))
+					fmt.Printf("📋 Tools: %v\n", func() []string {
+						names := make([]string, len(tools))
+						for i, t := range tools {
+							names[i] = t.Name
+						}
+						return names
+					}())
+				}
+				
+				// Create inline agent request - modify the message handling to use inline agent
+				return client.SendInlineAgentMessage(cmd.Context(), message, sessionID, context, map[string]interface{}{
+					"name":                "inline",
+					"description":         description,
+					"ai_instructions":     aiInstructions,
+					"tools":               tools,
+					"runners":             runners,
+					"integrations":        integrations,
+					"secrets":             secrets,
+					"environment_variables": envVarsMap,
+					"llm_model":           llmModel,
+					"is_debug_mode":       isDebugMode,
+					"owners":              []string{},
+					"allowed_users":       []string{},
+					"allowed_groups":      []string{},
+					"starters":            []interface{}{},
+					"tasks":               []string{},
+					"sources":             []string{},
+					"links":               []string{},
+					"uuid":                nil,
+				})
+			}
 
 			// Auto-classify by default unless agent is explicitly specified or --no-classify is set
 			shouldClassify := agentID == "" && agentName == "" && !noClassify
@@ -422,18 +593,25 @@ The command will automatically select the most appropriate agent unless one is s
 								}
 								toolExecutions[msg.MessageID] = te
 
-								// Print tool header with enhanced formatting
-								fmt.Printf("\n%s\n", style.ToolHeaderStyle.Render(fmt.Sprintf("┌─ 🔧 Running %s ", toolName)))
+								// Enhanced tool execution header with better UX
+								fmt.Printf("\n%s\n", style.InfoBoxStyle.Render(
+									fmt.Sprintf("🚀 %s %s", 
+										style.ToolNameStyle.Render("EXECUTING"), 
+										style.HighlightStyle.Render(toolName))))
+								
 								if toolArgs != "" {
 									prettyArgs := toolArgs
 									if json.Valid([]byte(toolArgs)) {
 										var prettyJSON bytes.Buffer
-										json.Indent(&prettyJSON, []byte(toolArgs), "    ", "  ")
+										json.Indent(&prettyJSON, []byte(toolArgs), "  ", "  ")
 										prettyArgs = prettyJSON.String()
 									}
-									fmt.Printf("%s\n", style.ToolArgsStyle.Render(fmt.Sprintf("└─ Args: %s", prettyArgs)))
+									fmt.Printf("%s\n", style.ToolArgsStyle.Render(fmt.Sprintf("📋 Parameters: %s", prettyArgs)))
 								}
-								fmt.Println()
+								
+								// Show waiting indicator
+								fmt.Printf("%s\n", style.SpinnerStyle.Render("⏳ Waiting for tool output..."))
+								fmt.Printf("%s\n", style.ToolDividerStyle.Render(strings.Repeat("─", 50)))
 							}
 						}
 					}
@@ -662,6 +840,19 @@ The command will automatically select the most appropriate agent unless one is s
 	cmd.Flags().StringVar(&sourceName, "source-name", "", "Source name")
 	cmd.Flags().StringVar(&suggestTool, "suggest-tool", "", "Suggest a tool to use")
 	cmd.Flags().BoolVar(&noClassify, "no-classify", false, "Disable automatic agent classification")
+	
+	// Inline agent flags
+	cmd.Flags().BoolVar(&inline, "inline", false, "Use inline agent mode")
+	cmd.Flags().StringVar(&toolsFile, "tools-file", "", "JSON file containing tools definition")
+	cmd.Flags().StringVar(&toolsJSON, "tools-json", "", "JSON string containing tools definition")
+	cmd.Flags().StringVar(&aiInstructions, "ai-instructions", "", "AI instructions for the inline agent")
+	cmd.Flags().StringVar(&description, "description", "", "Description for the inline agent")
+	cmd.Flags().StringArrayVar(&runners, "runners", []string{}, "Runners for the inline agent")
+	cmd.Flags().StringArrayVar(&integrations, "integrations", []string{}, "Integrations for the inline agent")
+	cmd.Flags().StringArrayVar(&secrets, "secrets", []string{}, "Secrets for the inline agent")
+	cmd.Flags().StringArrayVar(&envVars, "env-vars", []string{}, "Environment variables for the inline agent (KEY=VALUE format)")
+	cmd.Flags().StringVar(&llmModel, "llm-model", "", "LLM model for the inline agent")
+	cmd.Flags().BoolVar(&isDebugMode, "debug-mode", false, "Enable debug mode for the inline agent")
 
 	return cmd
 }

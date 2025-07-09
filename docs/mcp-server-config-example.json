@@ -4,8 +4,13 @@
   "description": "Configuration for Kubiya MCP Server with whitelisted tools and integrations",
   "server_name": "kubiya-mcp",
   "server_version": "1.0.0",
-  "whitelisted_tools": {
-    "k8s_get_pods": {
+  "enable_runners": true,
+  "allow_platform_apis": false,
+  "enable_opa_policies": false,
+  "allow_dynamic_tools": false,
+  "verbose_logging": true,
+  "whitelisted_tools": [
+    {
       "name": "k8s_get_pods",
       "description": "Get Kubernetes pods across all namespaces",
       "runner": "kubiya-hosted",
@@ -37,7 +42,7 @@
         }
       }
     },
-    "k8s_resource_usage": {
+    {
       "name": "k8s_resource_usage",
       "description": "Show Kubernetes node and pod resource usage",
       "runner": "kubiya-hosted",
@@ -58,7 +63,7 @@
         ]
       }
     },
-    "aws_s3_list": {
+    {
       "name": "aws_s3_list",
       "description": "List S3 buckets or bucket contents",
       "runner": "auto",
@@ -94,7 +99,7 @@
         }
       }
     },
-    "aws_ec2_describe": {
+    {
       "name": "aws_ec2_describe",
       "description": "Describe EC2 instances with filtering options",
       "runner": "auto",
@@ -132,7 +137,7 @@
         }
       }
     },
-    "docker_ps": {
+    {
       "name": "docker_ps",
       "description": "List Docker containers",
       "runner": "auto",
@@ -157,7 +162,7 @@
         }
       }
     },
-    "gcp_list_instances": {
+    {
       "name": "gcp_list_instances",
       "description": "List Google Cloud compute instances",
       "runner": "auto",
@@ -184,7 +189,7 @@
         }
       }
     },
-    "database_query": {
+    {
       "name": "database_query",
       "description": "Execute PostgreSQL queries",
       "runner": "auto",
@@ -216,7 +221,7 @@
         }
       }
     },
-    "ssh_remote_exec": {
+    {
       "name": "ssh_remote_exec",
       "description": "Execute commands on remote servers via SSH",
       "runner": "auto",
@@ -254,7 +259,7 @@
         }
       }
     }
-  },
+  ],
   "tool_contexts": {
     "k8s_get_pods": [
       "Use this to check the status of Kubernetes pods",
