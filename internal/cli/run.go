@@ -75,7 +75,7 @@ func newRunCommand(cfg *config.Config) *cobra.Command {
 				if strings.HasSuffix(baseURL, "/api/v1") {
 					baseURL = strings.TrimSuffix(baseURL, "/api/v1")
 				}
-				classifyURL := fmt.Sprintf("%s/api/v1/http-bridge/v1/classify/agent", baseURL)
+				classifyURL := fmt.Sprintf("%s/http-bridge/v1/classify/agent", baseURL)
 				req, err := http.NewRequestWithContext(cmd.Context(), http.MethodPost, classifyURL, bytes.NewBuffer(reqJSON))
 				if err != nil {
 					return fmt.Errorf("failed to create classification request: %w", err)
