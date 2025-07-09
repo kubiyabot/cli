@@ -430,3 +430,236 @@ func (c *Client) GetConversationMessages(ctx context.Context, agentID, message, 
 	}
 	return ret, nil
 }
+
+// SendInlineAgentMessage sends a message to an inline agent with custom tools
+func (c *Client) SendInlineAgentMessage(ctx context.Context, message, sessionID string, context map[string]string, agentDef map[string]interface{}) error {
+	messagesChan := make(chan ChatMessage, 100)
+	
+	// Add context to the message if provided
+	var contextMsg strings.Builder
+	contextMsg.WriteString(message)
+	if len(context) > 0 {
+		contextMsg.WriteString("\n\nHere's some reference files for context:\n")
+		for filename, content := range context {
+			contextMsg.WriteString("\n")
+			contextMsg.WriteString(filename)
+			contextMsg.WriteString(":\n")
+			contextMsg.WriteString(content)
+			contextMsg.WriteString("\n")
+		}
+	}
+
+	// Generate unique user UUID and session ID if not provided
+	if sessionID == "" {
+		sessionID = uuid.New().String()
+	}
+	
+	payload := struct {
+		Message   string                 `json:"message"`
+		SessionID string                 `json:"session_id"`
+		UserUUID  string                 `json:"user_uuid"`
+		UserEmail string                 `json:"user_email"`
+		Org       string                 `json:"org"`
+		Agent     map[string]interface{} `json:"agent"`
+	}{
+		Message:   contextMsg.String(),
+		SessionID: sessionID,
+		UserUUID:  uuid.New().String(),
+		UserEmail: os.Getenv("KUBIYA_USER_EMAIL"),
+		Org:       os.Getenv("KUBIYA_ORG"),
+		Agent:     agentDef,
+	}
+
+	// Safety check for logger
+	if logger != nil {
+		logger.Printf("=== Starting SendInlineAgentMessage ===")
+		logger.Printf("Payload: %+v", payload)
+	}
+
+	reqURL := fmt.Sprintf("%s/hb/v4/chat", c.baseURL)
+	jsonData, err := json.Marshal(payload)
+	if err != nil {
+		if logger != nil {
+			logger.Printf("Error marshalling payload: %v", err)
+		}
+		return fmt.Errorf("failed to marshal payload: %w", err)
+	}
+
+	req, err := http.NewRequest("POST", reqURL, bytes.NewBuffer(jsonData))
+	if err != nil {
+		if logger != nil {
+			logger.Printf("Error creating request: %v", err)
+		}
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("x-vercel-ai-data-stream", "v1") // protocol flag
+	req.Header.Set("Authorization", "UserKey "+c.cfg.APIKey)
+	req.Header.Set("Cache-Control", "no-cache")
+	req.Header.Set("Connection", "keep-alive")
+
+	client := &http.Client{Timeout: 0}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		if logger != nil {
+			logger.Printf("Error executing request: %v", err)
+		}
+		return fmt.Errorf("failed to execute request: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if logger != nil {
+			logger.Printf("Unexpected status code: %d, body: %s", resp.StatusCode, string(body))
+		}
+		return fmt.Errorf("unexpected status code: %d, body: %s", resp.StatusCode, string(body))
+	}
+
+	// Handle the streaming response similar to SendMessage
+	go func() {
+		defer resp.Body.Close()
+		defer close(messagesChan)
+
+		scanner := bufio.NewScanner(resp.Body)
+		var textBuilder strings.Builder
+		lineCount := 0
+
+		for scanner.Scan() {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
+
+			lineCount++
+			line := scanner.Text()
+
+			if logger != nil {
+				logger.Printf("Processing line %d: %s", lineCount, line)
+			}
+
+			// Process Vercel AI data-stream protocol
+			if len(line) < 3 || line[1] != ':' {
+				if logger != nil {
+					logger.Printf("Malformed line detected: %s", line)
+				}
+				continue
+			}
+
+			typ := line[0]
+			payload := line[2:]
+
+			switch typ {
+			case '0': // partText
+				var text string
+				if err := json.Unmarshal([]byte(payload), &text); err != nil {
+					if logger != nil {
+						logger.Printf("Failed to unmarshal text part: %v", err)
+					}
+					continue
+				}
+				textBuilder.WriteString(text)
+				
+				// Print the text as it comes
+				fmt.Print(text)
+
+			case '2': // partData
+				var data []interface{}
+				if err := json.Unmarshal([]byte(payload), &data); err != nil {
+					if logger != nil {
+						logger.Printf("Failed to unmarshal data part: %v", err)
+					}
+					continue
+				}
+				// Process data parts if needed
+
+			case '3': // partError
+				var errMsg string
+				if err := json.Unmarshal([]byte(payload), &errMsg); err != nil {
+					if logger != nil {
+						logger.Printf("Failed to unmarshal error part: %v", err)
+					}
+					continue
+				}
+				fmt.Printf("\n❌ Error: %s\n", errMsg)
+
+			case 'd': // partFinishMessage
+				fmt.Println("\n")
+				return
+
+			case 'g': // partReasoning
+				var reasoning string
+				if err := json.Unmarshal([]byte(payload), &reasoning); err != nil {
+					if logger != nil {
+						logger.Printf("Failed to unmarshal reasoning part: %v", err)
+					}
+					continue
+				}
+				// Process reasoning if needed
+
+			case '9': // partToolCall
+				var toolCall map[string]interface{}
+				if err := json.Unmarshal([]byte(payload), &toolCall); err != nil {
+					if logger != nil {
+						logger.Printf("Failed to unmarshal tool call part: %v", err)
+					}
+					continue
+				}
+				// Display tool call
+				if toolName, ok := toolCall["toolName"].(string); ok {
+					var argsStr string
+					if args, ok := toolCall["args"].(map[string]interface{}); ok {
+						if argsBytes, err := json.Marshal(args); err == nil {
+							argsStr = string(argsBytes)
+						}
+					}
+					fmt.Printf("\n🚀 EXECUTING %s\n", toolName)
+					if argsStr != "" {
+						fmt.Printf("📋 Parameters: %s\n", argsStr)
+					}
+					fmt.Printf("⏳ Waiting for tool output...\n")
+					fmt.Printf("%s\n", strings.Repeat("─", 50))
+				}
+
+			case 'a': // partToolResult
+				var toolResult map[string]interface{}
+				if err := json.Unmarshal([]byte(payload), &toolResult); err != nil {
+					if logger != nil {
+						logger.Printf("Failed to unmarshal tool result part: %v", err)
+					}
+					continue
+				}
+				// Display tool result
+				var resultStr string
+				if result, ok := toolResult["result"]; ok {
+					if resultBytes, err := json.Marshal(result); err == nil {
+						resultStr = string(resultBytes)
+					}
+				}
+				fmt.Printf("│ %s\n", resultStr)
+
+			default:
+				if logger != nil {
+					logger.Printf("Unknown stream part type: %c", typ)
+				}
+			}
+		}
+
+		if err := scanner.Err(); err != nil && err != io.EOF {
+			if logger != nil {
+				logger.Printf("Scanner error: %v", err)
+			}
+			fmt.Printf("\n❌ Stream error: %v\n", err)
+		}
+	}()
+
+	// Wait for the streaming to complete
+	for range messagesChan {
+		// Just consume the messages
+	}
+
+	return nil
+}

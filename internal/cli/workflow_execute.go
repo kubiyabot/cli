@@ -90,6 +90,18 @@ You can provide variables and choose the runner for execution.`,
 			} else {
 				return fmt.Errorf("failed to parse workflow file")
 			}
+			
+			// Debug logging for workflow parsing
+			if cfg.Debug || verbose {
+				fmt.Printf("[DEBUG] Parsed workflow: Name=%s, Steps=%d\n", req.Name, len(req.Steps))
+				for i, step := range req.Steps {
+					if stepMap, ok := step.(map[string]interface{}); ok {
+						if name, ok := stepMap["name"].(string); ok {
+							fmt.Printf("[DEBUG] Step %d: %s\n", i+1, name)
+						}
+					}
+				}
+			}
 
 			// Show format detection info if helpful
 			if format != "" {
@@ -261,10 +273,20 @@ You can provide variables and choose the runner for execution.`,
 						fmt.Printf("%s Execution ID: %s\n", 
 							style.DimStyle.Render("🆔"), 
 							executionID)
-						fmt.Printf("%s Progress: %d/%d steps completed\n\n", 
-							style.DimStyle.Render("📊"), 
-							event.State.CompletedSteps, 
-							event.State.TotalSteps)
+						
+						// Enhanced progress display with progress bar
+						progressBar := generateProgressBar(event.State.CompletedSteps, event.State.TotalSteps)
+						fmt.Printf("%s %s %s\n\n", 
+							style.InfoStyle.Render("📊"),
+							progressBar,
+							style.HighlightStyle.Render(fmt.Sprintf("%d/%d steps completed", 
+								event.State.CompletedSteps, event.State.TotalSteps)))
+						
+						// Debug logging for state updates
+						if verbose {
+							fmt.Printf("[VERBOSE] State update: Status=%s, CompletedSteps=%d, TotalSteps=%d\n", 
+								event.State.Status, event.State.CompletedSteps, event.State.TotalSteps)
+						}
 					}
 					
 				case "step":
@@ -277,11 +299,15 @@ You can provide variables and choose the runner for execution.`,
 							progress := fmt.Sprintf("[%d/%d]", event.State.CompletedSteps+1, event.State.TotalSteps)
 							fmt.Printf("%s %s %s\n", 
 								style.BulletStyle.Render("▶️"), 
-								style.DimStyle.Render(progress),
+								style.InfoStyle.Render(progress),
+								style.ToolNameStyle.Render(event.StepName))
+						} else {
+							fmt.Printf("%s %s\n", 
+								style.BulletStyle.Render("▶️"), 
 								style.ToolNameStyle.Render(event.StepName))
 						}
 						
-						fmt.Printf("  %s Running...\n", style.DimStyle.Render("⏳"))
+						fmt.Printf("  %s Running...\n", style.StatusStyle.Render("⏳"))
 						
 					} else if event.StepStatus == "completed" || event.StepStatus == "finished" {
 						// Calculate step duration
@@ -306,12 +332,22 @@ You can provide variables and choose the runner for execution.`,
 						}
 						
 						if duration > 0 {
-							fmt.Printf("  %s Step completed in %v\n\n", 
+							fmt.Printf("  %s Step completed in %v\n", 
 								style.SuccessStyle.Render("✅"), 
 								duration.Round(time.Millisecond))
 						} else {
-							fmt.Printf("  %s Step completed\n\n", 
+							fmt.Printf("  %s Step completed\n", 
 								style.SuccessStyle.Render("✅"))
+						}
+						
+						// Show updated progress after step completion (always show, not just verbose)
+						if event.State != nil {
+							progressBar := generateProgressBar(event.State.CompletedSteps, event.State.TotalSteps)
+							fmt.Printf("  %s %s %s\n\n", 
+								style.SuccessStyle.Render("📊"),
+								progressBar,
+								style.HighlightStyle.Render(fmt.Sprintf("%d/%d steps completed", 
+									event.State.CompletedSteps, event.State.TotalSteps)))
 						}
 						
 					} else if event.StepStatus == "failed" {
@@ -323,12 +359,22 @@ You can provide variables and choose the runner for execution.`,
 						}
 						
 						if duration > 0 {
-							fmt.Printf("  %s Step failed after %v\n\n", 
+							fmt.Printf("  %s Step failed after %v\n", 
 								style.ErrorStyle.Render("❌"), 
 								duration.Round(time.Millisecond))
 						} else {
-							fmt.Printf("  %s Step failed\n\n", 
+							fmt.Printf("  %s Step failed\n", 
 								style.ErrorStyle.Render("❌"))
+						}
+						
+						// Show progress even for failed steps
+						if event.State != nil {
+							progressBar := generateProgressBar(event.State.CompletedSteps, event.State.TotalSteps)
+							fmt.Printf("  %s %s %s\n\n", 
+								style.ErrorStyle.Render("📊"),
+								progressBar,
+								style.HighlightStyle.Render(fmt.Sprintf("%d/%d steps completed", 
+									event.State.CompletedSteps, event.State.TotalSteps)))
 						}
 						hasError = true
 					}
@@ -373,10 +419,14 @@ You can provide variables and choose the runner for execution.`,
 						fmt.Printf("%s Total duration: %v\n", 
 							style.DimStyle.Render("⏱️"), 
 							totalDuration.Round(time.Millisecond))
-						fmt.Printf("%s Steps completed: %d/%d\n", 
-							style.DimStyle.Render("📊"), 
-							event.State.CompletedSteps, 
-							event.State.TotalSteps)
+						
+						// Final progress display
+						progressBar := generateProgressBar(event.State.CompletedSteps, event.State.TotalSteps)
+						fmt.Printf("%s %s %s\n", 
+							style.SuccessStyle.Render("📊"),
+							progressBar,
+							style.HighlightStyle.Render(fmt.Sprintf("%d/%d steps completed", 
+								event.State.CompletedSteps, event.State.TotalSteps)))
 						
 						if event.State.RetryCount > 0 {
 							fmt.Printf("%s Connection retries: %d\n", 
@@ -541,4 +591,26 @@ func buildExecutionRequest(workflow Workflow, vars map[string]interface{}, runne
 		Steps:       steps,
 		Params:   vars,
 	}
+}
+
+// generateProgressBar creates a visual progress bar for workflow execution
+func generateProgressBar(completed, total int) string {
+	if total == 0 {
+		return "[-]"
+	}
+	
+	barLength := 20
+	completedLength := (completed * barLength) / total
+	
+	bar := "["
+	for i := 0; i < barLength; i++ {
+		if i < completedLength {
+			bar += "█"
+		} else {
+			bar += "░"
+		}
+	}
+	bar += "]"
+	
+	return bar
 }

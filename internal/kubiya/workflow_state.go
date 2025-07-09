@@ -182,6 +182,9 @@ func (wsm *WorkflowStateManager) UpdateStepStatus(state *WorkflowExecutionState,
 				step.EndTime = &now
 				if status == "completed" {
 					state.CompletedSteps++
+					if wsm.debug {
+						fmt.Printf("[DEBUG] Step '%s' completed. Progress: %d/%d\n", stepName, state.CompletedSteps, state.TotalSteps)
+					}
 				}
 				if stepName == state.CurrentStep {
 					state.CurrentStep = ""
