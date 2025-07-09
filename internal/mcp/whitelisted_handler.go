@@ -44,7 +44,7 @@ func (s *Server) executeWhitelistedToolHandler(ctx context.Context, request mcp.
 		"description": whitelistedTool.Description,
 		"args":        toolArgs,
 	}
-	
+
 	if integrationTemplate != "" {
 		toolDef["integration_template"] = integrationTemplate
 	}
@@ -82,7 +82,10 @@ func (s *Server) executeWhitelistedToolHandler(ctx context.Context, request mcp.
 
 	// Execute with timeout (5 minutes)
 	timeout := 300 * time.Second
-	eventChan, err := s.client.ExecuteToolWithTimeout(ctx, whitelistedTool.Name, toolDef, runner, timeout)
+
+	argVals := make(map[string]any) // to get argument values
+
+	eventChan, err := s.client.ExecuteToolWithTimeout(ctx, whitelistedTool.Name, toolDef, runner, timeout, argVals)
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("Failed to execute whitelisted tool: %v", err)), nil
 	}
@@ -108,9 +111,9 @@ func (s *Server) executeWhitelistedToolHandler(ctx context.Context, request mcp.
 
 // WhitelistedToolHandler handles individual whitelisted tools as MCP tools
 type WhitelistedToolHandler struct {
-	client       *kubiya.Client
-	tool         WhitelistedTool
-	kubiyaTool   kubiya.Tool
+	client     *kubiya.Client
+	tool       WhitelistedTool
+	kubiyaTool kubiya.Tool
 }
 
 // NewWhitelistedToolHandler creates a new handler for a whitelisted tool
@@ -127,7 +130,7 @@ func (h *WhitelistedToolHandler) Register(server *server.MCPServer) error {
 	// Build MCP tool options
 	var opts []mcp.ToolOption
 	opts = append(opts, mcp.WithDescription(h.tool.Description))
-	
+
 	// Add arguments to the MCP tool
 	for _, arg := range h.tool.Args {
 		switch arg.Type {
@@ -173,62 +176,60 @@ func (h *WhitelistedToolHandler) Register(server *server.MCPServer) error {
 
 	// Register the tool with the handler
 	server.AddTool(mcp.NewTool(h.tool.Name, opts...), h.handleToolCall)
-	
+
 	return nil
 }
 
 // handleToolCall handles the actual execution of the whitelisted tool
 func (h *WhitelistedToolHandler) handleToolCall(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	// Convert MCP arguments to Kubiya tool execution format
-	args := request.Params.Arguments
-	
 	// Determine the runner to use (from tool config or default)
 	runner := h.tool.Runner
 	if runner == "" {
 		runner = "default"
 	}
-	
+
 	// Build tool definition for execution
 	toolDef := map[string]interface{}{
-		"name":        h.tool.Name,
-		"description": h.tool.Description,
-		"type":        h.tool.Type,
-		"content":     h.tool.Content,
-		"args":        args,
-		"env":         h.tool.Env,
-		"secrets":     h.tool.Secrets,
-		"with_files":  h.tool.WithFiles,
+		"name":         h.tool.Name,
+		"description":  h.tool.Description,
+		"type":         h.tool.Type,
+		"content":      h.tool.Content,
+		"args":         h.tool.Args,
+		"env":          h.tool.Env,
+		"secrets":      h.tool.Secrets,
+		"with_files":   h.tool.WithFiles,
 		"with_volumes": h.tool.WithVolumes,
 		"long_running": h.tool.LongRunning,
-		"metadata":    h.tool.Metadata,
+		"metadata":     h.tool.Metadata,
 	}
-	
+
 	// Add image if specified
 	if h.tool.Image != "" {
 		toolDef["image"] = h.tool.Image
 	}
-	
+
 	// Add integration template if specified
 	if len(h.tool.Integrations) > 0 {
 		toolDef["integration_template"] = h.tool.Integrations[0] // Use first integration
 	}
-	
+
 	// Determine timeout
 	timeout := time.Duration(h.tool.Timeout) * time.Second
 	if timeout == 0 {
 		timeout = 10 * time.Minute // Default timeout
 	}
-	
+
 	// Execute the tool using the client
-	result, err := h.client.ExecuteToolWithTimeout(ctx, h.tool.Name, toolDef, runner, timeout)
+	result, err := h.client.ExecuteToolWithTimeout(ctx, h.tool.Name, toolDef, runner, timeout, request.Params.Arguments)
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("Tool execution failed: %s", err.Error())), nil
 	}
-	
+
 	// Format the result output
 	output := strings.Builder{}
 	output.WriteString(fmt.Sprintf("🔧 Executed tool: %s\n\n", h.tool.Name))
-	
+
 	// Process streaming events
 	for event := range result {
 		switch event.Type {
@@ -270,6 +271,6 @@ func (h *WhitelistedToolHandler) handleToolCall(ctx context.Context, request mcp
 			output.WriteString(fmt.Sprintf("📝 %s: %s\n", event.Type, event.Data))
 		}
 	}
-	
+
 	return mcp.NewToolResultText(output.String()), nil
 }

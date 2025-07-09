@@ -151,9 +151,9 @@ func (s *Server) createIntegrationHandler(ctx context.Context, request mcp.CallT
 		}
 
 		result := map[string]interface{}{
-			"type":           integrationType,
-			"name":           name,
-			"config":         config,
+			"type":             integrationType,
+			"name":             name,
+			"config":           config,
 			"installation_url": url,
 		}
 
@@ -316,15 +316,15 @@ func (s *Server) findAvailableRunnerHandler(ctx context.Context, request mcp.Cal
 		// Production health scoring based on actual health status
 		score := 0.0
 		overallStatus := "unhealthy"
-		
+
 		// Check runner health status
 		runnerHealthy := (runner.RunnerHealth.Status == "healthy" || runner.RunnerHealth.Status == "ok") &&
 			(runner.RunnerHealth.Health == "healthy" || runner.RunnerHealth.Health == "true")
-		
+
 		// Check tool manager health
 		toolManagerHealthy := (runner.ToolManagerHealth.Status == "healthy" || runner.ToolManagerHealth.Status == "ok") &&
 			runner.ToolManagerHealth.Error == ""
-		
+
 		// Check agent manager health
 		agentManagerHealthy := (runner.AgentManagerHealth.Status == "healthy" || runner.AgentManagerHealth.Status == "ok") &&
 			runner.AgentManagerHealth.Error == ""
@@ -361,8 +361,8 @@ func (s *Server) findAvailableRunnerHandler(ctx context.Context, request mcp.Cal
 			"description": runner.Description,
 			"namespace":   runner.Namespace,
 			"health_details": map[string]interface{}{
-				"runner_health":       runner.RunnerHealth,
-				"tool_manager_health": runner.ToolManagerHealth,
+				"runner_health":        runner.RunnerHealth,
+				"tool_manager_health":  runner.ToolManagerHealth,
 				"agent_manager_health": runner.AgentManagerHealth,
 			},
 		}
@@ -437,7 +437,7 @@ func (s *Server) createSourceHandler(ctx context.Context, request mcp.CallToolRe
 
 func (s *Server) executeToolFromSourceHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	args := request.Params.Arguments
-	
+
 	sourceIdentifier, ok := args["source"].(string)
 	if !ok || sourceIdentifier == "" {
 		return mcp.NewToolResultError("source parameter is required (UUID or URL)"), nil
@@ -496,7 +496,7 @@ func (s *Server) executeToolFromSourceHandler(ctx context.Context, request mcp.C
 
 func (s *Server) discoverSourceHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	args := request.Params.Arguments
-	
+
 	sourceURL, ok := args["url"].(string)
 	if !ok || sourceURL == "" {
 		return mcp.NewToolResultError("url parameter is required"), nil
@@ -547,9 +547,10 @@ func (s *Server) executeSpecificTool(ctx context.Context, tool *kubiya.Tool, arg
 		}
 	}
 
+	argVals := make(map[string]any) // to get argument values
 	// Execute with timeout
 	timeout := 300 * time.Second // 5 minutes
-	eventChan, err := s.client.ExecuteToolWithTimeout(ctx, tool.Name, toolDef, runner, timeout)
+	eventChan, err := s.client.ExecuteToolWithTimeout(ctx, tool.Name, toolDef, runner, timeout, argVals)
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("Failed to execute tool: %v", err)), nil
 	}
@@ -639,7 +640,9 @@ func (s *Server) createOnDemandToolHandler(ctx context.Context, request mcp.Call
 
 	// Execute with timeout (5 minutes)
 	timeout := 300 * time.Second
-	eventChan, err := s.client.ExecuteToolWithTimeout(ctx, name, toolDef, runner, timeout)
+	argVals := make(map[string]any) // to get argument values
+
+	eventChan, err := s.client.ExecuteToolWithTimeout(ctx, name, toolDef, runner, timeout, argVals)
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("Failed to execute on-demand tool: %v", err)), nil
 	}
@@ -757,14 +760,14 @@ func (s *Server) executeWorkflowHandler(ctx context.Context, request mcp.CallToo
 
 	// Handle environment variables - merge with workflow env section
 	workflowEnv := make(map[string]interface{})
-	
+
 	// First, get env from workflow definition
 	if existingEnv, ok := workflowDef["env"].(map[string]interface{}); ok {
 		for k, v := range existingEnv {
 			workflowEnv[k] = v
 		}
 	}
-	
+
 	// Then merge with env variables from MCP request
 	if envVars != nil {
 		for k, v := range envVars {
@@ -837,7 +840,7 @@ func (s *Server) executeWorkflowHandler(ctx context.Context, request mcp.CallToo
 			if event.State != nil {
 				output.WriteString(fmt.Sprintf("📊 %s\n", event.Message))
 				output.WriteString(fmt.Sprintf("🆔 Execution ID: %s\n", executionID))
-				output.WriteString(fmt.Sprintf("📈 Progress: %d/%d steps completed\n\n", 
+				output.WriteString(fmt.Sprintf("📈 Progress: %d/%d steps completed\n\n",
 					event.State.CompletedSteps, event.State.TotalSteps))
 			}
 		case "step":
@@ -886,7 +889,7 @@ func (s *Server) executeWorkflowHandler(ctx context.Context, request mcp.CallToo
 				if event.State.RetryCount > 0 {
 					output.WriteString(fmt.Sprintf("🔄 Connection retries: %d\n", event.State.RetryCount))
 				}
-				output.WriteString(fmt.Sprintf("📊 Steps completed: %d/%d\n", 
+				output.WriteString(fmt.Sprintf("📊 Steps completed: %d/%d\n",
 					event.State.CompletedSteps, event.State.TotalSteps))
 			}
 		case "error":

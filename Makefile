@@ -1,7 +1,7 @@
 .PHONY: build
 build:
 	go mod tidy
-	go mod vendor
+	#go mod vendor
 	go build -o kubiya -ldflags="-s -w" main.go
 
 .PHONY: install

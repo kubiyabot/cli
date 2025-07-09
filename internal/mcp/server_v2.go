@@ -467,11 +467,13 @@ done
 			}
 		}
 	}
+	var argVals map[string]any
 
 	// Apply any additional parameters to the tool definition
 	// This allows overriding specific properties
 	if args, ok := req.Params.Arguments["args"].(map[string]interface{}); ok {
 		toolDef["args"] = args
+		argVals = args // Store for later use
 	}
 	if env, ok := req.Params.Arguments["env"].([]interface{}); ok {
 		toolDef["env"] = env
@@ -503,7 +505,7 @@ done
 		timeout = time.Duration(timeoutSecs) * time.Second
 	}
 
-	events, err := ps.kubiyaClient.ExecuteToolWithTimeout(ctx, toolName, toolDef, runner, timeout)
+	events, err := ps.kubiyaClient.ExecuteToolWithTimeout(ctx, toolName, toolDef, runner, timeout, argVals)
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("Failed to execute tool: %v", err)), nil
 	}
@@ -746,8 +748,9 @@ done
 		if wt.Timeout > 0 {
 			timeout = time.Duration(wt.Timeout) * time.Second
 		}
+		argVals := make(map[string]any) // to get argument values
 
-		events, err := ps.kubiyaClient.ExecuteToolWithTimeout(ctx, wt.Name, toolDef, wt.Runner, timeout)
+		events, err := ps.kubiyaClient.ExecuteToolWithTimeout(ctx, wt.Name, toolDef, wt.Runner, timeout, argVals)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Failed to execute %s: %v", wt.Name, err)), nil
 		}

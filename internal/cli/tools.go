@@ -1060,8 +1060,10 @@ Environment Variables:
 			}
 			fmt.Println()
 
+			argVals := make(map[string]any)
+			// todo: handle args parsing from flags
 			// Execute tool with streaming
-			events, err := client.ExecuteToolWithTimeout(ctx, toolName, toolDef, selectedRunner, time.Duration(timeout)*time.Second)
+			events, err := client.ExecuteToolWithTimeout(ctx, toolName, toolDef, selectedRunner, time.Duration(timeout)*time.Second, argVals)
 			if err != nil {
 				return fmt.Errorf("failed to execute tool: %w", err)
 			}
