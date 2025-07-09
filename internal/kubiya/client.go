@@ -1809,7 +1809,7 @@ func (c *Client) findHealthyRunnerQuickly(ctx context.Context) (string, error) {
 }
 
 // ExecuteToolWithTimeout executes a tool directly using the tool execution API with a configurable timeout
-func (c *Client) ExecuteToolWithTimeout(ctx context.Context, toolName string, toolDef map[string]interface{}, runner string, timeout time.Duration) (<-chan WorkflowSSEEvent, error) {
+func (c *Client) ExecuteToolWithTimeout(ctx context.Context, toolName string, toolDef map[string]interface{}, runner string, timeout time.Duration, args map[string]any) (<-chan WorkflowSSEEvent, error) {
 	// Create Sentry span for tracing
 	span, ctx := sentryutil.StartSpan(ctx, "execute_tool")
 	if span != nil {
@@ -1853,6 +1853,7 @@ func (c *Client) ExecuteToolWithTimeout(ctx context.Context, toolName string, to
 	body := map[string]interface{}{
 		"tool_name": toolName,
 		"tool_def":  toolDef,
+		"args":      args,
 	}
 
 	// If auto was selected and we're using a fallback runner, prepare a list of runners to try

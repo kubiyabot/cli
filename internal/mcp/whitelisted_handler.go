@@ -82,7 +82,10 @@ func (s *Server) executeWhitelistedToolHandler(ctx context.Context, request mcp.
 
 	// Execute with timeout (5 minutes)
 	timeout := 300 * time.Second
-	eventChan, err := s.client.ExecuteToolWithTimeout(ctx, whitelistedTool.Name, toolDef, runner, timeout)
+
+	argVals := make(map[string]any) // to get argument values
+
+	eventChan, err := s.client.ExecuteToolWithTimeout(ctx, whitelistedTool.Name, toolDef, runner, timeout, argVals)
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("Failed to execute whitelisted tool: %v", err)), nil
 	}
@@ -185,13 +188,6 @@ func (h *WhitelistedToolHandler) handleToolCall(ctx context.Context, request mcp
 	if runner == "" {
 		runner = "default"
 	}
-	args := make([]any, 0)
-	for key, value := range request.Params.Arguments {
-		js, _ := json.Marshal(value)
-		args = append(args, map[string]string{
-			key: string(js),
-		})
-	}
 
 	// Build tool definition for execution
 	toolDef := map[string]interface{}{
@@ -199,7 +195,7 @@ func (h *WhitelistedToolHandler) handleToolCall(ctx context.Context, request mcp
 		"description":  h.tool.Description,
 		"type":         h.tool.Type,
 		"content":      h.tool.Content,
-		"args":         args,
+		"args":         h.tool.Args,
 		"env":          h.tool.Env,
 		"secrets":      h.tool.Secrets,
 		"with_files":   h.tool.WithFiles,
@@ -225,7 +221,7 @@ func (h *WhitelistedToolHandler) handleToolCall(ctx context.Context, request mcp
 	}
 
 	// Execute the tool using the client
-	result, err := h.client.ExecuteToolWithTimeout(ctx, h.tool.Name, toolDef, runner, timeout)
+	result, err := h.client.ExecuteToolWithTimeout(ctx, h.tool.Name, toolDef, runner, timeout, request.Params.Arguments)
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("Tool execution failed: %s", err.Error())), nil
 	}
