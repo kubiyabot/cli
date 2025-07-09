@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -32,6 +33,35 @@ type Client struct {
 	debug   bool
 	cache   *Cache
 	audit   *AuditClient
+}
+
+// logAPICall logs all API calls to /tmp/klog.txt
+func logAPICall(method, url string, headers map[string]string, body []byte, responseStatus int, responseBody []byte) {
+	if os.Getenv("KUBIYA_DEBUG") != "true" {
+		return // Only log if KUBIYA_DEBUG is set to true
+	}
+	f, err := os.OpenFile("/tmp/klog.txt", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return // Silently fail if we can't log
+	}
+	defer f.Close()
+
+	timestamp := time.Now().Format("2006-01-02 15:04:05")
+
+	logEntry := fmt.Sprintf("\n=== API Call %s ===\n", timestamp)
+	logEntry += fmt.Sprintf("Method: %s\n", method)
+	logEntry += fmt.Sprintf("URL: %s\n", url)
+	logEntry += fmt.Sprintf("Headers: %v\n", headers)
+	if body != nil {
+		logEntry += fmt.Sprintf("Request Body: %s\n", string(body))
+	}
+	logEntry += fmt.Sprintf("Response Status: %d\n", responseStatus)
+	if responseBody != nil {
+		logEntry += fmt.Sprintf("Response Body: %s\n", string(responseBody))
+	}
+	logEntry += "=======================================\n"
+
+	f.WriteString(logEntry)
 }
 
 // NewClient creates a new Kubiya API client
@@ -127,8 +157,25 @@ func (c *Client) get(ctx context.Context, path string) (*http.Response, error) {
 
 	resp, err := c.client.Do(req)
 	if err != nil {
+		// Log the failed API call
+		headers := map[string]string{
+			"Authorization": "UserKey [REDACTED]",
+			"Content-Type":  "application/json",
+		}
+		logAPICall("GET", url, headers, nil, 0, []byte(fmt.Sprintf("Request failed: %v", err)))
 		return nil, fmt.Errorf("failed to execute request: %w", err)
 	}
+
+	// Capture response body for logging
+	responseBody, _ := io.ReadAll(resp.Body)
+	resp.Body = io.NopCloser(bytes.NewBuffer(responseBody))
+
+	// Log the API call
+	headers := map[string]string{
+		"Authorization": "UserKey [REDACTED]",
+		"Content-Type":  "application/json",
+	}
+	logAPICall("GET", url, headers, nil, resp.StatusCode, responseBody)
 
 	if resp.StatusCode != http.StatusOK {
 		resp.Body.Close()
@@ -162,6 +209,9 @@ func (c *Client) post(ctx context.Context, path string, payload interface{}) (*h
 	req.Header.Set("Authorization", "UserKey "+c.cfg.APIKey)
 	req.Header.Set("Content-Type", "application/json")
 
+	// Capture request body for logging
+	requestBody := body.Bytes()
+
 	if c.debug {
 		fmt.Printf("Making POST request to: %s\n", url)
 		fmt.Printf("Payload: %s\n", body.String())
@@ -172,11 +222,20 @@ func (c *Client) post(ctx context.Context, path string, payload interface{}) (*h
 		return nil, fmt.Errorf("failed to execute request: %w", err)
 	}
 
+	// Capture response body for logging
+	responseBody, _ := io.ReadAll(resp.Body)
+	resp.Body = io.NopCloser(bytes.NewBuffer(responseBody))
+
+	// Log the API call
+	headers := map[string]string{
+		"Authorization": "UserKey [REDACTED]",
+		"Content-Type":  "application/json",
+	}
+	logAPICall("POST", url, headers, requestBody, resp.StatusCode, responseBody)
+
 	if c.debug && resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		resp.Body = io.NopCloser(bytes.NewBuffer(body))
 		fmt.Printf("Response Status: %d\n", resp.StatusCode)
-		fmt.Printf("Response Body: %s\n", string(body))
+		fmt.Printf("Response Body: %s\n", string(responseBody))
 	}
 
 	return resp, nil
@@ -201,10 +260,30 @@ func (c *Client) put(ctx context.Context, path string, payload interface{}) (*ht
 	req.Header.Set("Authorization", "UserKey "+c.cfg.APIKey)
 	req.Header.Set("Content-Type", "application/json")
 
+	// Capture request body for logging
+	requestBody := body.Bytes()
+
 	resp, err := c.client.Do(req)
 	if err != nil {
+		// Log the failed API call
+		headers := map[string]string{
+			"Authorization": "UserKey [REDACTED]",
+			"Content-Type":  "application/json",
+		}
+		logAPICall("PUT", url, headers, requestBody, 0, []byte(fmt.Sprintf("Request failed: %v", err)))
 		return nil, fmt.Errorf("failed to execute request: %w", err)
 	}
+
+	// Capture response body for logging
+	responseBody, _ := io.ReadAll(resp.Body)
+	resp.Body = io.NopCloser(bytes.NewBuffer(responseBody))
+
+	// Log the API call
+	headers := map[string]string{
+		"Authorization": "UserKey [REDACTED]",
+		"Content-Type":  "application/json",
+	}
+	logAPICall("PUT", url, headers, requestBody, resp.StatusCode, responseBody)
 
 	if resp.StatusCode != http.StatusOK {
 		resp.Body.Close()
@@ -226,8 +305,25 @@ func (c *Client) delete(ctx context.Context, path string) (*http.Response, error
 
 	resp, err := c.client.Do(req)
 	if err != nil {
+		// Log the failed API call
+		headers := map[string]string{
+			"Authorization": "UserKey [REDACTED]",
+			"Content-Type":  "application/json",
+		}
+		logAPICall("DELETE", url, headers, nil, 0, []byte(fmt.Sprintf("Request failed: %v", err)))
 		return nil, fmt.Errorf("failed to execute request: %w", err)
 	}
+
+	// Capture response body for logging
+	responseBody, _ := io.ReadAll(resp.Body)
+	resp.Body = io.NopCloser(bytes.NewBuffer(responseBody))
+
+	// Log the API call
+	headers := map[string]string{
+		"Authorization": "UserKey [REDACTED]",
+		"Content-Type":  "application/json",
+	}
+	logAPICall("DELETE", url, headers, nil, resp.StatusCode, responseBody)
 
 	return resp, nil
 }
@@ -1716,7 +1812,7 @@ func (c *Client) findHealthyRunnerQuickly(ctx context.Context) (string, error) {
 }
 
 // ExecuteToolWithTimeout executes a tool directly using the tool execution API with a configurable timeout
-func (c *Client) ExecuteToolWithTimeout(ctx context.Context, toolName string, toolDef map[string]interface{}, runner string, timeout time.Duration) (<-chan WorkflowSSEEvent, error) {
+func (c *Client) ExecuteToolWithTimeout(ctx context.Context, toolName string, toolDef map[string]interface{}, runner string, timeout time.Duration, args map[string]any) (<-chan WorkflowSSEEvent, error) {
 	// Create Sentry span for tracing
 	span, ctx := sentryutil.StartSpan(ctx, "execute_tool")
 	if span != nil {
@@ -1760,6 +1856,7 @@ func (c *Client) ExecuteToolWithTimeout(ctx context.Context, toolName string, to
 	body := map[string]interface{}{
 		"tool_name": toolName,
 		"tool_def":  toolDef,
+		"args":      args,
 	}
 
 	// If auto was selected and we're using a fallback runner, prepare a list of runners to try
@@ -1839,6 +1936,13 @@ func (c *Client) ExecuteToolWithTimeout(ctx context.Context, toolName string, to
 		resp, err := httpClient.Do(req)
 		if err != nil {
 			lastErr = fmt.Errorf("runner %s: failed to connect: %w", tryRunner, err)
+			// Log the failed API call
+			headers := map[string]string{
+				"Authorization": "UserKey [REDACTED]",
+				"Content-Type":  "application/json",
+				"Accept":        "text/event-stream",
+			}
+			logAPICall("POST", execURL, headers, jsonBody, 0, []byte(fmt.Sprintf("Connection failed: %v", err)))
 			// Check if it's retryable
 			if attemptIndex < maxAttempts-1 && runner == "auto" {
 				continue
@@ -1849,6 +1953,13 @@ func (c *Client) ExecuteToolWithTimeout(ctx context.Context, toolName string, to
 		if resp.StatusCode != http.StatusOK {
 			body, _ := io.ReadAll(resp.Body)
 			resp.Body.Close()
+			// Log the failed API call
+			headers := map[string]string{
+				"Authorization": "UserKey [REDACTED]",
+				"Content-Type":  "application/json",
+				"Accept":        "text/event-stream",
+			}
+			logAPICall("POST", execURL, headers, jsonBody, resp.StatusCode, body)
 			lastErr = fmt.Errorf("runner %s: execution failed with status %d: %s", tryRunner, resp.StatusCode, string(body))
 
 			// Don't retry on client errors (4xx)
@@ -1863,6 +1974,14 @@ func (c *Client) ExecuteToolWithTimeout(ctx context.Context, toolName string, to
 
 			return nil, lastErr
 		}
+
+		// Log successful API call
+		headers := map[string]string{
+			"Authorization": "UserKey [REDACTED]",
+			"Content-Type":  "application/json",
+			"Accept":        "text/event-stream",
+		}
+		logAPICall("POST", execURL, headers, jsonBody, resp.StatusCode, []byte("SSE stream established"))
 
 		// Success! Create streaming channel
 		events, streamErr := c.streamToolExecution(resp, timeout, tryRunner)
