@@ -221,7 +221,12 @@ func (wc *WorkflowClient) ExecuteWorkflow(ctx context.Context, req WorkflowExecu
 	params.Set("runner", runner)
 	params.Set("operation", "execute_workflow")
 
-	executeURL := fmt.Sprintf("%s/workflow?%s", wc.client.baseURL, params.Encode())
+	// Handle base URL to avoid double /api/v1
+	baseURL := strings.TrimSuffix(wc.client.baseURL, "/")
+	if strings.HasSuffix(baseURL, "/api/v1") {
+		baseURL = strings.TrimSuffix(baseURL, "/api/v1")
+	}
+	executeURL := fmt.Sprintf("%s/api/v1/workflow?%s", baseURL, params.Encode())
 
 	// Create request body
 	body, err := json.Marshal(req)

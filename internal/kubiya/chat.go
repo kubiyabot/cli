@@ -264,7 +264,32 @@ func (c *Client) SendMessage(ctx context.Context, agentID, message string, sessi
 					}
 					continue
 				}
-				// Process tool calls if needed
+				// Display tool call
+				if toolName, ok := toolCall["toolName"].(string); ok {
+					var argsStr string
+					if args, ok := toolCall["args"].(map[string]interface{}); ok {
+						if argsBytes, err := json.Marshal(args); err == nil {
+							argsStr = string(argsBytes)
+						}
+					}
+					// Generate a unique MessageID for this tool call
+					toolCallID := ""
+					if id, ok := toolCall["toolCallId"].(string); ok {
+						toolCallID = id
+					}
+					if toolCallID == "" {
+						toolCallID = uuid.New().String()
+					}
+					messagesChan <- ChatMessage{
+						Content:    fmt.Sprintf("Tool: %s\nArguments: %s", toolName, argsStr),
+						Type:       "tool",
+						Timestamp:  time.Now().Format(time.RFC3339),
+						SenderName: "System",
+						Final:      false,
+						SessionID:  sessionID,
+						MessageID:  toolCallID,
+					}
+				}
 
 			case 'a': // partToolResult
 				var toolResult map[string]interface{}
@@ -274,7 +299,30 @@ func (c *Client) SendMessage(ctx context.Context, agentID, message string, sessi
 					}
 					continue
 				}
-				// Process tool results if needed
+				// Display tool result
+				var resultStr string
+				if result, ok := toolResult["result"]; ok {
+					if resultBytes, err := json.Marshal(result); err == nil {
+						resultStr = string(resultBytes)
+					}
+				}
+				// Use the toolCallId to match with the corresponding tool call
+				toolCallID := ""
+				if id, ok := toolResult["toolCallId"].(string); ok {
+					toolCallID = id
+				}
+				if toolCallID == "" {
+					toolCallID = uuid.New().String()
+				}
+				messagesChan <- ChatMessage{
+					Content:    resultStr,
+					Type:       "tool_output",
+					Timestamp:  time.Now().Format(time.RFC3339),
+					SenderName: "System",
+					Final:      false,
+					SessionID:  sessionID,
+					MessageID:  toolCallID,
+				}
 
 			default:
 				if logger != nil {
