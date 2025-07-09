@@ -108,7 +108,9 @@ func (wc *WorkflowClient) GenerateWorkflow(ctx context.Context, prompt string, o
 
 	// Set headers
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "text/event-stream")
+	req.Header.Set("x-vercel-ai-data-stream", "v1") // protocol flag
+	req.Header.Set("Cache-Control", "no-cache")
+	req.Header.Set("Connection", "keep-alive")
 
 	// Try both authentication methods
 	if strings.HasPrefix(options.BearerToken, "ey") {
@@ -235,7 +237,9 @@ func (wc *WorkflowClient) ExecuteWorkflow(ctx context.Context, req WorkflowExecu
 	// Set headers
 	httpReq.Header.Set("Authorization", "UserKey "+wc.client.cfg.APIKey)
 	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Accept", "text/event-stream")
+	httpReq.Header.Set("x-vercel-ai-data-stream", "v1") // protocol flag
+	httpReq.Header.Set("Cache-Control", "no-cache")
+	httpReq.Header.Set("Connection", "keep-alive")
 
 	// Execute request with no timeout for streaming connections
 	streamingClient := &http.Client{

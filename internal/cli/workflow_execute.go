@@ -204,7 +204,39 @@ You can provide variables and choose the runner for execution.`,
 					style.InfoStyle.Render("🚀"))
 			
 			for event := range events {
-				// Show verbose SSE details if requested
+				// Track execution state for all events (regardless of watch mode)
+				if event.ExecutionID != "" {
+					executionID = event.ExecutionID
+				}
+				
+				// Always process error and completion events
+				if event.Type == "error" || event.Type == "complete" {
+					if event.Type == "error" && event.Error != "" {
+						fmt.Printf("%s %s\n", 
+							style.ErrorStyle.Render("💀 Error:"), 
+							event.Error)
+						hasError = true
+					}
+					if event.Type == "complete" {
+						if event.State != nil && event.State.Status == "failed" {
+							hasError = true
+						}
+						if hasError {
+							fmt.Printf("%s Workflow execution failed\n", 
+								style.ErrorStyle.Render("💥"))
+						} else {
+							fmt.Printf("%s Workflow completed successfully!\n", 
+								style.SuccessStyle.Render("🎉"))
+						}
+						if event.State != nil {
+							fmt.Printf("%s Execution ID: %s\n", 
+								style.DimStyle.Render("🆔"), 
+								executionID)
+						}
+					}
+				}
+				
+				// Show verbose SSE details if requested  
 				if verbose {
 					fmt.Printf("[VERBOSE] Event: %s, ExecutionID: %s, Message: %s\n", 
 						event.Type, event.ExecutionID, event.Message)
@@ -213,6 +245,7 @@ You can provide variables and choose the runner for execution.`,
 					}
 				}
 				
+				// Skip detailed output if not watching, but still process critical events above
 				if !watch {
 					continue
 				}
@@ -330,20 +363,11 @@ You can provide variables and choose the runner for execution.`,
 					}
 					
 				case "complete":
-					// Workflow completion
+					// Workflow completion details (only shown when watching)
 					if event.State != nil {
 						totalDuration := time.Since(event.State.StartTime)
 						if event.State.EndTime != nil {
 							totalDuration = event.State.EndTime.Sub(event.State.StartTime)
-						}
-						
-						if event.State.Status == "completed" {
-							fmt.Printf("%s Workflow completed successfully!\n", 
-								style.SuccessStyle.Render("🎉"))
-						} else {
-							fmt.Printf("%s Workflow execution failed\n", 
-								style.ErrorStyle.Render("💥"))
-							hasError = true
 						}
 						
 						fmt.Printf("%s Total duration: %v\n", 
@@ -353,9 +377,6 @@ You can provide variables and choose the runner for execution.`,
 							style.DimStyle.Render("📊"), 
 							event.State.CompletedSteps, 
 							event.State.TotalSteps)
-						fmt.Printf("%s Execution ID: %s\n", 
-							style.DimStyle.Render("🆔"), 
-							executionID)
 						
 						if event.State.RetryCount > 0 {
 							fmt.Printf("%s Connection retries: %d\n", 
@@ -365,13 +386,8 @@ You can provide variables and choose the runner for execution.`,
 					}
 					
 				case "error":
-					// Error events
-					if event.Error != "" {
-						fmt.Printf("%s %s\n", 
-							style.ErrorStyle.Render("💀 Error:"), 
-							event.Error)
-						hasError = true
-					}
+					// Additional error details (only shown when watching)
+					// Main error handling is done above regardless of watch mode
 				}
 			}
 			}

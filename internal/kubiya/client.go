@@ -1013,7 +1013,7 @@ func (c *Client) GenerateTool(ctx context.Context, description, sessionID string
 
 		// Set headers to request SSE
 		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Accept", "text/event-stream")
+		req.Header.Set("x-vercel-ai-data-stream", "v1") // protocol flag
 		req.Header.Set("Authorization", "UserKey "+c.cfg.APIKey)
 		req.Header.Set("Cache-Control", "no-cache")
 		req.Header.Set("Connection", "keep-alive")
@@ -1822,7 +1822,9 @@ func (c *Client) ExecuteToolWithTimeout(ctx context.Context, toolName string, to
 		// Set headers for SSE
 		req.Header.Set("Authorization", "UserKey "+c.cfg.APIKey)
 		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Accept", "text/event-stream")
+		req.Header.Set("x-vercel-ai-data-stream", "v1") // protocol flag
+		req.Header.Set("Cache-Control", "no-cache")
+		req.Header.Set("Connection", "keep-alive")
 
 		// Use a shorter timeout for initial connection to fail fast
 		connectTimeout := 10 * time.Second

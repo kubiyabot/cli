@@ -74,7 +74,7 @@ func getOrCreateSession(agentID string) *ChatSession {
 	return session
 }
 
-// SendMessage sends a message to a agent and handles SSE responses
+// SendMessage sends a message to an agent using the workflow-engine compatible streaming approach
 func (c *Client) SendMessage(ctx context.Context, agentID, message string, sessionID string) (<-chan ChatMessage, error) {
 	messagesChan := make(chan ChatMessage, 100)
 
@@ -92,10 +92,14 @@ func (c *Client) SendMessage(ctx context.Context, agentID, message string, sessi
 		Message   string `json:"message"`
 		AgentUUID string `json:"agent_uuid"`
 		SessionID string `json:"session_id"`
+		UserEmail string `json:"user_email,omitempty"`
+		Org       string `json:"org,omitempty"`
 	}{
 		Message:   message,
 		AgentUUID: agentID,
 		SessionID: sessionID,
+		UserEmail: os.Getenv("KUBIYA_USER_EMAIL"),
+		Org:       os.Getenv("KUBIYA_ORG"),
 	}
 
 	// Safety check for logger
@@ -104,7 +108,7 @@ func (c *Client) SendMessage(ctx context.Context, agentID, message string, sessi
 		logger.Printf("Payload: %+v", payload)
 	}
 
-	reqURL := fmt.Sprintf("%s/converse", c.baseURL)
+	reqURL := fmt.Sprintf("%s/api/v1/hb/v4/stream", c.baseURL)
 	jsonData, err := json.Marshal(payload)
 	if err != nil {
 		if logger != nil {
@@ -124,7 +128,7 @@ func (c *Client) SendMessage(ctx context.Context, agentID, message string, sessi
 	}
 
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "text/event-stream")
+	req.Header.Set("x-vercel-ai-data-stream", "v1") // protocol flag
 	req.Header.Set("Authorization", "UserKey "+c.cfg.APIKey)
 	req.Header.Set("Cache-Control", "no-cache")
 	req.Header.Set("Connection", "keep-alive")
@@ -154,76 +158,141 @@ func (c *Client) SendMessage(ctx context.Context, agentID, message string, sessi
 		defer resp.Body.Close()
 		defer close(messagesChan)
 
-		reader := bufio.NewReader(resp.Body)
-		var lastMessage string
+		scanner := bufio.NewScanner(resp.Body)
+		var textBuilder strings.Builder
+		lineCount := 0
 
-		for {
+		for scanner.Scan() {
 			select {
 			case <-ctx.Done():
 				return
 			default:
-				line, err := reader.ReadString('\n')
-				if err != nil {
-					if err != io.EOF {
-						if logger != nil {
-							logger.Printf("Error reading line: %v", err)
-						}
-						messagesChan <- ChatMessage{
-							Content:    fmt.Sprintf("Stream error: %v", err),
-							Timestamp:  time.Now().Format(time.RFC3339),
-							SenderName: "System",
-							Type:       "error",
-							Final:      true,
-						}
-					}
-					return
-				}
+			}
 
-				line = strings.TrimSpace(line)
-				if line == "" {
-					continue
-				}
+			lineCount++
+			line := scanner.Text()
 
-				var event struct {
-					Message   string `json:"message"`
-					ID        string `json:"id"`
-					Type      string `json:"type"`
-					Done      bool   `json:"done,omitempty"`
-					Status    string `json:"status,omitempty"`
-					SessionID string `json:"session_id,omitempty"`
+			if logger != nil {
+				logger.Printf("Processing line %d: %s", lineCount, line)
+			}
+
+			// Process Vercel AI data-stream protocol
+			if len(line) < 3 || line[1] != ':' {
+				if logger != nil {
+					logger.Printf("Malformed line detected: %s", line)
 				}
-				if err := json.Unmarshal([]byte(line), &event); err != nil {
+				continue
+			}
+
+			typ := line[0]
+			payload := line[2:]
+
+			switch typ {
+			case '0': // partText
+				var text string
+				if err := json.Unmarshal([]byte(payload), &text); err != nil {
 					if logger != nil {
-						logger.Printf("JSON unmarshal error: %v for line: %s", err, line)
+						logger.Printf("Failed to unmarshal text part: %v", err)
 					}
 					continue
 				}
-
-				// Skip empty messages
-				if event.Message == "" {
-					continue
-				}
-
-				isFinal := event.Message == lastMessage ||
-					strings.HasSuffix(event.Message, ".") ||
-					strings.HasSuffix(event.Message, "?") ||
-					strings.HasSuffix(event.Message, "!")
-
-				msg := ChatMessage{
-					Content:    event.Message,
-					Type:       event.Type,
-					MessageID:  event.ID,
+				textBuilder.WriteString(text)
+				
+				messagesChan <- ChatMessage{
+					Content:    textBuilder.String(),
+					Type:       "text",
 					Timestamp:  time.Now().Format(time.RFC3339),
 					SenderName: "Bot",
-					Final:      isFinal,
-					SessionID:  event.SessionID,
+					Final:      false,
+					SessionID:  sessionID,
 				}
 
-				lastMessage = event.Message
-				if logger != nil {
-					logger.Printf("Sending message: %+v", msg)
+			case '2': // partData
+				var data []interface{}
+				if err := json.Unmarshal([]byte(payload), &data); err != nil {
+					if logger != nil {
+						logger.Printf("Failed to unmarshal data part: %v", err)
+					}
+					continue
 				}
-				messagesChan <- msg
+				// Process data parts if needed
+
+			case '3': // partError
+				var errMsg string
+				if err := json.Unmarshal([]byte(payload), &errMsg); err != nil {
+					if logger != nil {
+						logger.Printf("Failed to unmarshal error part: %v", err)
+					}
+					continue
+				}
+				messagesChan <- ChatMessage{
+					Content:    errMsg,
+					Type:       "error",
+					Timestamp:  time.Now().Format(time.RFC3339),
+					SenderName: "System",
+					Final:      true,
+					SessionID:  sessionID,
+				}
+
+			case 'd': // partFinishMessage
+				messagesChan <- ChatMessage{
+					Content:    textBuilder.String(),
+					Type:       "completion",
+					Timestamp:  time.Now().Format(time.RFC3339),
+					SenderName: "Bot",
+					Final:      true,
+					SessionID:  sessionID,
+				}
+				return
+
+			case 'g': // partReasoning
+				var reasoning string
+				if err := json.Unmarshal([]byte(payload), &reasoning); err != nil {
+					if logger != nil {
+						logger.Printf("Failed to unmarshal reasoning part: %v", err)
+					}
+					continue
+				}
+				// Process reasoning if needed
+
+			case '9': // partToolCall
+				var toolCall map[string]interface{}
+				if err := json.Unmarshal([]byte(payload), &toolCall); err != nil {
+					if logger != nil {
+						logger.Printf("Failed to unmarshal tool call part: %v", err)
+					}
+					continue
+				}
+				// Process tool calls if needed
+
+			case 'a': // partToolResult
+				var toolResult map[string]interface{}
+				if err := json.Unmarshal([]byte(payload), &toolResult); err != nil {
+					if logger != nil {
+						logger.Printf("Failed to unmarshal tool result part: %v", err)
+					}
+					continue
+				}
+				// Process tool results if needed
+
+			default:
+				if logger != nil {
+					logger.Printf("Unknown stream part type: %c", typ)
+				}
+			}
+		}
+
+		if err := scanner.Err(); err != nil && err != io.EOF {
+			if logger != nil {
+				logger.Printf("Scanner error: %v", err)
+			}
+			messagesChan <- ChatMessage{
+				Content:    fmt.Sprintf("Stream error: %v", err),
+				Timestamp:  time.Now().Format(time.RFC3339),
+				SenderName: "System",
+				Type:       "error",
+				Final:      true,
+				SessionID:  sessionID,
 			}
 		}
 	}()
