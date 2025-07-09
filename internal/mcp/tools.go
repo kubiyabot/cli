@@ -289,7 +289,7 @@ func (s *Server) executeToolHandler(ctx context.Context, request mcp.CallToolReq
 		"name": toolName,
 		"args": toolArgs,
 	}
-	
+
 	if integrationTemplate != "" {
 		toolDef["integration_template"] = integrationTemplate
 	}
@@ -314,10 +314,11 @@ func (s *Server) executeToolHandler(ctx context.Context, request mcp.CallToolReq
 			return mcp.NewToolResultError(errorMsg), nil
 		}
 	}
+	argVals := make(map[string]any) // to get argument values
 
 	// Execute with timeout (5 minutes)
 	timeout := 300 * time.Second
-	eventChan, err := s.client.ExecuteToolWithTimeout(ctx, toolName, toolDef, runner, timeout)
+	eventChan, err := s.client.ExecuteToolWithTimeout(ctx, toolName, toolDef, runner, timeout, argVals)
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("Failed to execute tool: %v", err)), nil
 	}
