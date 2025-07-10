@@ -249,9 +249,9 @@ func (wc *WorkflowClient) ExecuteWorkflow(ctx context.Context, req WorkflowExecu
 	httpReq.Header.Set("Cache-Control", "no-cache")
 	httpReq.Header.Set("Connection", "keep-alive")
 
-	// Execute request with no timeout for streaming connections
+	// Execute request with a reasonable initial timeout for connection establishment
 	streamingClient := &http.Client{
-		Timeout: 0, // No timeout for streaming connections
+		Timeout: 30 * time.Second, // 30 second timeout for initial connection
 	}
 	resp, err := streamingClient.Do(httpReq)
 	if err != nil {

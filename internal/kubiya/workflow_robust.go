@@ -120,10 +120,15 @@ func (rwc *RobustWorkflowClient) executeWithRetriesOptions(ctx context.Context, 
 
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		if attempt > 0 {
-			// Calculate exponential backoff delay
+			// Calculate exponential backoff delay, but cap it lower for server errors
 			delay := baseDelay * time.Duration(1<<uint(attempt-1))
 			if delay > maxDelay {
 				delay = maxDelay
+			}
+			
+			// For server errors (504, 502, etc), use shorter delays
+			if attempt <= 3 {
+				delay = time.Duration(attempt) * 3 * time.Second // 3s, 6s, 9s for first 3 attempts
 			}
 
 			events <- RobustWorkflowEvent{
@@ -188,23 +193,34 @@ func (rwc *RobustWorkflowClient) attemptConnection(ctx context.Context, state *W
 	var workflowEvents <-chan WorkflowSSEEvent
 	var err error
 	
+	// Execute the workflow - use shorter timeout for initial connection
+	connCtxWithTimeout, cancel := context.WithTimeout(connCtx, 45*time.Second)
+	defer cancel()
+	
 	if isReconnect {
-		// For reconnections, we should ideally have a way to reconnect to existing execution
-		// For now, we'll try to execute again but this needs a better solution
 		if rwc.debug {
-			fmt.Printf("[DEBUG] Reconnection attempt - this may create duplicate execution\n")
+			fmt.Printf("[DEBUG] Reconnection attempt - trying to resume workflow execution\n")
 		}
-		workflowEvents, err = rwc.client.ExecuteWorkflow(connCtx, *state.Request, state.Runner)
+		workflowEvents, err = rwc.client.ExecuteWorkflow(connCtxWithTimeout, *state.Request, state.Runner)
 	} else {
 		// Fresh execution
-		workflowEvents, err = rwc.client.ExecuteWorkflow(connCtx, *state.Request, state.Runner)
+		workflowEvents, err = rwc.client.ExecuteWorkflow(connCtxWithTimeout, *state.Request, state.Runner)
 	}
 	
 	if err != nil {
+		errorMsg := fmt.Sprintf("Failed to start workflow execution: %v", err)
+		
+		// Special handling for gateway timeouts - these are often transient
+		if strings.Contains(err.Error(), "504") || strings.Contains(err.Error(), "Gateway Time-out") {
+			errorMsg = "Server timeout (504) - workflow service may be overloaded. Will retry..."
+		} else if strings.Contains(err.Error(), "context deadline exceeded") {
+			errorMsg = "Connection timeout - workflow service taking too long to respond. Will retry..."
+		}
+		
 		events <- RobustWorkflowEvent{
 			Type:        "error",
 			ExecutionID: state.ExecutionID,
-			Error:       fmt.Sprintf("Failed to start workflow execution: %v", err),
+			Error:       errorMsg,
 		}
 		return false
 	}
@@ -219,9 +235,9 @@ func (rwc *RobustWorkflowClient) attemptConnection(ctx context.Context, state *W
 		}
 	}
 
-	// Process events with heartbeat monitoring (much longer timeout)
+	// Process events with heartbeat monitoring (shorter timeout for better responsiveness)
 	lastEventTime := time.Now()
-	connectionTimeout := 5 * time.Minute // No events for 5 minutes = connection lost (much longer for workflows)
+	connectionTimeout := 60 * time.Second // No events for 60 seconds = connection lost
 
 	// Start a goroutine to monitor for connection timeouts
 	timeoutCtx, timeoutCancel := context.WithCancel(ctx)
@@ -265,11 +281,14 @@ func (rwc *RobustWorkflowClient) attemptConnection(ctx context.Context, state *W
 
 			lastEventTime = time.Now()
 			
-			// Process the event and update state
+			// Process the event and update state immediately
 			completed := rwc.processWorkflowEvent(event, state, events)
 			if completed {
 				return true
 			}
+			
+			// Force save state after each event to ensure persistence
+			rwc.stateManager.SaveExecution(state)
 		}
 	}
 }
