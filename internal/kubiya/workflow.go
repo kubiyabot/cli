@@ -248,7 +248,6 @@ func (wc *WorkflowClient) ExecuteWorkflow(ctx context.Context, req WorkflowExecu
 	// Use the original context for cancellation but without timeout for streaming
 	// This allows user cancellation (Ctrl+C) while preventing timeout interruption
 	streamingCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
 	httpReq, err := http.NewRequestWithContext(streamingCtx, http.MethodPost, executeURL, bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
@@ -283,6 +282,7 @@ func (wc *WorkflowClient) ExecuteWorkflow(ctx context.Context, req WorkflowExecu
 	go func() {
 		defer close(events)
 		defer resp.Body.Close()
+		defer cancel() // Cancel context when streaming is done
 
 		scanner := bufio.NewScanner(resp.Body)
 		// Increase scanner buffer size for large events

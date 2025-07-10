@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -22,6 +23,7 @@ func newWorkflowExecuteCommand(cfg *config.Config) *cobra.Command {
 		watch           bool
 		skipPolicyCheck bool
 		verbose         bool
+		saveTrace       bool
 	)
 
 	cmd := &cobra.Command{
@@ -203,7 +205,9 @@ You can provide variables and choose the runner for execution.`,
 				progressBar,
 				style.HighlightStyle.Render(fmt.Sprintf("%d/%d steps completed", completedSteps, stepCount)))
 			
+			// Initialize workflow execution tracking
 			var stepStartTimes = make(map[string]time.Time)
+			var workflowTrace = NewWorkflowTrace(req.Name, stepCount)
 			
 			for event := range events {
 				if event.Type == "data" {
@@ -216,6 +220,9 @@ You can provide variables and choose the runner for execution.`,
 								if step, ok := jsonData["step"].(map[string]interface{}); ok {
 									if stepName, ok := step["name"].(string); ok {
 										stepStartTimes[stepName] = time.Now()
+										
+										// Update workflow trace
+										workflowTrace.StartStep(stepName)
 										
 										// Show step starting
 										progress := fmt.Sprintf("[%d/%d]", completedSteps+1, stepCount)
@@ -237,14 +244,37 @@ You can provide variables and choose the runner for execution.`,
 											delete(stepStartTimes, stepName)
 										}
 										
-										// Show step completion
+										// Extract step output if available
+										var stepOutput string
+										var stepStatus string = "finished"
+										if output, ok := step["output"].(string); ok && output != "" {
+											stepOutput = output
+										}
+										if status, ok := step["status"].(string); ok {
+											stepStatus = status
+										}
+										
+										// Show step completion with status
 										if duration > 0 {
-											fmt.Printf("  %s Step completed in %v\n", 
+											fmt.Printf("  %s Step %s in %v\n", 
 												style.SuccessStyle.Render("✅"), 
+												stepStatus,
 												duration.Round(time.Millisecond))
 										} else {
-											fmt.Printf("  %s Step completed\n", 
-												style.SuccessStyle.Render("✅"))
+											fmt.Printf("  %s Step %s\n", 
+												style.SuccessStyle.Render("✅"),
+												stepStatus)
+										}
+										
+										// Update workflow trace
+										workflowTrace.CompleteStep(stepName, stepStatus, stepOutput)
+										
+										// Show step output if available
+										if stepOutput != "" {
+											// Format output nicely
+											fmt.Printf("  %s %s\n", 
+												style.DimStyle.Render("📤 Output:"),
+												style.ToolOutputStyle.Render(formatStepOutput(stepOutput)))
 										}
 										
 										// Update progress
@@ -260,13 +290,26 @@ You can provide variables and choose the runner for execution.`,
 							case "workflow_complete":
 								// Workflow finished
 								if success, ok := jsonData["success"].(bool); ok && success {
+									workflowTrace.Complete("completed")
 									fmt.Printf("%s Workflow completed successfully!\n", 
 										style.SuccessStyle.Render("🎉"))
 								} else {
+									workflowTrace.Complete("failed")
 									fmt.Printf("%s Workflow execution failed\n", 
 										style.ErrorStyle.Render("💥"))
 									hasError = true
 								}
+								
+								// Show workflow execution graph
+								fmt.Print(workflowTrace.GenerateGraph())
+								
+								// Save trace to file if requested
+								if saveTrace {
+									if err := saveWorkflowTrace(workflowTrace, workflowFile); err != nil {
+										fmt.Fprintf(os.Stderr, "Warning: Failed to save workflow trace: %v\n", err)
+									}
+								}
+								
 								return nil
 							}
 						}
@@ -288,8 +331,18 @@ You can provide variables and choose the runner for execution.`,
 			}
 
 			if hasError {
+				workflowTrace.Complete("failed")
 				fmt.Printf("\n%s Workflow execution failed. Check the logs above for details.\n", 
 					style.ErrorStyle.Render("💥"))
+				fmt.Print(workflowTrace.GenerateGraph())
+				
+				// Save trace to file if requested
+				if saveTrace {
+					if err := saveWorkflowTrace(workflowTrace, workflowFile); err != nil {
+						fmt.Fprintf(os.Stderr, "Warning: Failed to save workflow trace: %v\n", err)
+					}
+				}
+				
 				return fmt.Errorf("workflow execution failed")
 			}
 
@@ -299,12 +352,33 @@ You can provide variables and choose the runner for execution.`,
 				style.InfoStyle.Render("ℹ️"))
 			
 			if completedSteps >= stepCount && stepCount > 0 {
+				workflowTrace.Complete("completed")
 				fmt.Printf("%s Workflow appears to have completed successfully (%d/%d steps)\n", 
 					style.SuccessStyle.Render("✅"), completedSteps, stepCount)
 			} else {
+				workflowTrace.Complete("incomplete")
 				fmt.Printf("%s Workflow may be incomplete (%d/%d steps completed)\n", 
 					style.WarningStyle.Render("⚠️"), completedSteps, stepCount)
+				fmt.Print(workflowTrace.GenerateGraph())
+				
+				// Save trace to file if requested
+				if saveTrace {
+					if err := saveWorkflowTrace(workflowTrace, workflowFile); err != nil {
+						fmt.Fprintf(os.Stderr, "Warning: Failed to save workflow trace: %v\n", err)
+					}
+				}
+				
 				return fmt.Errorf("workflow stream ended unexpectedly")
+			}
+			
+			// Show final workflow execution graph
+			fmt.Print(workflowTrace.GenerateGraph())
+			
+			// Save trace to file if requested
+			if saveTrace {
+				if err := saveWorkflowTrace(workflowTrace, workflowFile); err != nil {
+					fmt.Fprintf(os.Stderr, "Warning: Failed to save workflow trace: %v\n", err)
+				}
 			}
 
 			return nil
@@ -316,6 +390,7 @@ You can provide variables and choose the runner for execution.`,
 	cmd.Flags().BoolVarP(&watch, "watch", "w", true, "Watch execution output")
 	cmd.Flags().BoolVar(&skipPolicyCheck, "skip-policy-check", false, "Skip policy validation before execution")
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Enable verbose output with detailed SSE logs")
+	cmd.Flags().BoolVar(&saveTrace, "save-trace", false, "Save workflow execution trace to JSON file")
 
 	return cmd
 }
@@ -461,4 +536,212 @@ func generateProgressBar(completed, total int) string {
 	bar += "]"
 	
 	return bar
+}
+
+// formatStepOutput formats step output for better display
+func formatStepOutput(output string) string {
+	// Limit output length for readability
+	maxLength := 500
+	if len(output) > maxLength {
+		return output[:maxLength] + "... (truncated)"
+	}
+	
+	// Clean up common escape sequences and whitespace
+	formatted := strings.TrimSpace(output)
+	formatted = strings.ReplaceAll(formatted, "\\n", "\n")
+	formatted = strings.ReplaceAll(formatted, "\\t", "\t")
+	
+	// If it looks like JSON, try to format it
+	if strings.HasPrefix(formatted, "{") && strings.HasSuffix(formatted, "}") {
+		var jsonObj interface{}
+		if err := json.Unmarshal([]byte(formatted), &jsonObj); err == nil {
+			if prettyBytes, err := json.MarshalIndent(jsonObj, "    ", "  "); err == nil {
+				return string(prettyBytes)
+			}
+		}
+	}
+	
+	return formatted
+}
+
+// WorkflowTrace tracks the execution of a workflow for visualization
+type WorkflowTrace struct {
+	Name       string        `json:"name"`
+	StartTime  time.Time     `json:"start_time"`
+	EndTime    *time.Time    `json:"end_time,omitempty"`
+	Duration   time.Duration `json:"duration"`
+	TotalSteps int           `json:"total_steps"`
+	Steps      []StepTrace   `json:"steps"`
+	Status     string        `json:"status"` // "running", "completed", "failed"
+}
+
+// StepTrace tracks the execution of a single step
+type StepTrace struct {
+	Name        string        `json:"name"`
+	StartTime   *time.Time    `json:"start_time,omitempty"`
+	EndTime     *time.Time    `json:"end_time,omitempty"`
+	Duration    time.Duration `json:"duration"`
+	Status      string        `json:"status"` // "pending", "running", "completed", "failed"
+	Output      string        `json:"output,omitempty"`
+	OutputVars  map[string]interface{} `json:"output_vars,omitempty"`
+	Description string        `json:"description,omitempty"`
+}
+
+// NewWorkflowTrace creates a new workflow trace
+func NewWorkflowTrace(name string, totalSteps int) *WorkflowTrace {
+	return &WorkflowTrace{
+		Name:       name,
+		StartTime:  time.Now(),
+		TotalSteps: totalSteps,
+		Steps:      make([]StepTrace, 0, totalSteps),
+		Status:     "running",
+	}
+}
+
+// AddStep adds a step to the workflow trace
+func (wt *WorkflowTrace) AddStep(name, description string) {
+	step := StepTrace{
+		Name:        name,
+		Status:      "pending", 
+		Description: description,
+		OutputVars:  make(map[string]interface{}),
+	}
+	wt.Steps = append(wt.Steps, step)
+}
+
+// StartStep marks a step as started
+func (wt *WorkflowTrace) StartStep(name string) {
+	for i := range wt.Steps {
+		if wt.Steps[i].Name == name {
+			now := time.Now()
+			wt.Steps[i].StartTime = &now
+			wt.Steps[i].Status = "running"
+			return
+		}
+	}
+	// If step doesn't exist, add it
+	now := time.Now()
+	step := StepTrace{
+		Name:       name,
+		StartTime:  &now,
+		Status:     "running",
+		OutputVars: make(map[string]interface{}),
+	}
+	wt.Steps = append(wt.Steps, step)
+}
+
+// CompleteStep marks a step as completed
+func (wt *WorkflowTrace) CompleteStep(name, status, output string) {
+	for i := range wt.Steps {
+		if wt.Steps[i].Name == name {
+			now := time.Now()
+			wt.Steps[i].EndTime = &now
+			wt.Steps[i].Status = status
+			wt.Steps[i].Output = output
+			
+			if wt.Steps[i].StartTime != nil {
+				wt.Steps[i].Duration = now.Sub(*wt.Steps[i].StartTime)
+			}
+			return
+		}
+	}
+}
+
+// Complete marks the workflow as completed
+func (wt *WorkflowTrace) Complete(status string) {
+	now := time.Now()
+	wt.EndTime = &now
+	wt.Duration = now.Sub(wt.StartTime)
+	wt.Status = status
+}
+
+// GenerateGraph creates a visual representation of the workflow execution
+func (wt *WorkflowTrace) GenerateGraph() string {
+	var graph strings.Builder
+	
+	graph.WriteString(fmt.Sprintf("\n%s Workflow Execution Graph\n", 
+		style.HeaderStyle.Render("📊")))
+	graph.WriteString(fmt.Sprintf("%s %s\n", 
+		style.DimStyle.Render("Name:"), wt.Name))
+	graph.WriteString(fmt.Sprintf("%s %s\n", 
+		style.DimStyle.Render("Status:"), getStatusEmoji(wt.Status)))
+	
+	if wt.EndTime != nil {
+		graph.WriteString(fmt.Sprintf("%s %v\n", 
+			style.DimStyle.Render("Duration:"), wt.Duration.Round(time.Millisecond)))
+	}
+	
+	graph.WriteString("\n")
+	
+	// Generate step graph
+	for i, step := range wt.Steps {
+		// Step connector
+		if i == 0 {
+			graph.WriteString("┌─")
+		} else {
+			graph.WriteString("├─")
+		}
+		
+		// Step info
+		statusEmoji := getStatusEmoji(step.Status)
+		graph.WriteString(fmt.Sprintf(" %s %s", statusEmoji, step.Name))
+		
+		if step.Duration > 0 {
+			graph.WriteString(fmt.Sprintf(" (%v)", step.Duration.Round(time.Millisecond)))
+		}
+		graph.WriteString("\n")
+		
+		// Show output if available and not too long
+		if step.Output != "" && len(step.Output) < 100 {
+			if i == len(wt.Steps)-1 {
+				graph.WriteString("  └─ 📤 ")
+			} else {
+				graph.WriteString("│ └─ 📤 ")
+			}
+			graph.WriteString(style.DimStyle.Render(step.Output))
+			graph.WriteString("\n")
+		}
+	}
+	
+	return graph.String()
+}
+
+// getStatusEmoji returns an emoji for the given status
+func getStatusEmoji(status string) string {
+	switch status {
+	case "pending":
+		return "⏳ Pending"
+	case "running":
+		return "🔄 Running"
+	case "completed", "finished":
+		return "✅ Completed"
+	case "failed":
+		return "❌ Failed"
+	default:
+		return "❓ " + status
+	}
+}
+
+// saveWorkflowTrace saves the workflow trace to a JSON file
+func saveWorkflowTrace(trace *WorkflowTrace, workflowFile string) error {
+	// Generate trace filename based on workflow file and timestamp
+	baseFilename := strings.TrimSuffix(workflowFile, filepath.Ext(workflowFile))
+	timestamp := trace.StartTime.Format("20060102-150405")
+	traceFilename := fmt.Sprintf("%s-trace-%s.json", baseFilename, timestamp)
+	
+	// Marshal trace to JSON
+	traceData, err := json.MarshalIndent(trace, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal trace: %w", err)
+	}
+	
+	// Write to file
+	if err := os.WriteFile(traceFilename, traceData, 0644); err != nil {
+		return fmt.Errorf("failed to write trace file: %w", err)
+	}
+	
+	fmt.Printf("\n%s Workflow trace saved to: %s\n", 
+		style.InfoStyle.Render("💾"), traceFilename)
+	
+	return nil
 }
