@@ -154,6 +154,16 @@ You can provide variables and choose the runner for execution.`,
 				}
 			}
 
+			// Inject Kubiya API key into workflow environment
+			if req.Env == nil {
+				req.Env = make(map[string]interface{})
+			}
+			req.Env["KUBIYA_API_KEY"] = cfg.APIKey
+			
+			if cfg.Debug || verbose {
+				fmt.Printf("[DEBUG] Injected KUBIYA_API_KEY into workflow environment\n")
+			}
+
 			// Execute workflow directly with simple client (like it worked 3 days ago!)
 			workflowClient := client.Workflow()
 			events, err := workflowClient.ExecuteWorkflow(ctx, req, runner)
