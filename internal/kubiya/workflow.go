@@ -54,6 +54,7 @@ type MCPServerConfig struct {
 
 // WorkflowExecutionRequest represents a direct workflow execution request
 type WorkflowExecutionRequest struct {
+	Command     string                 `json:"command"`               // Required: should be "execute_workflow"
 	Name        string                 `json:"name"`
 	Description string                 `json:"description"`
 	Steps       []interface{}          `json:"steps"`
@@ -202,7 +203,13 @@ func (wc *WorkflowClient) GenerateWorkflow(ctx context.Context, prompt string, o
 			if wc.client.debug {
 				fmt.Printf("[DEBUG] Scanner error: %v\n", err)
 			}
-			events <- WorkflowSSEEvent{Type: "error", Data: err.Error()}
+			events <- WorkflowSSEEvent{Type: "error", Data: fmt.Sprintf("stream reading error: %v", err)}
+		} else {
+			// Scanner finished without error - send done event
+			if wc.client.debug {
+				fmt.Printf("[DEBUG] Stream ended normally\n")
+			}
+			events <- WorkflowSSEEvent{Type: "done", Data: "stream completed"}
 		}
 	}()
 
@@ -213,7 +220,11 @@ func (wc *WorkflowClient) GenerateWorkflow(ctx context.Context, prompt string, o
 func (wc *WorkflowClient) ExecuteWorkflow(ctx context.Context, req WorkflowExecutionRequest, runner string) (<-chan WorkflowSSEEvent, error) {
 	// Default runner if not specified
 	if runner == "" {
-		runner = "core-testing-2"
+		if defaultRunner := os.Getenv("KUBIYA_DEFAULT_RUNNER"); defaultRunner != "" {
+			runner = defaultRunner
+		} else {
+			runner = "kubiya-hosted" // Default to kubiya-hosted as mentioned
+		}
 	}
 
 	// Build URL with query parameters
@@ -234,17 +245,19 @@ func (wc *WorkflowClient) ExecuteWorkflow(ctx context.Context, req WorkflowExecu
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	// Create a fresh context without timeout for streaming connections
-	// The original context might have a timeout that would interrupt the stream
-	streamingCtx := context.Background()
+	// Use the original context for cancellation but without timeout for streaming
+	// This allows user cancellation (Ctrl+C) while preventing timeout interruption
+	streamingCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	httpReq, err := http.NewRequestWithContext(streamingCtx, http.MethodPost, executeURL, bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
-	// Set headers
+	// Set headers - try UserKey format first (like chat command)
 	httpReq.Header.Set("Authorization", "UserKey "+wc.client.cfg.APIKey)
 	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Accept", "text/event-stream")
 	httpReq.Header.Set("x-vercel-ai-data-stream", "v1") // protocol flag
 	httpReq.Header.Set("Cache-Control", "no-cache")
 	httpReq.Header.Set("Connection", "keep-alive")
@@ -276,13 +289,6 @@ func (wc *WorkflowClient) ExecuteWorkflow(ctx context.Context, req WorkflowExecu
 		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 		
 		for scanner.Scan() {
-			// Check if original context was cancelled
-			select {
-			case <-ctx.Done():
-				return
-			default:
-			}
-			
 			line := scanner.Text()
 
 			// Debug logging
@@ -328,7 +334,13 @@ func (wc *WorkflowClient) ExecuteWorkflow(ctx context.Context, req WorkflowExecu
 			if wc.client.debug {
 				fmt.Printf("[DEBUG] Scanner error: %v\n", err)
 			}
-			events <- WorkflowSSEEvent{Type: "error", Data: err.Error()}
+			events <- WorkflowSSEEvent{Type: "error", Data: fmt.Sprintf("stream reading error: %v", err)}
+		} else {
+			// Scanner finished without error - send done event
+			if wc.client.debug {
+				fmt.Printf("[DEBUG] Stream ended normally\n")
+			}
+			events <- WorkflowSSEEvent{Type: "done", Data: "stream completed"}
 		}
 	}()
 

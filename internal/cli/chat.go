@@ -550,13 +550,13 @@ For inline agents, use --inline with --tools-file or --tools-json to provide cus
 			// Update the message handling loop:
 			for msg := range msgChan {
 				if msg.Error != "" {
-					fmt.Print(style.ErrorStyle.Render("\n❌ Error: " + msg.Error + "\n"))
+					fmt.Fprintf(os.Stderr, "%s\n", style.ErrorStyle.Render("❌ Error: " + msg.Error))
 					return fmt.Errorf("error from server: %s", msg.Error)
 				}
 
 				// Handle system messages
 				if msg.Type == systemMsg {
-					fmt.Print(style.SystemStyle.Render("\n🔄 " + msg.Content + "\n"))
+					fmt.Fprintf(os.Stderr, "%s\n", style.SystemStyle.Render("🔄 " + msg.Content))
 					continue
 				}
 

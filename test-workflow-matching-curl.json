@@ -1,0 +1,30 @@
+{
+  "command": "execute_workflow",
+  "name": "test-data-pipeline",
+  "description": "A test data processing pipeline",
+  "steps": [
+    {
+      "name": "generate-data",
+      "description": "Generate some test data",
+      "executor": {
+        "type": "tool",
+        "config": {
+          "tool_def": {
+            "name": "data-generator", 
+            "description": "Generates sample data",
+            "type": "docker",
+            "image": "python:3.12-slim-bullseye",
+            "with_files": [
+              {
+                "destination": "/tmp/script.py",
+                "content": "#!/usr/bin/env python3\nimport json\nimport random\n\ndata = {\"id\": random.randint(1000, 9999), \"test\": \"success\"}\nprint(json.dumps(data))"
+              }
+            ],
+            "content": "set -e\npython /tmp/script.py"
+          }
+        }
+      },
+      "output": "GENERATED_DATA"
+    }
+  ]
+}

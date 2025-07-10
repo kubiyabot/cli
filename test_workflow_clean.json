@@ -1,0 +1,72 @@
+{
+  "name": "production-incident-workflow",
+  "steps": [
+    {
+      "name": "validate-incident",
+      "command": "\necho \"🔍 VALIDATING INCIDENT PARAMETERS\"\necho \"=================================\"\n\n# Initialize validation status\nVALIDATION_PASSED=true\nMISSING_PARAMS=\"\"\n\n# Validate required parameters\nif [ -z \"${incident_id}\" ]; then\n  echo \"❌ ERROR: incident_id is required\"\n  VALIDATION_PASSED=false\n  MISSING_PARAMS=\"${MISSING_PARAMS} incident_id\"\nfi\n\nif [ -z \"${incident_title}\" ]; then\n  echo \"❌ ERROR: incident_title is required\"\n  VALIDATION_PASSED=false\n  MISSING_PARAMS=\"${MISSING_PARAMS} incident_title\"\nfi\n\nif [ -z \"${incident_severity}\" ]; then\n  echo \"❌ ERROR: incident_severity is required\"\n  VALIDATION_PASSED=false\n  MISSING_PARAMS=\"${MISSING_PARAMS} incident_severity\"\nfi\n\n# NOTE: affected_services validation is now handled by agent\nif [ -z \"${affected_services}\" ]; then\n  echo \"⚠️ WARNING: affected_services not provided - will create validation agent\"\nfi\n\n# Validate severity levels\ncase \"${incident_severity}\" in\n  \"critical\"|\"high\"|\"medium\"|\"low\")\n    echo \"✅ Severity '${incident_severity}' is valid\"\n    ;;\n  *)\n    echo \"❌ ERROR: Invalid severity '${incident_severity}'. Must be: critical, high, medium, or low\"\n    VALIDATION_PASSED=false\n    MISSING_PARAMS=\"${MISSING_PARAMS} valid_severity\"\n    ;;\nesac\n\n# Set validation result\nif [ \"$VALIDATION_PASSED\" = \"true\" ]; then\n  echo \"📋 INCIDENT METADATA:\"\n  echo \"  ID: ${incident_id}\"\n  echo \"  Title: ${incident_title}\"\n  echo \"  Severity: ${incident_severity}\"\n  echo \"  Priority: ${incident_priority}\"\n  echo \"  Owner: ${incident_owner}\"\n  echo \"  Source: ${incident_source}\"\n  echo \"  Affected Services: ${affected_services:-'TBD via agent'}\"\n  echo \"  Customer Impact: ${customer_impact}\"\n  echo \"\"\n  echo \"✅ Incident validation completed successfully\"\nelse\n  echo \"❌ Validation failed. Missing parameters: ${MISSING_PARAMS}\"\n  echo \"⚠️ Continuing workflow to handle validation failure...\"\nfi\n        ",
+      "description": "Validate incident parameters and prerequisites",
+      "executor": {
+        "type": "command",
+        "config": {}
+      },
+      "output": "validation_status"
+    },
+    {
+      "name": "setup-slack-integration",
+      "description": "Initialize Slack integration for incident communications",
+      "executor": {
+        "type": "kubiya",
+        "config": {
+          "url": "api/v1/integration/slack/token/1",
+          "method": "GET",
+          "timeout": 30,
+          "silent": false
+        }
+      },
+      "depends": [
+        "validate-incident"
+      ],
+      "output": "slack_token"
+    },
+    {
+      "name": "handle-validation-failure",
+      "command": "\necho \"🔍 DEBUG: handle-validation-failure step starting\"\necho \"affected_services value: '${affected_services}'\"\n\n# Check if affected_services is provided (if provided, skip this step)\nif [ -n \"${affected_services}\" ]; then\n  echo \"🚫 SKIPPING: affected_services is provided - handle-validation-failure will not run\"\n  echo \"This step only runs when affected_services is missing\"\n  exit 0\nfi\n\necho \"🚨 VALIDATION FAILED - CREATING SERVICE VALIDATION AGENT\"\necho \"Affected services is missing, creating agent to help with validation\"\n\necho \"🤖 AGENT CONFIGURATION:\"\necho \"Agent Name: incident-service-validator-TEMPLATE\"\necho \"Tools Available: 5 tools\"\necho \"- kubectl_get_services: List all cluster services\"\necho \"- validate_service_exists: Validate specific services\"\necho \"- kubectl_cluster_investigation: Comprehensive cluster analysis\"\necho \"- helm_deployments_check: Check recent deployments\"\necho \"- workflow_retrigger: Re-trigger workflow with validated services\"\n\necho \"\"\necho \"💬 AGENT INSTRUCTIONS:\"\necho \"The agent will help users:\"\necho \"1. Discover available Kubernetes services\"\necho \"2. Validate specific service names\"\necho \"3. Re-trigger the workflow with validated services\"\n\necho \"\"\necho \"Posting agent notification to channel: ${slack_channel_id}\"\necho \"Sending Slack message...\"\n\n\necho \"📤 Sending Slack message to ${slack_channel_id}\"\n\n# Prepare message payload\nMESSAGE_PAYLOAD='{\n  \"channel\": \"${slack_channel_id}\",\n  \"text\": \"Service Validation Agent Created\",\n  \"blocks\": {\"blocks\":[{\"type\":\"header\",\"text\":{\"type\":\"plain_text\",\"text\":\"🔍 Service Validation Agent Created\",\"emoji\":true}},{\"type\":\"section\",\"fields\":[{\"type\":\"mrkdwn\",\"text\":\"*Incident:*\\n${incident_title}\"},{\"type\":\"mrkdwn\",\"text\":\"*ID:*\\n${incident_id}\"},{\"type\":\"mrkdwn\",\"text\":\"*Severity:*\\n${incident_severity}\"},{\"type\":\"mrkdwn\",\"text\":\"*Agent:*\\nincident-service-validator-TEMPLATE\"}]},{\"type\":\"section\",\"text\":{\"type\":\"mrkdwn\",\"text\":\"*Available Tools:* 5 Kubernetes investigation tools\"}},{\"type\":\"section\",\"text\":{\"type\":\"mrkdwn\",\"text\":\"The agent will help discover and validate affected services. Please provide the list of affected services when available.\"}}]}\n}'\n\n# Send message using curl\ncurl -X POST \\\n  -H \"Content-type: application/json\" \\\n  -H \"Authorization: Bearer ${SLACK_BOT_TOKEN}\" \\\n  --data \"$MESSAGE_PAYLOAD\" \\\n  https://slack.com/api/chat.postMessage\n\necho \"✅ Slack message sent\"\n\n\necho \"✅ Service validation agent notification sent to Slack\"\n        ",
+      "description": "Send Slack notification when services are missing and create validation agent",
+      "executor": {
+        "type": "command",
+        "config": {}
+      },
+      "depends": [
+        "setup-slack-integration"
+      ],
+      "output": "validation_failure_message"
+    }
+  ],
+  "description": "Production-grade incident response workflow with AI investigation and Slack integration",
+  "env": {
+    "KUBIYA_API_KEY": "***REMOVED***",
+    "KUBIYA_USER_EMAIL": "${KUBIYA_USER_EMAIL}",
+    "KUBIYA_USER_ORG": "default",
+    "INCIDENT_SEVERITY": "medium",
+    "INCIDENT_PRIORITY": "medium"
+  },
+  "params": {
+    "incident_id": "TEMPLATE",
+    "incident_title": "Template Incident",
+    "incident_severity": "medium",
+    "incident_priority": "medium",
+    "incident_body": "Template incident: Template Incident",
+    "incident_url": "https://example.com/incidents/template",
+    "incident_source": "automated-detection",
+    "incident_owner": "unknown@company.com",
+    "slack_channel_id": "#incidents",
+    "notification_channels": "#alerts",
+    "escalation_channel": "#incident-escalation",
+    "investigation_timeout": "600",
+    "max_retries": "3",
+    "investigation_agent": "test-workflow",
+    "customer_impact": "unknown",
+    "affected_services": ""
+  },
+  "runner": "gke-integration"
+}
