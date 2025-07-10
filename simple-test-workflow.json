@@ -1,0 +1,23 @@
+{
+  "command": "execute_workflow",
+  "name": "simple-test-workflow",
+  "description": "Simple workflow to test timeout handling",
+  "steps": [
+    {
+      "name": "test-step",
+      "description": "A simple test step",
+      "executor": {
+        "type": "tool",
+        "config": {
+          "tool_def": {
+            "name": "test-tool",
+            "description": "Simple test tool",
+            "type": "docker",
+            "image": "alpine:latest",
+            "content": "echo 'Hello from test workflow!' && date"
+          }
+        }
+      }
+    }
+  ]
+}

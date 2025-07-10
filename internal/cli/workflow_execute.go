@@ -154,6 +154,9 @@ You can provide variables and choose the runner for execution.`,
 				}
 			}
 
+			// Set the command field as required by the API
+			req.Command = "execute_workflow"
+			
 			// Inject Kubiya API key into workflow environment
 			if req.Env == nil {
 				req.Env = make(map[string]interface{})
@@ -164,12 +167,23 @@ You can provide variables and choose the runner for execution.`,
 				fmt.Printf("[DEBUG] Injected KUBIYA_API_KEY into workflow environment\n")
 			}
 
+			// Show connection status
+			runnerDisplayName := runner
+			if runner == "kubiya-hosted" {
+				runnerDisplayName = "Kubiya Hosted Runner"
+			}
+			fmt.Printf("%s Connecting to %s...", 
+				style.InfoStyle.Render("🔌"), runnerDisplayName)
+			
 			// Execute workflow directly with simple client (like it worked 3 days ago!)
 			workflowClient := client.Workflow()
 			events, err := workflowClient.ExecuteWorkflow(ctx, req, runner)
 			if err != nil {
+				fmt.Printf(" %s\n", style.ErrorStyle.Render("failed!"))
 				return fmt.Errorf("failed to execute workflow: %w", err)
 			}
+			
+			fmt.Printf(" %s\n", style.SuccessStyle.Render("connected!"))
 
 			// Process workflow events 
 			var hasError bool
@@ -276,7 +290,21 @@ You can provide variables and choose the runner for execution.`,
 			if hasError {
 				fmt.Printf("\n%s Workflow execution failed. Check the logs above for details.\n", 
 					style.ErrorStyle.Render("💥"))
-				os.Exit(1)
+				return fmt.Errorf("workflow execution failed")
+			}
+
+			// If we reach here, the stream ended without explicit completion
+			// This could mean the workflow completed successfully but didn't send the completion event
+			fmt.Printf("\n%s Stream ended - checking workflow status...\n", 
+				style.InfoStyle.Render("ℹ️"))
+			
+			if completedSteps >= stepCount && stepCount > 0 {
+				fmt.Printf("%s Workflow appears to have completed successfully (%d/%d steps)\n", 
+					style.SuccessStyle.Render("✅"), completedSteps, stepCount)
+			} else {
+				fmt.Printf("%s Workflow may be incomplete (%d/%d steps completed)\n", 
+					style.WarningStyle.Render("⚠️"), completedSteps, stepCount)
+				return fmt.Errorf("workflow stream ended unexpectedly")
 			}
 
 			return nil
@@ -405,6 +433,7 @@ func buildExecutionRequest(workflow Workflow, vars map[string]interface{}, runne
 	}
 
 	return kubiya.WorkflowExecutionRequest{
+		Command:     "execute_workflow",
 		Name:        workflow.Name,
 		Description: fmt.Sprintf("Execution of %s", workflow.Name),
 		Steps:       steps,

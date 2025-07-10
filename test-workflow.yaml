@@ -1,0 +1,6 @@
+name: test-workflow
+description: Simple test workflow
+schedule: []
+steps:
+  - name: hello
+    command: echo "Hello from workflow!"

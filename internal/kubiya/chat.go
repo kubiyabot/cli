@@ -134,7 +134,7 @@ func (c *Client) SendMessage(ctx context.Context, agentID, message string, sessi
 	req.Header.Set("Cache-Control", "no-cache")
 	req.Header.Set("Connection", "keep-alive")
 
-	client := &http.Client{Timeout: 0}
+	client := &http.Client{Timeout: 0} // No timeout for streaming
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -142,6 +142,14 @@ func (c *Client) SendMessage(ctx context.Context, agentID, message string, sessi
 			logger.Printf("Error executing request: %v", err)
 		}
 		close(messagesChan)
+		// Provide more specific error messages
+		if strings.Contains(err.Error(), "timeout") {
+			return nil, fmt.Errorf("connection timeout - the server may be overloaded")
+		} else if strings.Contains(err.Error(), "refused") {
+			return nil, fmt.Errorf("connection refused - check if the API endpoint is accessible")
+		} else if strings.Contains(err.Error(), "no such host") {
+			return nil, fmt.Errorf("DNS resolution failed - check your network connection")
+		}
 		return nil, fmt.Errorf("failed to execute request: %w", err)
 	}
 
@@ -152,7 +160,24 @@ func (c *Client) SendMessage(ctx context.Context, agentID, message string, sessi
 		if logger != nil {
 			logger.Printf("Unexpected status code: %d, body: %s", resp.StatusCode, string(body))
 		}
-		return nil, fmt.Errorf("unexpected status code: %d, body: %s", resp.StatusCode, string(body))
+		
+		// Provide user-friendly error messages based on status code
+		switch resp.StatusCode {
+		case 401:
+			return nil, fmt.Errorf("authentication failed - check your API key")
+		case 403:
+			return nil, fmt.Errorf("access forbidden - insufficient permissions")
+		case 404:
+			return nil, fmt.Errorf("endpoint not found - check your configuration")
+		case 429:
+			return nil, fmt.Errorf("rate limit exceeded - please try again later")
+		case 500:
+			return nil, fmt.Errorf("server error - please try again later")
+		case 502, 503, 504:
+			return nil, fmt.Errorf("service temporarily unavailable - please try again later")
+		default:
+			return nil, fmt.Errorf("request failed with status %d: %s", resp.StatusCode, string(body))
+		}
 	}
 
 	go func() {
@@ -336,7 +361,7 @@ func (c *Client) SendMessage(ctx context.Context, agentID, message string, sessi
 				logger.Printf("Scanner error: %v", err)
 			}
 			messagesChan <- ChatMessage{
-				Content:    fmt.Sprintf("Stream error: %v", err),
+				Content:    fmt.Sprintf("Connection lost: %v", err),
 				Timestamp:  time.Now().Format(time.RFC3339),
 				SenderName: "System",
 				Type:       "error",
@@ -652,7 +677,7 @@ func (c *Client) SendInlineAgentMessage(ctx context.Context, message, sessionID 
 			if logger != nil {
 				logger.Printf("Scanner error: %v", err)
 			}
-			fmt.Printf("\n❌ Stream error: %v\n", err)
+			fmt.Fprintf(os.Stderr, "\n❌ Connection lost: %v\n", err)
 		}
 	}()
 
