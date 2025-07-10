@@ -438,6 +438,16 @@ You can provide variables and choose the runner for execution.`,
 				case "error":
 					// Additional error details (only shown when watching)
 					// Main error handling is done above regardless of watch mode
+					if event.Error != "" {
+						// Show helpful error messages for common issues
+						if strings.Contains(event.Error, "504") || strings.Contains(event.Error, "Gateway Time-out") {
+							fmt.Printf("%s Server is overloaded. This usually resolves in a few minutes.\n", 
+								style.WarningStyle.Render("⚠️"))
+						} else if strings.Contains(event.Error, "timeout") {
+							fmt.Printf("%s Connection timeout. The server may be experiencing high load.\n", 
+								style.WarningStyle.Render("⚠️"))
+						}
+					}
 				}
 			}
 			}
