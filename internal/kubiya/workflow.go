@@ -158,6 +158,18 @@ func (wc *WorkflowClient) GenerateWorkflow(ctx context.Context, prompt string, o
 		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 		
 		for scanner.Scan() {
+			// Check if context was cancelled
+			select {
+			case <-ctx.Done():
+				select {
+				case events <- WorkflowSSEEvent{Type: "error", Data: fmt.Sprintf("context canceled: %v", ctx.Err())}:
+				case <-time.After(time.Second):
+					// Don't block if channel is full during cancellation
+				}
+				return
+			default:
+			}
+			
 			line := scanner.Text()
 
 			// Debug logging
@@ -177,25 +189,53 @@ func (wc *WorkflowClient) GenerateWorkflow(ctx context.Context, prompt string, o
 
 				switch eventType {
 				case "2": // Data event
-					events <- WorkflowSSEEvent{Type: "data", Data: data}
+					select {
+					case events <- WorkflowSSEEvent{Type: "data", Data: data}:
+					case <-ctx.Done():
+						return
+					}
 				case "3": // Error event with details
-					events <- WorkflowSSEEvent{Type: "data", Data: data} // Process as data to get the error details
+					select {
+					case events <- WorkflowSSEEvent{Type: "data", Data: data}: // Process as data to get the error details
+					case <-ctx.Done():
+						return
+					}
 				case "d": // Done event
-					events <- WorkflowSSEEvent{Type: "done", Data: data}
+					select {
+					case events <- WorkflowSSEEvent{Type: "done", Data: data}:
+					case <-ctx.Done():
+						return
+					}
 				case "e": // Error event
-					events <- WorkflowSSEEvent{Type: "error", Data: data}
+					select {
+					case events <- WorkflowSSEEvent{Type: "error", Data: data}:
+					case <-ctx.Done():
+						return
+					}
 				default:
 					// Unknown event type, treat as data
-					events <- WorkflowSSEEvent{Type: "data", Data: data}
+					select {
+					case events <- WorkflowSSEEvent{Type: "data", Data: data}:
+					case <-ctx.Done():
+						return
+					}
 				}
 			} else if strings.HasPrefix(line, "data: ") {
 				// Standard SSE format
 				data := strings.TrimPrefix(line, "data: ")
-				events <- WorkflowSSEEvent{Type: "data", Data: data}
+				select {
+				case events <- WorkflowSSEEvent{Type: "data", Data: data}:
+				case <-ctx.Done():
+					return
+				}
 			} else if strings.HasPrefix(line, "event: ") {
 				// Standard SSE event type
 				eventType := strings.TrimPrefix(line, "event: ")
-				events <- WorkflowSSEEvent{Type: eventType, Data: ""}
+				select {
+				case events <- WorkflowSSEEvent{Type: eventType, Data: ""}:
+				case <-ctx.Done():
+					return
+				}
 			}
 		}
 
@@ -203,13 +243,21 @@ func (wc *WorkflowClient) GenerateWorkflow(ctx context.Context, prompt string, o
 			if wc.client.debug {
 				fmt.Printf("[DEBUG] Scanner error: %v\n", err)
 			}
-			events <- WorkflowSSEEvent{Type: "error", Data: fmt.Sprintf("stream reading error: %v", err)}
+			select {
+			case events <- WorkflowSSEEvent{Type: "error", Data: fmt.Sprintf("stream reading error: %v", err)}:
+			case <-ctx.Done():
+				return
+			}
 		} else {
 			// Scanner finished without error - send done event
 			if wc.client.debug {
 				fmt.Printf("[DEBUG] Stream ended normally\n")
 			}
-			events <- WorkflowSSEEvent{Type: "done", Data: "stream completed"}
+			select {
+			case events <- WorkflowSSEEvent{Type: "done", Data: "stream completed"}:
+			case <-ctx.Done():
+				return
+			}
 		}
 	}()
 
@@ -245,15 +293,13 @@ func (wc *WorkflowClient) ExecuteWorkflow(ctx context.Context, req WorkflowExecu
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	// Use the original context for cancellation but without timeout for streaming
-	// This allows user cancellation (Ctrl+C) while preventing timeout interruption
-	streamingCtx, cancel := context.WithCancel(ctx)
-	httpReq, err := http.NewRequestWithContext(streamingCtx, http.MethodPost, executeURL, bytes.NewReader(body))
+	// Create HTTP request with user context for proper cancellation handling
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, executeURL, bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
-	// Set headers - try UserKey format first (like chat command)
+	// Set headers - use UserKey format like other CLI commands
 	httpReq.Header.Set("Authorization", "UserKey "+wc.client.cfg.APIKey)
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Accept", "text/event-stream")
@@ -282,13 +328,24 @@ func (wc *WorkflowClient) ExecuteWorkflow(ctx context.Context, req WorkflowExecu
 	go func() {
 		defer close(events)
 		defer resp.Body.Close()
-		defer cancel() // Cancel context when streaming is done
 
 		scanner := bufio.NewScanner(resp.Body)
 		// Increase scanner buffer size for large events
 		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 		
 		for scanner.Scan() {
+			// Check if context was cancelled
+			select {
+			case <-ctx.Done():
+				select {
+				case events <- WorkflowSSEEvent{Type: "error", Data: fmt.Sprintf("context canceled: %v", ctx.Err())}:
+				case <-time.After(time.Second):
+					// Don't block if channel is full during cancellation
+				}
+				return
+			default:
+			}
+			
 			line := scanner.Text()
 
 			// Debug logging
@@ -308,25 +365,53 @@ func (wc *WorkflowClient) ExecuteWorkflow(ctx context.Context, req WorkflowExecu
 
 				switch eventType {
 				case "2": // Data event
-					events <- WorkflowSSEEvent{Type: "data", Data: data}
+					select {
+					case events <- WorkflowSSEEvent{Type: "data", Data: data}:
+					case <-ctx.Done():
+						return
+					}
 				case "3": // Error event with details
-					events <- WorkflowSSEEvent{Type: "data", Data: data} // Process as data to get the error details
+					select {
+					case events <- WorkflowSSEEvent{Type: "data", Data: data}: // Process as data to get the error details
+					case <-ctx.Done():
+						return
+					}
 				case "d": // Done event
-					events <- WorkflowSSEEvent{Type: "done", Data: data}
+					select {
+					case events <- WorkflowSSEEvent{Type: "done", Data: data}:
+					case <-ctx.Done():
+						return
+					}
 				case "e": // Error event
-					events <- WorkflowSSEEvent{Type: "error", Data: data}
+					select {
+					case events <- WorkflowSSEEvent{Type: "error", Data: data}:
+					case <-ctx.Done():
+						return
+					}
 				default:
 					// Unknown event type, treat as data
-					events <- WorkflowSSEEvent{Type: "data", Data: data}
+					select {
+					case events <- WorkflowSSEEvent{Type: "data", Data: data}:
+					case <-ctx.Done():
+						return
+					}
 				}
 			} else if strings.HasPrefix(line, "data: ") {
 				// Standard SSE format
 				data := strings.TrimPrefix(line, "data: ")
-				events <- WorkflowSSEEvent{Type: "data", Data: data}
+				select {
+				case events <- WorkflowSSEEvent{Type: "data", Data: data}:
+				case <-ctx.Done():
+					return
+				}
 			} else if strings.HasPrefix(line, "event: ") {
 				// Standard SSE event type
 				eventType := strings.TrimPrefix(line, "event: ")
-				events <- WorkflowSSEEvent{Type: eventType, Data: ""}
+				select {
+				case events <- WorkflowSSEEvent{Type: eventType, Data: ""}:
+				case <-ctx.Done():
+					return
+				}
 			}
 		}
 
@@ -334,13 +419,21 @@ func (wc *WorkflowClient) ExecuteWorkflow(ctx context.Context, req WorkflowExecu
 			if wc.client.debug {
 				fmt.Printf("[DEBUG] Scanner error: %v\n", err)
 			}
-			events <- WorkflowSSEEvent{Type: "error", Data: fmt.Sprintf("stream reading error: %v", err)}
+			select {
+			case events <- WorkflowSSEEvent{Type: "error", Data: fmt.Sprintf("stream reading error: %v", err)}:
+			case <-ctx.Done():
+				return
+			}
 		} else {
 			// Scanner finished without error - send done event
 			if wc.client.debug {
 				fmt.Printf("[DEBUG] Stream ended normally\n")
 			}
-			events <- WorkflowSSEEvent{Type: "done", Data: "stream completed"}
+			select {
+			case events <- WorkflowSSEEvent{Type: "done", Data: "stream completed"}:
+			case <-ctx.Done():
+				return
+			}
 		}
 	}()
 
