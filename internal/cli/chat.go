@@ -270,7 +270,7 @@ For inline agents, use --inline with --tools-file or --tools-json to provide cus
 
   # Inline agent with tools from file
   kubiya chat --inline --tools-file tools.json --ai-instructions "You are a helpful assistant" \
-    --description "Custom inline agent" --runners "kubiya-prod" -m "kubectl get pods"
+    --description "Custom inline agent" --runners "kubiyamanaged" -m "kubectl get pods"
 
   # Inline agent with tools from JSON string
   kubiya chat --inline --tools-json '[{"name":"echo","description":"Echo tool","content":"echo hello"}]' \
@@ -302,7 +302,7 @@ For inline agents, use --inline with --tools-file or --tools-json to provide cus
 					description = "Inline agent"
 				}
 				if len(runners) == 0 {
-					runners = []string{"kubiya-prod"}
+					runners = []string{"kubiyamanaged"}
 				}
 				if llmModel == "" {
 					llmModel = "azure/gpt-4-32k"
@@ -388,6 +388,19 @@ For inline agents, use --inline with --tools-file or --tools-json to provide cus
 			// Setup client
 			client := kubiya.NewClient(cfg)
 
+			// Add these variables
+			var (
+				toolExecutions map[string]*toolExecution = make(map[string]*toolExecution)
+				messageBuffer  map[string]*chatBuffer    = make(map[string]*chatBuffer)
+				noColor        bool                      = !isatty.IsTerminal(os.Stdout.Fd())
+				connStatus     *connectionStatus
+				toolStats      = &toolCallStats{
+					toolTypes: make(map[string]int),
+				}
+				rawEventLogging = os.Getenv("KUBIYA_RAW_EVENTS") == "1" || debug
+				msgChan        <-chan kubiya.ChatMessage
+			)
+
 			// Handle inline agent
 			if inline {
 				var tools []kubiya.Tool
@@ -442,12 +455,31 @@ For inline agents, use --inline with --tools-file or --tools-json to provide cus
 					}())
 				}
 				
-				// Create inline agent request - modify the message handling to use inline agent
-				return client.SendInlineAgentMessage(cmd.Context(), message, sessionID, context, map[string]interface{}{
+				// Convert tools to the correct format for inline agent
+				inlineTools := make([]map[string]interface{}, len(tools))
+				for i, tool := range tools {
+					inlineTools[i] = map[string]interface{}{
+						"name":         tool.Name,
+						"description":  tool.Description,
+						"content":      tool.Content,
+						"args":         tool.Args,
+						"env":          tool.Env,
+						"secrets":      tool.Secrets,
+						"image":        tool.Image,
+						"icon_url":     tool.IconURL,
+						"alias":        tool.Alias,
+						"with_files":   tool.WithFiles,
+						"with_volumes": tool.WithVolumes,
+					}
+				}
+				
+				// Create inline agent request - use the same message handling as regular agents
+				msgChan, err = client.SendInlineAgentMessage(cmd.Context(), message, sessionID, context, map[string]interface{}{
+					"uuid":                nil,
 					"name":                "inline",
 					"description":         description,
 					"ai_instructions":     aiInstructions,
-					"tools":               tools,
+					"tools":               inlineTools,
 					"runners":             runners,
 					"integrations":        integrations,
 					"secrets":             secrets,
@@ -461,12 +493,19 @@ For inline agents, use --inline with --tools-file or --tools-json to provide cus
 					"tasks":               []string{},
 					"sources":             []string{},
 					"links":               []string{},
-					"uuid":                nil,
+					"image":               "",
+					"additional_data":     map[string]interface{}{},
 				})
+				if err != nil {
+					return err
+				}
+				
+				// Set agentID for inline agent to use the same processing logic
+				agentID = "inline"
 			}
 
 			// Auto-classify by default unless agent is explicitly specified or --no-classify is set
-			shouldClassify := agentID == "" && agentName == "" && !noClassify
+			shouldClassify := agentID == "" && agentName == "" && !noClassify && !inline
 
 			// If auto-classify is enabled (default), use the classification endpoint
 			if shouldClassify {
@@ -586,18 +625,6 @@ For inline agents, use --inline with --tools-file or --tools-json to provide cus
 				return fmt.Errorf("no agent selected - please specify a agent or allow auto-classification")
 			}
 
-			// Add these variables
-			var (
-				toolExecutions map[string]*toolExecution = make(map[string]*toolExecution)
-				messageBuffer  map[string]*chatBuffer    = make(map[string]*chatBuffer)
-				noColor        bool                      = !isatty.IsTerminal(os.Stdout.Fd())
-				connStatus     *connectionStatus
-				toolStats      = &toolCallStats{
-					toolTypes: make(map[string]int),
-				}
-				rawEventLogging = os.Getenv("KUBIYA_RAW_EVENTS") == "1" || debug
-			)
-
 			// Before the message handling loop, add style configuration for non-TTY:
 			if noColor {
 				// Disable all styling for non-TTY environments
@@ -618,18 +645,20 @@ For inline agents, use --inline with --tools-file or --tools-json to provide cus
 					connStatus.runner, connStatus.runnerType)))
 			fmt.Printf("%s\n", style.SpinnerStyle.Render("⏳ Establishing secure connection..."))
 			
-			// Send message with context, with retry mechanism for robustness
-			msgChan, err := client.SendMessageWithContext(cmd.Context(), agentID, enhancedMessage, sessionID, context)
-			if err != nil {
-				// If context method fails, try with retry mechanism
-				if strings.Contains(err.Error(), "connection") || strings.Contains(err.Error(), "timeout") {
-					fmt.Printf("⚠️  Initial connection failed, retrying with enhanced resilience...\n")
-					msgChan, err = client.SendMessageWithRetry(cmd.Context(), agentID, enhancedMessage, sessionID, 3)
-					if err != nil {
-						return fmt.Errorf("failed to send message after retries: %w", err)
+			// Send message with context, with retry mechanism for robustness (skip for inline agents)
+			if !inline {
+				msgChan, err = client.SendMessageWithContext(cmd.Context(), agentID, enhancedMessage, sessionID, context)
+				if err != nil {
+					// If context method fails, try with retry mechanism
+					if strings.Contains(err.Error(), "connection") || strings.Contains(err.Error(), "timeout") {
+						fmt.Printf("⚠️  Initial connection failed, retrying with enhanced resilience...\n")
+						msgChan, err = client.SendMessageWithRetry(cmd.Context(), agentID, enhancedMessage, sessionID, 3)
+						if err != nil {
+							return fmt.Errorf("failed to send message after retries: %w", err)
+						}
+					} else {
+						return err
 					}
-				} else {
-					return err
 				}
 			}
 			
@@ -1038,8 +1067,8 @@ For inline agents, use --inline with --tools-file or --tools-json to provide cus
 				fmt.Println(finalResponse.String())
 			}
 
-			// Handle follow-up for non-interactive sessions without tool execution
-			if !interactive && !toolsExecuted && !hasError && completionReason != "error" {
+			// Handle follow-up for non-interactive sessions without tool execution (skip for inline agents)
+			if !interactive && !toolsExecuted && !hasError && completionReason != "error" && !inline {
 				if debug {
 					fmt.Printf("🔄 No tools executed, sending follow-up prompt\n")
 				}

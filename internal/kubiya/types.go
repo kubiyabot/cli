@@ -134,6 +134,7 @@ type Tool struct {
 	LongRunning bool        `json:"long_running,omitempty"`
 	Metadata    interface{} `json:"metadata,omitempty"` // Can be []string or other formats
 	Mermaid     string      `json:"mermaid,omitempty"`
+	Image       string      `json:"image,omitempty"`
 }
 
 // GetToolFiles returns a list of files associated with this tool,
