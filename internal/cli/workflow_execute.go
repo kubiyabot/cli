@@ -4,7 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
+	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -15,6 +19,447 @@ import (
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 )
+
+// URLInfo represents parsed URL information
+type URLInfo struct {
+	Type        string // "github_repo", "raw_url", "local_file"
+	Original    string
+	RepoURL     string
+	Branch      string
+	FilePath    string
+	IsDirectory bool
+	TempDir     string
+}
+
+// parseWorkflowURL parses a workflow input to determine if it's a URL, GitHub repo, or local file
+func parseWorkflowURL(input string) (*URLInfo, error) {
+	// Check if it's a local file first
+	if !strings.Contains(input, "://") && !strings.HasPrefix(input, "github.com") {
+		if _, err := os.Stat(input); err == nil {
+			return &URLInfo{
+				Type:     "local_file",
+				Original: input,
+				FilePath: input,
+			}, nil
+		}
+	}
+
+	// Parse as URL
+	parsedURL, err := url.Parse(input)
+	if err != nil || parsedURL.Scheme == "" {
+		// Try to parse as GitHub shorthand (e.g., "user/repo" or "github.com/user/repo")
+		if githubInfo := parseGitHubShorthand(input); githubInfo != nil {
+			return githubInfo, nil
+		}
+		return nil, fmt.Errorf("invalid URL or file path: %s", input)
+	}
+
+	// Handle GitHub URLs
+	if strings.Contains(parsedURL.Host, "github.com") {
+		return parseGitHubURL(parsedURL)
+	}
+
+	// Handle raw URLs (direct download)
+	return &URLInfo{
+		Type:     "raw_url",
+		Original: input,
+		FilePath: filepath.Base(parsedURL.Path),
+	}, nil
+}
+
+// parseGitHubShorthand parses GitHub shorthand notation like "user/repo" or "user/repo/path/to/file"
+func parseGitHubShorthand(input string) *URLInfo {
+	// Remove github.com prefix if present
+	input = strings.TrimPrefix(input, "github.com/")
+	input = strings.TrimPrefix(input, "www.github.com/")
+
+	// Basic validation - should have at least owner/repo
+	parts := strings.Split(input, "/")
+	if len(parts) < 2 {
+		return nil
+	}
+
+	owner, repo := parts[0], parts[1]
+	
+	// Extract file path if present (parts[2:])
+	var filePath string
+	if len(parts) > 2 {
+		filePath = strings.Join(parts[2:], "/")
+	}
+
+	return &URLInfo{
+		Type:     "github_repo",
+		Original: input,
+		RepoURL:  fmt.Sprintf("https://github.com/%s/%s.git", owner, repo),
+		Branch:   "main", // default branch
+		FilePath: filePath,
+	}
+}
+
+// parseGitHubURL parses a full GitHub URL
+func parseGitHubURL(parsedURL *url.URL) (*URLInfo, error) {
+	pathParts := strings.Split(strings.Trim(parsedURL.Path, "/"), "/")
+	if len(pathParts) < 2 {
+		return nil, fmt.Errorf("invalid GitHub URL: must contain owner/repo")
+	}
+
+	owner, repo := pathParts[0], pathParts[1]
+	
+	// Remove .git suffix if present
+	repo = strings.TrimSuffix(repo, ".git")
+
+	var branch, filePath string
+	
+	// Handle different GitHub URL formats
+	if len(pathParts) > 2 {
+		if pathParts[2] == "blob" || pathParts[2] == "tree" {
+			// Format: github.com/owner/repo/blob/branch/path/to/file
+			if len(pathParts) > 3 {
+				branch = pathParts[3]
+				if len(pathParts) > 4 {
+					filePath = strings.Join(pathParts[4:], "/")
+				}
+			}
+		} else {
+			// Direct path: github.com/owner/repo/path/to/file
+			filePath = strings.Join(pathParts[2:], "/")
+		}
+	}
+
+	if branch == "" {
+		branch = "main" // default branch
+	}
+
+	return &URLInfo{
+		Type:     "github_repo",
+		Original: parsedURL.String(),
+		RepoURL:  fmt.Sprintf("https://github.com/%s/%s.git", owner, repo),
+		Branch:   branch,
+		FilePath: filePath,
+	}, nil
+}
+
+// fetchWorkflowFromURL downloads or clones the workflow based on URL type
+func fetchWorkflowFromURL(urlInfo *URLInfo) (string, error) {
+	switch urlInfo.Type {
+	case "local_file":
+		return urlInfo.FilePath, nil
+		
+	case "raw_url":
+		return downloadFromRawURL(urlInfo)
+		
+	case "github_repo":
+		return fetchFromGitHubRepo(urlInfo)
+		
+	default:
+		return "", fmt.Errorf("unsupported URL type: %s", urlInfo.Type)
+	}
+}
+
+// downloadFromRawURL downloads a file from a raw URL
+func downloadFromRawURL(urlInfo *URLInfo) (string, error) {
+	fmt.Printf("%s Downloading workflow from URL...\n", style.InfoStyle.Render("📥"))
+	
+	resp, err := http.Get(urlInfo.Original)
+	if err != nil {
+		return "", fmt.Errorf("failed to download from URL: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("failed to download: HTTP %d", resp.StatusCode)
+	}
+
+	// Create temporary file
+	tempFile, err := os.CreateTemp("", "workflow-*."+getFileExtension(urlInfo.FilePath))
+	if err != nil {
+		return "", fmt.Errorf("failed to create temporary file: %w", err)
+	}
+	defer tempFile.Close()
+
+	// Copy content
+	_, err = io.Copy(tempFile, resp.Body)
+	if err != nil {
+		os.Remove(tempFile.Name())
+		return "", fmt.Errorf("failed to write downloaded content: %w", err)
+	}
+
+	fmt.Printf("%s Downloaded to: %s\n", style.SuccessStyle.Render("✅"), tempFile.Name())
+	return tempFile.Name(), nil
+}
+
+// cloneRepositoryWithAuth attempts to clone repository with GitHub authentication
+func cloneRepositoryWithAuth(urlInfo *URLInfo, tempDir string) error {
+	// First, try to get GitHub token from Kubiya integrations
+	var authRepoURL string
+	hasAuth := false
+	
+	// Create a dummy config to access the client
+	if cfg := getCurrentConfig(); cfg != nil {
+		client := kubiya.NewClient(cfg)
+		ctx := context.Background()
+		
+		if token, err := client.GetGitHubToken(ctx); err == nil && token != "" {
+			// Construct authenticated URL
+			// Convert https://github.com/owner/repo.git to https://token@github.com/owner/repo.git
+			if strings.HasPrefix(urlInfo.RepoURL, "https://github.com/") {
+				authRepoURL = strings.Replace(urlInfo.RepoURL, "https://github.com/", 
+					fmt.Sprintf("https://%s@github.com/", token), 1)
+				hasAuth = true
+				fmt.Printf("%s Using GitHub authentication from integrations\n", 
+					style.InfoStyle.Render("🔐"))
+			}
+		} else {
+			// Authentication failed, but continue with public access
+			if cfg.Debug {
+				fmt.Printf("%s GitHub authentication not available: %v\n", 
+					style.DimStyle.Render("ℹ️"), err)
+			}
+			// Show helpful guidance for setting up GitHub integration
+			fmt.Printf("%s For private repositories, set up GitHub integration at:\n", 
+				style.DimStyle.Render("💡"))
+			fmt.Printf("  • Composer App: %s\n", 
+				style.HighlightStyle.Render("https://compose.kubiya.ai"))
+			fmt.Printf("  • API: %s\n", 
+				style.DimStyle.Render("Use the integrations API"))
+			fmt.Printf("  • CLI: %s\n", 
+				style.DimStyle.Render("kubiya integrations --help"))
+		}
+	}
+
+	// Try authenticated clone first if we have auth
+	if hasAuth {
+		cmd := exec.Command("git", "clone", "--depth", "1", "--branch", urlInfo.Branch, authRepoURL, tempDir)
+		cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0") // Disable interactive prompts
+		if err := cmd.Run(); err == nil {
+			fmt.Printf("%s Repository cloned with authentication\n", 
+				style.SuccessStyle.Render("✅"))
+			return nil
+		}
+		
+		// Authenticated clone failed, show helpful message and fallback
+		fmt.Printf("%s Authenticated clone failed, trying public access...\n", 
+			style.WarningStyle.Render("⚠️"))
+	}
+
+	// Fallback to public clone
+	cmd := exec.Command("git", "clone", "--depth", "1", "--branch", urlInfo.Branch, urlInfo.RepoURL, tempDir)
+	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0") // Disable interactive prompts
+	return cmd.Run()
+}
+
+// getCurrentConfig gets the current configuration (helper function)
+var getCurrentConfig = func() *config.Config {
+	// This will be set by the main command execution context
+	// For now, return nil - we'll update this when we have access to the config
+	return nil
+}
+
+// cloneRepositoryWithBranchFallback attempts to clone with auth and branch fallback
+func cloneRepositoryWithBranchFallback(urlInfo *URLInfo, tempDir string) error {
+	// First attempt with specified branch
+	if err := cloneRepositoryWithAuth(urlInfo, tempDir); err == nil {
+		return nil
+	}
+
+	// If the specified branch failed and it's not 'main', try with 'main'
+	if urlInfo.Branch != "main" {
+		fmt.Printf("%s Branch '%s' not found, trying 'main'...\n", 
+			style.WarningStyle.Render("⚠️"), urlInfo.Branch)
+		
+		// Clean up failed attempt
+		os.RemoveAll(tempDir)
+		
+		// Create new temp directory
+		newTempDir, err := os.MkdirTemp("", "kubiya-repo-*")
+		if err != nil {
+			return fmt.Errorf("failed to create temporary directory for main branch: %w", err)
+		}
+		urlInfo.TempDir = newTempDir
+		
+		// Update branch to main and try again
+		originalBranch := urlInfo.Branch
+		urlInfo.Branch = "main"
+		
+		if err := cloneRepositoryWithAuth(urlInfo, newTempDir); err == nil {
+			return nil
+		}
+		
+		// Restore original branch for error reporting
+		urlInfo.Branch = originalBranch
+	}
+
+	// Final attempt without specifying branch (use default)
+	fmt.Printf("%s Trying default branch...\n", style.InfoStyle.Render("📥"))
+	
+	// Clean up previous attempt
+	os.RemoveAll(urlInfo.TempDir)
+	
+	// Create new temp directory
+	finalTempDir, err := os.MkdirTemp("", "kubiya-repo-*")
+	if err != nil {
+		return fmt.Errorf("failed to create temporary directory for default branch: %w", err)
+	}
+	urlInfo.TempDir = finalTempDir
+	
+	// Try without branch specification
+	return cloneRepositoryWithoutBranch(urlInfo, finalTempDir)
+}
+
+// cloneRepositoryWithoutBranch clones without specifying a branch
+func cloneRepositoryWithoutBranch(urlInfo *URLInfo, tempDir string) error {
+	// Try to get GitHub token for authentication
+	var authRepoURL string
+	hasAuth := false
+	
+	if cfg := getCurrentConfig(); cfg != nil {
+		client := kubiya.NewClient(cfg)
+		ctx := context.Background()
+		
+		if token, err := client.GetGitHubToken(ctx); err == nil && token != "" {
+			if strings.HasPrefix(urlInfo.RepoURL, "https://github.com/") {
+				authRepoURL = strings.Replace(urlInfo.RepoURL, "https://github.com/", 
+					fmt.Sprintf("https://%s@github.com/", token), 1)
+				hasAuth = true
+			}
+		}
+	}
+
+	// Try authenticated clone first if we have auth
+	if hasAuth {
+		cmd := exec.Command("git", "clone", "--depth", "1", authRepoURL, tempDir)
+		cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+		if err := cmd.Run(); err == nil {
+			return nil
+		}
+	}
+
+	// Fallback to public clone
+	cmd := exec.Command("git", "clone", "--depth", "1", urlInfo.RepoURL, tempDir)
+	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	return cmd.Run()
+}
+
+// fetchFromGitHubRepo clones repository and finds the workflow file
+func fetchFromGitHubRepo(urlInfo *URLInfo) (string, error) {
+	fmt.Printf("%s Cloning repository...\n", style.InfoStyle.Render("📥"))
+	
+	// Create temporary directory
+	tempDir, err := os.MkdirTemp("", "kubiya-repo-*")
+	if err != nil {
+		return "", fmt.Errorf("failed to create temporary directory: %w", err)
+	}
+	urlInfo.TempDir = tempDir
+
+	// Clone the repository with authentication attempt and branch fallback
+	if err := cloneRepositoryWithBranchFallback(urlInfo, tempDir); err != nil {
+		os.RemoveAll(tempDir)
+		return "", fmt.Errorf("failed to clone repository: %w", err)
+	}
+
+	fmt.Printf("%s Repository cloned to: %s\n", style.SuccessStyle.Render("✅"), tempDir)
+
+	// Find the workflow file
+	workflowPath, err := findWorkflowFile(tempDir, urlInfo.FilePath)
+	if err != nil {
+		os.RemoveAll(tempDir)
+		return "", err
+	}
+
+	return workflowPath, nil
+}
+
+// findWorkflowFile finds a workflow file in the repository
+func findWorkflowFile(repoDir, filePath string) (string, error) {
+	if filePath != "" {
+		// Specific file path provided
+		fullPath := filepath.Join(repoDir, filePath)
+		if _, err := os.Stat(fullPath); err == nil {
+			return fullPath, nil
+		}
+		return "", fmt.Errorf("specified file not found: %s", filePath)
+	}
+
+	// Search for common workflow files
+	commonWorkflowFiles := []string{
+		"workflow.yaml", "workflow.yml", "workflow.json",
+		".github/workflows/*.yaml", ".github/workflows/*.yml",
+		"*.workflow.yaml", "*.workflow.yml", "*.workflow.json",
+		"workflows/*.yaml", "workflows/*.yml", "workflows/*.json",
+	}
+
+	for _, pattern := range commonWorkflowFiles {
+		matches, err := filepath.Glob(filepath.Join(repoDir, pattern))
+		if err == nil && len(matches) > 0 {
+			fmt.Printf("%s Found workflow file: %s\n", style.InfoStyle.Render("🔍"), 
+				strings.TrimPrefix(matches[0], repoDir+"/"))
+			return matches[0], nil
+		}
+	}
+
+	// If no common patterns found, prompt user or list available files
+	return promptUserForWorkflowFile(repoDir)
+}
+
+// promptUserForWorkflowFile helps user select a workflow file from available options
+func promptUserForWorkflowFile(repoDir string) (string, error) {
+	// Find all YAML and JSON files
+	var candidates []string
+	
+	err := filepath.Walk(repoDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil // Continue walking
+		}
+		
+		if info.IsDir() {
+			return nil
+		}
+		
+		ext := strings.ToLower(filepath.Ext(path))
+		if ext == ".yaml" || ext == ".yml" || ext == ".json" {
+			relPath, _ := filepath.Rel(repoDir, path)
+			candidates = append(candidates, relPath)
+		}
+		
+		return nil
+	})
+	
+	if err != nil {
+		return "", fmt.Errorf("failed to search for workflow files: %w", err)
+	}
+
+	if len(candidates) == 0 {
+		return "", fmt.Errorf("no YAML or JSON files found in repository")
+	}
+
+	// For now, return the first candidate (in a real implementation, you'd prompt the user)
+	fmt.Printf("%s Multiple workflow candidates found, using: %s\n", 
+		style.InfoStyle.Render("📄"), candidates[0])
+	fmt.Printf("%s Other candidates: %s\n", 
+		style.DimStyle.Render("ℹ️"), strings.Join(candidates[1:], ", "))
+	
+	return filepath.Join(repoDir, candidates[0]), nil
+}
+
+// getFileExtension returns the file extension for a given filename
+func getFileExtension(filename string) string {
+	ext := filepath.Ext(filename)
+	if ext == "" {
+		// Try to guess from content type or default to yaml
+		return "yaml"
+	}
+	return strings.TrimPrefix(ext, ".")
+}
+
+// cleanupTempFiles removes temporary files created during URL fetching
+func cleanupTempFiles(urlInfo *URLInfo, workflowPath string) {
+	if urlInfo.Type == "raw_url" && workflowPath != urlInfo.Original {
+		os.Remove(workflowPath)
+	}
+	if urlInfo.TempDir != "" {
+		os.RemoveAll(urlInfo.TempDir)
+	}
+}
 
 func newWorkflowExecuteCommand(cfg *config.Config) *cobra.Command {
 	var (
@@ -27,40 +472,50 @@ func newWorkflowExecuteCommand(cfg *config.Config) *cobra.Command {
 	)
 
 	cmd := &cobra.Command{
-		Use:   "execute [workflow-file]",
-		Short: "Execute a workflow from a file",
+		Use:   "execute [workflow-file-or-url]",
+		Short: "Execute a workflow from a file, URL, or GitHub repository",
 		Long: `Execute a workflow defined in a YAML or JSON file.
 
-This command loads a workflow from a file and executes it using the Kubiya API.
-The file can be in YAML (.yaml, .yml) or JSON (.json) format, or the format will be auto-detected.
-You can provide variables and choose the runner for execution.`,
-		Example: `  # Execute a YAML workflow
+This command loads a workflow from various sources and executes it using the Kubiya API:
+• Local files in YAML (.yaml, .yml) or JSON (.json) format
+• Raw URLs pointing to workflow files 
+• GitHub repositories (with automatic cloning and workflow detection)
+• GitHub shorthand notation (owner/repo or owner/repo/path/to/file)
+
+The format will be auto-detected and you can provide variables and choose the runner for execution.`,
+		Example: `  # Execute a local YAML workflow
   kubiya workflow execute deploy.yaml
 
-  # Execute a JSON workflow
-  kubiya workflow execute backup.json
+  # Execute from GitHub repository (shorthand)
+  kubiya workflow execute myorg/deploy-workflows
+  
+  # Execute specific file from GitHub repo
+  kubiya workflow execute myorg/deploy-workflows/production/deploy.yaml
+  
+  # Execute from full GitHub URL
+  kubiya workflow execute https://github.com/myorg/workflows/blob/main/deploy.yaml
+
+  # Execute from raw URL
+  kubiya workflow execute https://raw.githubusercontent.com/myorg/workflows/main/deploy.yaml
 
   # Execute with variables
-  kubiya workflow execute backup.yaml --var env=production --var retention=30
+  kubiya workflow execute myorg/deploy-workflows --var env=production --var retention=30
 
   # Execute with specific runner
-  kubiya workflow execute migrate.json --runner prod-runner
+  kubiya workflow execute https://example.com/workflow.json --runner prod-runner
 
   # Execute with verbose SSE logging
-  kubiya workflow execute long-running --verbose
-
-  # Start from a specific step
-  kubiya workflow execute deploy.yaml --start-from-step "deploy-app"
-
-  # Skip policy validation
-  kubiya workflow execute deploy.yaml --skip-policy-check`,
+  kubiya workflow execute myorg/workflows --verbose`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			client := kubiya.NewClient(cfg)
 			ctx := context.Background()
 
-			// Read and parse workflow file
-			workflowFile := args[0]
+			// Set the config for helper functions
+			getCurrentConfig = func() *config.Config { return cfg }
+
+			// Parse input to determine if it's a URL, GitHub repo, or local file
+			workflowInput := args[0]
 			
 			// Parse variables first
 			vars := make(map[string]interface{})
@@ -70,6 +525,21 @@ You can provide variables and choose the runner for execution.`,
 					vars[parts[0]] = parts[1]
 				}
 			}
+
+			// Parse workflow URL/file
+			urlInfo, err := parseWorkflowURL(workflowInput)
+			if err != nil {
+				return fmt.Errorf("failed to parse workflow input: %w", err)
+			}
+
+			// Fetch workflow from URL/repo/file
+			workflowFile, err := fetchWorkflowFromURL(urlInfo)
+			if err != nil {
+				return fmt.Errorf("failed to fetch workflow: %w", err)
+			}
+
+			// Ensure cleanup of temporary files
+			defer cleanupTempFiles(urlInfo, workflowFile)
 
 			// Parse workflow file (supports both JSON and YAML with auto-detection)
 			workflow, workflowReq, format, err := parseWorkflowFile(workflowFile, vars)
@@ -106,7 +576,25 @@ You can provide variables and choose the runner for execution.`,
 			}
 
 			fmt.Printf("%s Executing workflow: %s\n", style.StatusStyle.Render("🚀"), style.HighlightStyle.Render(req.Name))
-			fmt.Printf("%s %s\n", style.DimStyle.Render("File:"), workflowFile)
+			
+			// Show source information
+			switch urlInfo.Type {
+			case "local_file":
+				fmt.Printf("%s %s\n", style.DimStyle.Render("Source:"), "Local file")
+				fmt.Printf("%s %s\n", style.DimStyle.Render("File:"), workflowFile)
+			case "raw_url":
+				fmt.Printf("%s %s\n", style.DimStyle.Render("Source:"), "Raw URL")
+				fmt.Printf("%s %s\n", style.DimStyle.Render("URL:"), urlInfo.Original)
+			case "github_repo":
+				fmt.Printf("%s %s\n", style.DimStyle.Render("Source:"), "GitHub Repository")
+				fmt.Printf("%s %s\n", style.DimStyle.Render("Repository:"), urlInfo.RepoURL)
+				if urlInfo.Branch != "main" {
+					fmt.Printf("%s %s\n", style.DimStyle.Render("Branch:"), urlInfo.Branch)
+				}
+				if urlInfo.FilePath != "" {
+					fmt.Printf("%s %s\n", style.DimStyle.Render("File:"), urlInfo.FilePath)
+				}
+			}
 			if runner != "" {
 				fmt.Printf("%s %s\n", style.DimStyle.Render("Runner:"), runner)
 			}
