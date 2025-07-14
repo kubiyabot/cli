@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/kubiyabot/cli/internal/config"
@@ -31,6 +32,28 @@ type toolExecution struct {
 	failed     bool
 	status     string // "waiting", "running", "done", "failed"
 	startTime  time.Time
+	runner     string
+	toolCallId string
+}
+
+// Add connection status tracking
+type connectionStatus struct {
+	runner      string
+	runnerType  string // "k8s", "docker", "local", etc.
+	connected   bool
+	connectTime time.Time
+	lastPing    time.Time
+	latency     time.Duration
+}
+
+// Add tool call statistics
+type toolCallStats struct {
+	totalCalls    int
+	activeCalls   int
+	completedCalls int
+	failedCalls   int
+	toolTypes     map[string]int
+	mu            sync.RWMutex
 }
 
 // Add a buffer for chat messages
@@ -568,6 +591,11 @@ For inline agents, use --inline with --tools-file or --tools-json to provide cus
 				toolExecutions map[string]*toolExecution = make(map[string]*toolExecution)
 				messageBuffer  map[string]*chatBuffer    = make(map[string]*chatBuffer)
 				noColor        bool                      = !isatty.IsTerminal(os.Stdout.Fd())
+				connStatus     *connectionStatus
+				toolStats      = &toolCallStats{
+					toolTypes: make(map[string]int),
+				}
+				rawEventLogging = os.Getenv("KUBIYA_RAW_EVENTS") == "1" || debug
 			)
 
 			// Before the message handling loop, add style configuration for non-TTY:
@@ -576,6 +604,20 @@ For inline agents, use --inline with --tools-file or --tools-json to provide cus
 				style.DisableColors()
 			}
 
+			// Initialize connection status
+			connStatus = &connectionStatus{
+				runner:      "kubiya-prod", // Default runner
+				runnerType:  "k8s",
+				connected:   false,
+				connectTime: time.Now(),
+			}
+			
+			// Show enhanced connection status
+			fmt.Printf("%s\n", style.InfoBoxStyle.Render(
+				fmt.Sprintf("🔗 Connecting to agent runner service at: runner://%s (%s)", 
+					connStatus.runner, connStatus.runnerType)))
+			fmt.Printf("%s\n", style.SpinnerStyle.Render("⏳ Establishing secure connection..."))
+			
 			// Send message with context, with retry mechanism for robustness
 			msgChan, err := client.SendMessageWithContext(cmd.Context(), agentID, enhancedMessage, sessionID, context)
 			if err != nil {
@@ -590,6 +632,14 @@ For inline agents, use --inline with --tools-file or --tools-json to provide cus
 					return err
 				}
 			}
+			
+			// Connection established
+			connStatus.connected = true
+			connStatus.lastPing = time.Now()
+			connStatus.latency = time.Since(connStatus.connectTime)
+			fmt.Printf("\r%s\n", style.SuccessStyle.Render(
+				fmt.Sprintf("✅ Connected to runner://%s (%s) - latency: %v", 
+					connStatus.runner, connStatus.runnerType, connStatus.latency)))
 
 			// Read messages and handle session ID
 			var finalResponse strings.Builder
@@ -612,6 +662,12 @@ For inline agents, use --inline with --tools-file or --tools-json to provide cus
 					fmt.Fprintf(os.Stderr, "%s\n", style.ErrorStyle.Render("❌ Error: " + msg.Error))
 					hasError = true
 					return fmt.Errorf("error from server: %s", msg.Error)
+				}
+				
+				// Raw event logging for debugging
+				if rawEventLogging {
+					fmt.Printf("[RAW EVENT] Type: %s, Content: %s, MessageID: %s, Final: %v, SessionID: %s\n",
+						msg.Type, msg.Content, msg.MessageID, msg.Final, msg.SessionID)
 				}
 				
 				// Capture completion reason and session ID from final messages
@@ -651,23 +707,42 @@ For inline agents, use --inline with --tools-file or --tools-json to provide cus
 							}
 
 							if !isDuplicate {
+								// Update tool statistics
+								toolStats.mu.Lock()
+								toolStats.totalCalls++
+								toolStats.activeCalls++
+								toolStats.toolTypes[toolName]++
+								toolStats.mu.Unlock()
+								
 								// Create new tool execution
 								te := &toolExecution{
-									name:      toolName,
-									args:      toolArgs,
-									msgID:     msg.MessageID,
-									status:    "waiting",
-									startTime: time.Now(),
+									name:       toolName,
+									args:       toolArgs,
+									msgID:      msg.MessageID,
+									status:     "waiting",
+									startTime:  time.Now(),
+									runner:     connStatus.runner,
+									toolCallId: msg.MessageID,
 								}
 								toolExecutions[msg.MessageID] = te
 								toolsExecuted = true
 
-								// Enhanced tool execution header with better UX
+								// Enhanced tool execution header with better UX and stats
 								fmt.Printf("\n")
+								
+								// Show tool statistics inline
+								toolStats.mu.RLock()
+								statsStr := fmt.Sprintf("[%d/%d tools]", toolStats.activeCalls, toolStats.totalCalls)
+								if toolStats.activeCalls > 1 {
+									statsStr = fmt.Sprintf("[+%d active tools]", toolStats.activeCalls)
+								}
+								toolStats.mu.RUnlock()
+								
 								fmt.Printf("%s\n", style.InfoBoxStyle.Render(
-									fmt.Sprintf("🚀 %s %s", 
+									fmt.Sprintf("🚀 %s %s %s", 
 										style.ToolNameStyle.Render("EXECUTING"), 
-										style.HighlightStyle.Render(toolName))))
+										style.HighlightStyle.Render(toolName),
+										style.ToolStatsStyle.Render(statsStr))))
 								
 								if toolArgs != "" {
 									prettyArgs := toolArgs
@@ -679,8 +754,9 @@ For inline agents, use --inline with --tools-file or --tools-json to provide cus
 									fmt.Printf("%s\n", style.ToolArgsStyle.Render(fmt.Sprintf("📋 Parameters: %s", prettyArgs)))
 								}
 								
-								// Show waiting indicator with animation
-								fmt.Printf("%s\n", style.SpinnerStyle.Render("⏳ Initializing tool execution..."))
+								// Show waiting indicator with animation and runner info
+								fmt.Printf("%s\n", style.SpinnerStyle.Render(
+									fmt.Sprintf("⏳ Initializing on runner://%s...", connStatus.runner)))
 								fmt.Printf("%s\n", style.ToolDividerStyle.Render(strings.Repeat("─", 50)))
 							}
 						}
@@ -818,6 +894,16 @@ For inline agents, use --inline with --tools-file or --tools-json to provide cus
 							}
 							
 							if te.isComplete {
+								// Update tool statistics
+								toolStats.mu.Lock()
+								toolStats.activeCalls--
+								if te.failed {
+									toolStats.failedCalls++
+								} else {
+									toolStats.completedCalls++
+								}
+								toolStats.mu.Unlock()
+								
 								duration := time.Since(te.startTime).Seconds()
 
 								// Determine status emoji and completion message
@@ -831,13 +917,20 @@ For inline agents, use --inline with --tools-file or --tools-json to provide cus
 									completionStatus = "completed"
 								}
 
+								// Show updated statistics
+								toolStats.mu.RLock()
+								updatedStatsStr := fmt.Sprintf("[%d active, %d completed, %d failed]", 
+									toolStats.activeCalls, toolStats.completedCalls, toolStats.failedCalls)
+								toolStats.mu.RUnlock()
+
 								// Print completion status with enhanced summary
 								fmt.Printf("\n%s\n",
-									style.InfoBoxStyle.Render(fmt.Sprintf("%s %s %s (%0.1fs)",
+									style.InfoBoxStyle.Render(fmt.Sprintf("%s %s %s (%0.1fs) %s",
 										statusEmoji,
 										style.ToolNameStyle.Render(te.name),
 										style.ToolCompleteStyle.Render(strings.ToUpper(completionStatus)),
-										duration)))
+										duration,
+										style.ToolStatsStyle.Render(updatedStatsStr))))
 
 								// Print error summary if failed
 								if te.failed {
@@ -859,7 +952,7 @@ For inline agents, use --inline with --tools-file or --tools-json to provide cus
 									}
 									fmt.Printf("%s %s\n",
 										style.ToolOutputPrefixStyle.Render("📊"),
-										style.ToolSummaryStyle.Render(fmt.Sprintf("Output: %s", sizeStr)))
+										style.ToolSummaryStyle.Render(fmt.Sprintf("Output: %s on runner://%s", sizeStr, te.runner)))
 								}
 								fmt.Printf("%s\n", style.ToolDividerStyle.Render(strings.Repeat("─", 50)))
 								delete(toolExecutions, msgID)

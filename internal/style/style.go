@@ -82,6 +82,10 @@ var (
 				Italic(true).
 				Margin(0, 0, 0, 2)
 
+	ToolStatsStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("#64748B")).
+				Italic(true)
+
 	CodeBlockStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#A3BE8C")).
 			Background(lipgloss.Color("#2E3440")).
@@ -222,6 +226,7 @@ func DisableColors() {
 	SystemStyle = noStyle
 	AgentNameStyle = noStyle
 	ToolSummaryStyle = noStyle
+	ToolStatsStyle = noStyle
 	CodeBlockStyle = noStyle
 	ToolOutputHeaderStyle = noStyle
 	ToolDividerStyle = noStyle
