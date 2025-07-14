@@ -15,6 +15,7 @@
     initializeInstallTabs();
     initializeCodeCopy();
     initializeAnimations();
+    removeLineNumbers();
   });
 
   /**
@@ -427,5 +428,35 @@
   
   // Initialize lazy loading
   document.addEventListener('DOMContentLoaded', initializeLazyLoading);
+
+  /**
+   * Remove line numbers from code blocks
+   */
+  function removeLineNumbers() {
+    // Remove line number elements
+    const lineNumbers = document.querySelectorAll('.line-numbers-rows, .rouge-gutter, .lineno, .rouge-table');
+    lineNumbers.forEach(el => el.remove());
+    
+    // Remove line-numbers class from pre elements
+    const preElements = document.querySelectorAll('pre.line-numbers, .highlight.line-numbers');
+    preElements.forEach(el => el.classList.remove('line-numbers'));
+    
+    // Clean up Rouge table structure
+    const rougeTables = document.querySelectorAll('.rouge-table');
+    rougeTables.forEach(table => {
+      const code = table.querySelector('.rouge-code');
+      if (code && table.parentNode) {
+        table.parentNode.replaceChild(code, table);
+      }
+    });
+    
+    // Ensure clean code structure
+    const codeBlocks = document.querySelectorAll('pre code');
+    codeBlocks.forEach(code => {
+      // Remove any line number artifacts
+      const lineNumbers = code.querySelectorAll('.line-numbers-rows, .rouge-gutter, .lineno');
+      lineNumbers.forEach(el => el.remove());
+    });
+  }
 
 })();
