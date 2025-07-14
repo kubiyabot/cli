@@ -10,6 +10,8 @@
   document.addEventListener('DOMContentLoaded', function() {
     initializeDarkMode();
     initializeNavigation();
+    initializeSidebar();
+    initializeTableOfContents();
     initializeInstallTabs();
     initializeCodeCopy();
     initializeAnimations();
@@ -86,6 +88,127 @@
         navMenu.classList.remove('active');
         navToggle.classList.remove('active');
       });
+    });
+  }
+
+  /**
+   * Sidebar Functionality
+   */
+  function initializeSidebar() {
+    const sidebar = document.getElementById('sidebar');
+    const sidebarOverlay = document.getElementById('sidebar-overlay');
+    const mobileSidebarToggle = document.getElementById('mobile-sidebar-toggle');
+    const sidebarToggle = document.getElementById('sidebar-toggle');
+    
+    if (!sidebar) return;
+    
+    // Mobile sidebar toggle
+    if (mobileSidebarToggle) {
+      mobileSidebarToggle.addEventListener('click', function() {
+        sidebar.classList.add('active');
+        sidebarOverlay.classList.add('active');
+        document.body.style.overflow = 'hidden';
+      });
+    }
+    
+    // Close sidebar
+    function closeSidebar() {
+      sidebar.classList.remove('active');
+      sidebarOverlay.classList.remove('active');
+      document.body.style.overflow = '';
+    }
+    
+    if (sidebarToggle) {
+      sidebarToggle.addEventListener('click', closeSidebar);
+    }
+    
+    if (sidebarOverlay) {
+      sidebarOverlay.addEventListener('click', closeSidebar);
+    }
+    
+    // Close sidebar on escape key
+    document.addEventListener('keydown', function(e) {
+      if (e.key === 'Escape' && sidebar.classList.contains('active')) {
+        closeSidebar();
+      }
+    });
+  }
+
+  /**
+   * Table of Contents Generation
+   */
+  function initializeTableOfContents() {
+    const tocNav = document.getElementById('toc-nav');
+    const contentWrapper = document.querySelector('.content-wrapper');
+    
+    if (!tocNav || !contentWrapper) return;
+    
+    // Find all headings in the content
+    const headings = contentWrapper.querySelectorAll('h1, h2, h3, h4, h5, h6');
+    
+    if (headings.length === 0) return;
+    
+    // Create table of contents
+    const tocList = document.createElement('ul');
+    tocList.className = 'toc-list';
+    
+    headings.forEach((heading, index) => {
+      // Create unique ID for the heading
+      const id = `heading-${index}`;
+      heading.id = id;
+      
+      // Create TOC item
+      const tocItem = document.createElement('li');
+      tocItem.className = `toc-item toc-${heading.tagName.toLowerCase()}`;
+      
+      const tocLink = document.createElement('a');
+      tocLink.href = `#${id}`;
+      tocLink.textContent = heading.textContent;
+      tocLink.className = 'toc-link';
+      
+      tocItem.appendChild(tocLink);
+      tocList.appendChild(tocItem);
+    });
+    
+    tocNav.appendChild(tocList);
+    
+    // Add scroll spy functionality
+    initializeScrollSpy();
+  }
+
+  /**
+   * Scroll Spy for Table of Contents
+   */
+  function initializeScrollSpy() {
+    const tocLinks = document.querySelectorAll('.toc-link');
+    const headings = document.querySelectorAll('.content-wrapper h1, .content-wrapper h2, .content-wrapper h3, .content-wrapper h4, .content-wrapper h5, .content-wrapper h6');
+    
+    if (tocLinks.length === 0 || headings.length === 0) return;
+    
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach(entry => {
+          const id = entry.target.id;
+          const tocLink = document.querySelector(`.toc-link[href="#${id}"]`);
+          
+          if (entry.isIntersecting) {
+            // Remove active class from all links
+            tocLinks.forEach(link => link.classList.remove('active'));
+            // Add active class to current link
+            if (tocLink) {
+              tocLink.classList.add('active');
+            }
+          }
+        });
+      },
+      {
+        rootMargin: '-100px 0px -80% 0px',
+        threshold: 0
+      }
+    );
+    
+    headings.forEach(heading => {
+      observer.observe(heading);
     });
   }
 
