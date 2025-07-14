@@ -1,0 +1,51 @@
+---
+layout: default
+---
+
+<div class="example-header">
+    <h1>{{ page.title }}</h1>
+    {% if page.description %}
+        <p class="example-description">{{ page.description }}</p>
+    {% endif %}
+    
+    <div class="example-meta">
+        {% if page.difficulty %}
+            <span class="badge badge-{{ page.difficulty }}">{{ page.difficulty | capitalize }}</span>
+        {% endif %}
+        {% if page.category %}
+            <span class="badge badge-category">{{ page.category }}</span>
+        {% endif %}
+        {% if page.tags %}
+            {% for tag in page.tags %}
+                <span class="tag">{{ tag }}</span>
+            {% endfor %}
+        {% endif %}
+    </div>
+</div>
+
+<div class="example-content">
+    {{ content }}
+</div>
+
+{% if page.related_examples %}
+<div class="related-examples">
+    <h2>Related Examples</h2>
+    <div class="example-grid">
+        {% for example in page.related_examples %}
+            <div class="example-card">
+                <h3><a href="{{ example.url }}">{{ example.title }}</a></h3>
+                <p>{{ example.description }}</p>
+            </div>
+        {% endfor %}
+    </div>
+</div>
+{% endif %}
+
+<div class="example-footer">
+    <a href="{{ '/pages/examples' | relative_url }}" class="btn btn-secondary">
+        <i class="fas fa-arrow-left"></i> Back to Examples
+    </a>
+    <a href="{{ site.github.repository_url }}/blob/main/{{ page.path }}" class="btn btn-outline">
+        <i class="fab fa-github"></i> View Source
+    </a>
+</div>

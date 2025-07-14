@@ -1,0 +1,41 @@
+<header class="site-header">
+    <nav class="navbar">
+        <div class="container">
+            <div class="navbar-brand">
+                <a href="{{ '/' | relative_url }}">
+                    <img src="{{ '/assets/images/kubiya-logo.png' | relative_url }}" alt="Kubiya" class="logo">
+                    <span class="brand-text">Kubiya CLI</span>
+                </a>
+            </div>
+            
+            <button class="navbar-toggle" type="button" data-toggle="collapse" data-target="#navbar-menu">
+                <span class="sr-only">Toggle navigation</span>
+                <span class="icon-bar"></span>
+                <span class="icon-bar"></span>
+                <span class="icon-bar"></span>
+            </button>
+            
+            <div class="navbar-menu" id="navbar-menu">
+                <ul class="navbar-nav">
+                    {% for item in site.navigation %}
+                        <li class="nav-item">
+                            <a class="nav-link{% if page.url == item.url %} active{% endif %}" 
+                               href="{{ item.url | relative_url }}">
+                                {{ item.title }}
+                            </a>
+                        </li>
+                    {% endfor %}
+                </ul>
+                
+                <div class="navbar-actions">
+                    <a href="{{ site.github.repository_url }}" class="btn btn-outline-primary btn-sm">
+                        <i class="fab fa-github"></i> GitHub
+                    </a>
+                    <a href="https://docs.kubiya.ai" class="btn btn-primary btn-sm">
+                        Get Started
+                    </a>
+                </div>
+            </div>
+        </div>
+    </nav>
+</header>
