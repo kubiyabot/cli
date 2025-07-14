@@ -252,7 +252,7 @@
       
       const copyButton = document.createElement('button');
       copyButton.className = 'copy-button';
-      copyButton.innerHTML = '<i class="fas fa-copy"></i>';
+      copyButton.innerHTML = '<i class="fas fa-copy"></i><span>Copy</span>';
       copyButton.title = 'Copy code';
       copyButton.setAttribute('aria-label', 'Copy code to clipboard');
       
@@ -268,13 +268,15 @@
           await navigator.clipboard.writeText(text);
           
           // Update button to show success
-          copyButton.innerHTML = '<i class="fas fa-check"></i>';
+          copyButton.innerHTML = '<i class="fas fa-check"></i><span>Copied!</span>';
           copyButton.style.background = 'var(--color-success)';
+          copyButton.style.color = 'white';
           copyButton.title = 'Copied!';
           
           setTimeout(() => {
-            copyButton.innerHTML = '<i class="fas fa-copy"></i>';
-            copyButton.style.background = 'var(--color-primary)';
+            copyButton.innerHTML = '<i class="fas fa-copy"></i><span>Copy</span>';
+            copyButton.style.background = '';
+            copyButton.style.color = '';
             copyButton.title = 'Copy code';
           }, 2000);
           
@@ -293,12 +295,14 @@
           
           try {
             document.execCommand('copy');
-            copyButton.innerHTML = '<i class="fas fa-check"></i>';
+            copyButton.innerHTML = '<i class="fas fa-check"></i><span>Copied!</span>';
             copyButton.style.background = 'var(--color-success)';
+            copyButton.style.color = 'white';
             
             setTimeout(() => {
-              copyButton.innerHTML = '<i class="fas fa-copy"></i>';
-              copyButton.style.background = 'var(--color-primary)';
+              copyButton.innerHTML = '<i class="fas fa-copy"></i><span>Copy</span>';
+              copyButton.style.background = '';
+              copyButton.style.color = '';
             }, 2000);
           } catch (err2) {
             console.error('Fallback copy failed:', err2);
