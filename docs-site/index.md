@@ -6,18 +6,20 @@ description: Powerful command-line interface for managing Kubiya sources, server
 
 <div class="hero">
     <div class="container">
-        <h1>🤖 Kubiya CLI</h1>
-        <p>Your Agentic Automation Companion</p>
-        <div class="hero-actions">
-            <a href="{{ '/pages/installation' | relative_url }}" class="btn btn-primary btn-lg">
-                <i class="fas fa-download"></i> Install Now
-            </a>
-            <a href="{{ '/pages/quickstart' | relative_url }}" class="btn btn-outline-primary btn-lg">
-                <i class="fas fa-rocket"></i> Quick Start
-            </a>
-            <a href="{{ '/pages/examples' | relative_url }}" class="btn btn-outline-primary btn-lg">
-                <i class="fas fa-code"></i> Examples
-            </a>
+        <div class="hero-content">
+            <h1>Kubiya CLI</h1>
+            <p>Your Agentic Automation Companion - Powerful command-line interface for managing serverless agents, workflows, and tools with AI-powered automation.</p>
+            <div class="hero-actions">
+                <a href="{{ '/pages/installation' | relative_url }}" class="btn btn-primary btn-lg">
+                    <i class="fas fa-download"></i> Install Now
+                </a>
+                <a href="{{ '/pages/quickstart' | relative_url }}" class="btn btn-lg">
+                    <i class="fas fa-rocket"></i> Quick Start
+                </a>
+                <a href="{{ '/pages/examples' | relative_url }}" class="btn btn-lg">
+                    <i class="fas fa-code"></i> Examples
+                </a>
+            </div>
         </div>
     </div>
 </div>

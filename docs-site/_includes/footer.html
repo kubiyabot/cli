@@ -1,52 +1,15 @@
 <footer class="site-footer">
-    <div class="container">
-        <div class="footer-content">
-            <div class="footer-section">
-                <h3>Kubiya CLI</h3>
-                <p>Your Agentic Automation Companion</p>
-                <div class="social-links">
-                    <a href="{{ site.github.repository_url }}" aria-label="GitHub">
-                        <i class="fab fa-github"></i>
-                    </a>
-                    <a href="https://docs.kubiya.ai" aria-label="Documentation">
-                        <i class="fas fa-book"></i>
-                    </a>
-                </div>
-            </div>
-            
-            <div class="footer-section">
-                <h4>Documentation</h4>
-                <ul>
-                    <li><a href="{{ '/pages/quickstart' | relative_url }}">Quick Start</a></li>
-                    <li><a href="{{ '/pages/installation' | relative_url }}">Installation</a></li>
-                    <li><a href="{{ '/pages/commands' | relative_url }}">Commands</a></li>
-                    <li><a href="{{ '/pages/examples' | relative_url }}">Examples</a></li>
-                </ul>
-            </div>
-            
-            <div class="footer-section">
-                <h4>Resources</h4>
-                <ul>
-                    <li><a href="{{ '/pages/mcp' | relative_url }}">MCP Integration</a></li>
-                    <li><a href="{{ '/pages/api' | relative_url }}">API Reference</a></li>
-                    <li><a href="{{ '/pages/troubleshooting' | relative_url }}">Troubleshooting</a></li>
-                    <li><a href="{{ site.github.repository_url }}/issues">Support</a></li>
-                </ul>
-            </div>
-            
-            <div class="footer-section">
-                <h4>Community</h4>
-                <ul>
-                    <li><a href="{{ site.github.repository_url }}/issues">Issues</a></li>
-                    <li><a href="{{ site.github.repository_url }}/discussions">Discussions</a></li>
-                    <li><a href="{{ site.github.repository_url }}/blob/main/CONTRIBUTING.md">Contributing</a></li>
-                    <li><a href="https://kubiya.ai">Kubiya.ai</a></li>
-                </ul>
-            </div>
-        </div>
-        
-        <div class="footer-bottom">
-            <p>&copy; {{ 'now' | date: '%Y' }} Kubiya. Built with ❤️ by the Kubiya team.</p>
-        </div>
+  <div class="container">
+    <div class="footer-content">
+      <p>
+        &copy; {{ site.time | date: '%Y' }} Kubiya. 
+        Built with <i class="fas fa-heart" style="color: var(--color-danger);"></i> by the Kubiya team.
+      </p>
+      <p>
+        <a href="{{ site.github.repository_url }}">GitHub</a> |
+        <a href="https://docs.kubiya.ai">Documentation</a> |
+        <a href="https://kubiya.ai">Kubiya.ai</a>
+      </p>
     </div>
+  </div>
 </footer>

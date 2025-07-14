@@ -1,181 +1,308 @@
-document.addEventListener('DOMContentLoaded', function() {
-    // Mobile navigation toggle
-    const navToggle = document.querySelector('.navbar-toggle');
-    const navMenu = document.querySelector('.navbar-menu');
+/**
+ * Modern Documentation Site JavaScript
+ * Handles dark mode, navigation, and interactive features
+ */
+
+(function() {
+  'use strict';
+
+  // Initialize when DOM is ready
+  document.addEventListener('DOMContentLoaded', function() {
+    initializeDarkMode();
+    initializeNavigation();
+    initializeInstallTabs();
+    initializeCodeCopy();
+    initializeAnimations();
+  });
+
+  /**
+   * Dark Mode Functionality
+   */
+  function initializeDarkMode() {
+    const darkModeToggle = document.getElementById('dark-mode-toggle');
+    const html = document.documentElement;
     
-    if (navToggle && navMenu) {
-        navToggle.addEventListener('click', function() {
-            navMenu.classList.toggle('active');
-        });
-    }
+    if (!darkModeToggle) return;
+
+    // Check for saved theme preference or default to 'light'
+    const savedTheme = localStorage.getItem('theme');
+    const systemPrefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+    const defaultTheme = savedTheme || (systemPrefersDark ? 'dark' : 'light');
     
-    // Installation tabs
-    const installTabs = document.querySelectorAll('.install-tab');
-    const installContents = document.querySelectorAll('.install-content');
+    // Apply the theme
+    setTheme(defaultTheme);
     
-    installTabs.forEach(tab => {
-        tab.addEventListener('click', function() {
-            const target = this.dataset.tab;
-            
-            // Remove active class from all tabs and contents
-            installTabs.forEach(t => t.classList.remove('active'));
-            installContents.forEach(c => c.classList.remove('active'));
-            
-            // Add active class to clicked tab and corresponding content
-            this.classList.add('active');
-            document.getElementById(target).classList.add('active');
-        });
+    // Toggle theme on button click
+    darkModeToggle.addEventListener('click', function() {
+      const currentTheme = html.getAttribute('data-theme');
+      const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
+      setTheme(newTheme);
     });
     
-    // Copy code blocks
+    // Listen for system theme changes
+    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function(e) {
+      if (!localStorage.getItem('theme')) {
+        setTheme(e.matches ? 'dark' : 'light');
+      }
+    });
+    
+    function setTheme(theme) {
+      html.setAttribute('data-theme', theme);
+      localStorage.setItem('theme', theme);
+      
+      // Update toggle button icon
+      const icon = darkModeToggle.querySelector('i');
+      if (icon) {
+        icon.className = theme === 'dark' ? 'fas fa-sun' : 'fas fa-moon';
+      }
+    }
+  }
+
+  /**
+   * Navigation Functionality
+   */
+  function initializeNavigation() {
+    const navToggle = document.getElementById('navbar-toggle');
+    const navMenu = document.getElementById('navbar-nav');
+    
+    if (!navToggle || !navMenu) return;
+    
+    navToggle.addEventListener('click', function() {
+      navMenu.classList.toggle('active');
+      navToggle.classList.toggle('active');
+    });
+    
+    // Close menu when clicking outside
+    document.addEventListener('click', function(e) {
+      if (!navToggle.contains(e.target) && !navMenu.contains(e.target)) {
+        navMenu.classList.remove('active');
+        navToggle.classList.remove('active');
+      }
+    });
+    
+    // Close menu when clicking on a link
+    navMenu.querySelectorAll('a').forEach(link => {
+      link.addEventListener('click', function() {
+        navMenu.classList.remove('active');
+        navToggle.classList.remove('active');
+      });
+    });
+  }
+
+  /**
+   * Installation Tabs Functionality
+   */
+  function initializeInstallTabs() {
+    const tabs = document.querySelectorAll('.install-tab');
+    const contents = document.querySelectorAll('.install-content');
+    
+    if (tabs.length === 0 || contents.length === 0) return;
+    
+    tabs.forEach(tab => {
+      tab.addEventListener('click', function() {
+        const target = this.dataset.tab;
+        
+        // Remove active class from all tabs and contents
+        tabs.forEach(t => t.classList.remove('active'));
+        contents.forEach(c => c.classList.remove('active'));
+        
+        // Add active class to clicked tab and corresponding content
+        this.classList.add('active');
+        const targetContent = document.getElementById(target);
+        if (targetContent) {
+          targetContent.classList.add('active');
+        }
+      });
+    });
+  }
+
+  /**
+   * Code Copy Functionality
+   */
+  function initializeCodeCopy() {
     const codeBlocks = document.querySelectorAll('pre');
     
     codeBlocks.forEach(block => {
-        const copyButton = document.createElement('button');
-        copyButton.className = 'copy-button';
-        copyButton.innerHTML = '<i class="fas fa-copy"></i>';
-        copyButton.title = 'Copy code';
+      // Skip if already has copy button
+      if (block.querySelector('.copy-button')) return;
+      
+      const copyButton = document.createElement('button');
+      copyButton.className = 'copy-button';
+      copyButton.innerHTML = '<i class="fas fa-copy"></i>';
+      copyButton.title = 'Copy code';
+      copyButton.setAttribute('aria-label', 'Copy code to clipboard');
+      
+      block.appendChild(copyButton);
+      
+      copyButton.addEventListener('click', async function() {
+        const code = block.querySelector('code');
+        if (!code) return;
         
-        block.style.position = 'relative';
-        block.appendChild(copyButton);
+        const text = code.textContent;
         
-        copyButton.addEventListener('click', function() {
-            const code = block.querySelector('code').textContent;
-            navigator.clipboard.writeText(code).then(() => {
-                copyButton.innerHTML = '<i class="fas fa-check"></i>';
-                copyButton.style.color = '#28a745';
-                
-                setTimeout(() => {
-                    copyButton.innerHTML = '<i class="fas fa-copy"></i>';
-                    copyButton.style.color = '';
-                }, 2000);
-            });
-        });
+        try {
+          await navigator.clipboard.writeText(text);
+          
+          // Update button to show success
+          copyButton.innerHTML = '<i class="fas fa-check"></i>';
+          copyButton.style.background = 'var(--color-success)';
+          copyButton.title = 'Copied!';
+          
+          setTimeout(() => {
+            copyButton.innerHTML = '<i class="fas fa-copy"></i>';
+            copyButton.style.background = 'var(--color-primary)';
+            copyButton.title = 'Copy code';
+          }, 2000);
+          
+        } catch (err) {
+          console.error('Failed to copy code:', err);
+          
+          // Fallback for older browsers
+          const textArea = document.createElement('textarea');
+          textArea.value = text;
+          textArea.style.position = 'fixed';
+          textArea.style.left = '-999999px';
+          textArea.style.top = '-999999px';
+          document.body.appendChild(textArea);
+          textArea.focus();
+          textArea.select();
+          
+          try {
+            document.execCommand('copy');
+            copyButton.innerHTML = '<i class="fas fa-check"></i>';
+            copyButton.style.background = 'var(--color-success)';
+            
+            setTimeout(() => {
+              copyButton.innerHTML = '<i class="fas fa-copy"></i>';
+              copyButton.style.background = 'var(--color-primary)';
+            }, 2000);
+          } catch (err2) {
+            console.error('Fallback copy failed:', err2);
+          }
+          
+          document.body.removeChild(textArea);
+        }
+      });
+    });
+  }
+
+  /**
+   * Scroll Animations
+   */
+  function initializeAnimations() {
+    // Intersection Observer for fade-in animations
+    const observerOptions = {
+      threshold: 0.1,
+      rootMargin: '0px 0px -50px 0px'
+    };
+    
+    const observer = new IntersectionObserver((entries) => {
+      entries.forEach(entry => {
+        if (entry.isIntersecting) {
+          entry.target.classList.add('animate-fade-in-up');
+          observer.unobserve(entry.target);
+        }
+      });
+    }, observerOptions);
+    
+    // Observe feature cards and example cards
+    document.querySelectorAll('.feature-card, .example-card').forEach(card => {
+      observer.observe(card);
     });
     
     // Smooth scrolling for anchor links
     document.querySelectorAll('a[href^="#"]').forEach(anchor => {
-        anchor.addEventListener('click', function(e) {
-            e.preventDefault();
-            const target = document.querySelector(this.getAttribute('href'));
-            if (target) {
-                target.scrollIntoView({
-                    behavior: 'smooth',
-                    block: 'start'
-                });
-            }
-        });
+      anchor.addEventListener('click', function(e) {
+        e.preventDefault();
+        
+        const target = document.querySelector(this.getAttribute('href'));
+        if (target) {
+          target.scrollIntoView({
+            behavior: 'smooth',
+            block: 'start'
+          });
+        }
+      });
     });
-    
-    // Search functionality (if search input exists)
+  }
+
+  /**
+   * Search Functionality (if search input exists)
+   */
+  function initializeSearch() {
     const searchInput = document.getElementById('search-input');
-    if (searchInput) {
-        searchInput.addEventListener('input', function() {
-            const query = this.value.toLowerCase();
-            const items = document.querySelectorAll('.searchable-item');
-            
-            items.forEach(item => {
-                const text = item.textContent.toLowerCase();
-                const isMatch = text.includes(query);
-                item.style.display = isMatch ? 'block' : 'none';
-            });
-        });
-    }
+    if (!searchInput) return;
     
-    // Add animation to feature cards
-    const observerOptions = {
-        threshold: 0.1,
-        rootMargin: '0px 0px -100px 0px'
-    };
-    
-    const observer = new IntersectionObserver((entries) => {
-        entries.forEach(entry => {
-            if (entry.isIntersecting) {
-                entry.target.style.opacity = '1';
-                entry.target.style.transform = 'translateY(0)';
-            }
-        });
-    }, observerOptions);
-    
-    document.querySelectorAll('.feature-card').forEach(card => {
-        card.style.opacity = '0';
-        card.style.transform = 'translateY(20px)';
-        card.style.transition = 'opacity 0.6s ease, transform 0.6s ease';
-        observer.observe(card);
+    searchInput.addEventListener('input', function() {
+      const query = this.value.toLowerCase();
+      const searchableItems = document.querySelectorAll('.searchable-item');
+      
+      searchableItems.forEach(item => {
+        const text = item.textContent.toLowerCase();
+        const isMatch = text.includes(query);
+        item.style.display = isMatch ? 'block' : 'none';
+      });
     });
-});
+  }
 
-// Dark mode toggle
-const darkModeToggle = document.createElement('button');
-darkModeToggle.className = 'dark-mode-toggle';
-darkModeToggle.innerHTML = '<i class="fas fa-moon"></i>';
-darkModeToggle.title = 'Toggle dark mode';
+  // Initialize search if needed
+  document.addEventListener('DOMContentLoaded', initializeSearch);
 
-// Add dark mode toggle to navbar actions
-const navbarActions = document.querySelector('.navbar-actions');
-if (navbarActions) {
-    navbarActions.insertBefore(darkModeToggle, navbarActions.firstChild);
-}
-
-// Dark mode functionality
-const isDarkMode = localStorage.getItem('darkMode') === 'true';
-if (isDarkMode) {
-    document.body.classList.add('dark-mode');
-    darkModeToggle.innerHTML = '<i class="fas fa-sun"></i>';
-}
-
-darkModeToggle.addEventListener('click', function() {
-    document.body.classList.toggle('dark-mode');
-    const isDark = document.body.classList.contains('dark-mode');
-    localStorage.setItem('darkMode', isDark);
-    this.innerHTML = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
-});
-
-// Add copy button styling
-const style = document.createElement('style');
-style.textContent = `
-    .copy-button {
-        position: absolute;
-        top: 10px;
-        right: 10px;
-        background: var(--primary-color);
-        color: white;
-        border: none;
-        border-radius: var(--radius-sm);
-        padding: 0.5rem 0.75rem;
-        cursor: pointer;
-        font-size: 0.75rem;
-        opacity: 0;
-        transition: all 0.3s ease;
-        box-shadow: var(--shadow-sm);
+  /**
+   * Keyboard Navigation
+   */
+  document.addEventListener('keydown', function(e) {
+    // Toggle dark mode with Ctrl/Cmd + D
+    if ((e.ctrlKey || e.metaKey) && e.key === 'd') {
+      e.preventDefault();
+      const darkModeToggle = document.getElementById('dark-mode-toggle');
+      if (darkModeToggle) {
+        darkModeToggle.click();
+      }
     }
     
-    pre:hover .copy-button {
-        opacity: 1;
+    // Close mobile menu with Escape
+    if (e.key === 'Escape') {
+      const navMenu = document.getElementById('navbar-nav');
+      const navToggle = document.getElementById('navbar-toggle');
+      if (navMenu && navToggle) {
+        navMenu.classList.remove('active');
+        navToggle.classList.remove('active');
+      }
     }
+  });
+
+  /**
+   * Performance optimizations
+   */
+  
+  // Lazy load images
+  function initializeLazyLoading() {
+    const images = document.querySelectorAll('img[data-src]');
     
-    .copy-button:hover {
-        background: var(--primary-dark);
-        box-shadow: var(--shadow-md);
+    if ('IntersectionObserver' in window) {
+      const imageObserver = new IntersectionObserver((entries) => {
+        entries.forEach(entry => {
+          if (entry.isIntersecting) {
+            const img = entry.target;
+            img.src = img.dataset.src;
+            img.classList.remove('lazy');
+            imageObserver.unobserve(img);
+          }
+        });
+      });
+      
+      images.forEach(img => imageObserver.observe(img));
+    } else {
+      // Fallback for older browsers
+      images.forEach(img => {
+        img.src = img.dataset.src;
+        img.classList.remove('lazy');
+      });
     }
-    
-    .dark-mode-toggle {
-        background: rgba(255, 255, 255, 0.2);
-        color: white;
-        border: none;
-        border-radius: var(--radius-md);
-        padding: 0.5rem;
-        cursor: pointer;
-        font-size: 0.875rem;
-        transition: all 0.3s ease;
-        backdrop-filter: blur(10px);
-        border: 1px solid rgba(255, 255, 255, 0.3);
-        margin-right: 0.5rem;
-    }
-    
-    .dark-mode-toggle:hover {
-        background: rgba(255, 255, 255, 0.3);
-        transform: scale(1.05);
-    }
-`;
-document.head.appendChild(style);
+  }
+  
+  // Initialize lazy loading
+  document.addEventListener('DOMContentLoaded', initializeLazyLoading);
+
+})();
