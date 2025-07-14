@@ -711,31 +711,14 @@ a:hover {
 pre {
   background: var(--color-bg-code);
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-xl);
-  padding: var(--space-xl);
-  margin: var(--space-xl) 0;
+  border-radius: var(--radius-md);
+  padding: var(--space-lg);
+  margin: var(--space-lg) 0;
   overflow-x: auto;
   position: relative;
-  box-shadow: var(--shadow-md);
   font-family: var(--font-mono);
   font-size: 0.9rem;
-  line-height: 1.7;
-  transition: all var(--transition-normal);
-}
-
-pre:hover {
-  box-shadow: var(--shadow-lg);
-}
-
-pre::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 4px;
-  background: linear-gradient(90deg, var(--color-primary), var(--color-accent));
-  border-radius: var(--radius-xl) var(--radius-xl) 0 0;
+  line-height: 1.6;
 }
 
 pre code {
@@ -744,33 +727,23 @@ pre code {
   border: none !important;
   font-family: var(--font-mono);
   font-size: 0.9rem;
-  line-height: 1.7;
+  line-height: 1.6;
   color: var(--color-text-primary);
   display: block;
   white-space: pre;
   word-wrap: normal;
   font-weight: 400;
-  letter-spacing: 0.025em;
 }
 
 /* Inline code */
 code {
   background: var(--color-bg-tertiary);
-  padding: 0.25rem 0.5rem;
-  border-radius: var(--radius-md);
+  padding: 0.2rem 0.4rem;
+  border-radius: var(--radius-sm);
   font-family: var(--font-mono);
-  font-size: 0.85rem;
+  font-size: 0.875rem;
   color: var(--color-primary);
-  border: 1px solid var(--color-border);
   font-weight: 500;
-  letter-spacing: 0.025em;
-  display: inline-block;
-  transition: all var(--transition-fast);
-}
-
-code:hover {
-  background: var(--color-bg-secondary);
-  transform: translateY(-1px);
 }
 
 /* Remove line numbers from code blocks - AGGRESSIVE OVERRIDES */
@@ -834,31 +807,14 @@ pre[class*="language-"].line-numbers .line-numbers-rows,
 .highlight {
   background: var(--color-bg-code) !important;
   border: 1px solid var(--color-border) !important;
-  border-radius: var(--radius-xl) !important;
-  padding: var(--space-xl) !important;
-  margin: var(--space-xl) 0 !important;
+  border-radius: var(--radius-md) !important;
+  padding: var(--space-lg) !important;
+  margin: var(--space-lg) 0 !important;
   overflow-x: auto !important;
   position: relative !important;
-  box-shadow: var(--shadow-md) !important;
   font-family: var(--font-mono) !important;
   font-size: 0.9rem !important;
-  line-height: 1.7 !important;
-  transition: all var(--transition-normal) !important;
-}
-
-.highlight:hover {
-  box-shadow: var(--shadow-lg) !important;
-}
-
-.highlight::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 4px;
-  background: linear-gradient(90deg, var(--color-primary), var(--color-accent));
-  border-radius: var(--radius-xl) var(--radius-xl) 0 0;
+  line-height: 1.6 !important;
 }
 
 /* Force clean code block appearance */
@@ -887,17 +843,13 @@ pre[class*="language-"].line-numbers .line-numbers-rows,
   color: #f8f8f2 !important;
 }
 
-/* Enhanced dark mode syntax highlighting - GitHub Dark theme inspired */
+/* Simple dark mode syntax highlighting */
 [data-theme="dark"] pre code .token.comment,
 [data-theme="dark"] pre code .token.prolog,
 [data-theme="dark"] pre code .token.doctype,
 [data-theme="dark"] pre code .token.cdata {
-  color: #8b949e !important;
-  font-style: italic !important;
-}
-
-[data-theme="dark"] pre code .token.punctuation {
-  color: #f8f8f2 !important;
+  color: #8b949e;
+  font-style: italic;
 }
 
 [data-theme="dark"] pre code .token.property,
@@ -907,8 +859,7 @@ pre[class*="language-"].line-numbers .line-numbers-rows,
 [data-theme="dark"] pre code .token.constant,
 [data-theme="dark"] pre code .token.symbol,
 [data-theme="dark"] pre code .token.deleted {
-  color: #79c0ff !important;
-  font-weight: 500 !important;
+  color: #79c0ff;
 }
 
 [data-theme="dark"] pre code .token.selector,
@@ -917,110 +868,51 @@ pre[class*="language-"].line-numbers .line-numbers-rows,
 [data-theme="dark"] pre code .token.char,
 [data-theme="dark"] pre code .token.builtin,
 [data-theme="dark"] pre code .token.inserted {
-  color: #a5d6ff !important;
-}
-
-[data-theme="dark"] pre code .token.operator,
-[data-theme="dark"] pre code .token.entity,
-[data-theme="dark"] pre code .token.url,
-[data-theme="dark"] pre code .language-css .token.string,
-[data-theme="dark"] pre code .style .token.string {
-  color: #ff7b72 !important;
+  color: #a5d6ff;
 }
 
 [data-theme="dark"] pre code .token.atrule,
 [data-theme="dark"] pre code .token.attr-value,
 [data-theme="dark"] pre code .token.keyword {
-  color: #ff7b72 !important;
-  font-weight: 600 !important;
+  color: #ff7b72;
 }
 
 [data-theme="dark"] pre code .token.function,
 [data-theme="dark"] pre code .token.class-name {
-  color: #d2a8ff !important;
-  font-weight: 500 !important;
+  color: #d2a8ff;
 }
 
-[data-theme="dark"] pre code .token.regex,
-[data-theme="dark"] pre code .token.important,
-[data-theme="dark"] pre code .token.variable {
-  color: #ffa657 !important;
-}
-
-/* Light mode syntax highlighting improvements */
+/* Simple light mode syntax highlighting */
 pre code .token.comment,
 pre code .token.prolog,
 pre code .token.doctype,
 pre code .token.cdata {
-  color: #6a737d !important;
-  font-style: italic !important;
-}
-
-pre code .token.keyword,
-pre code .token.atrule,
-pre code .token.attr-value {
-  font-weight: 600 !important;
-}
-
-pre code .token.function,
-pre code .token.class-name {
-  font-weight: 500 !important;
-}
-
-pre code .token.property,
-pre code .token.tag,
-pre code .token.boolean,
-pre code .token.number,
-pre code .token.constant,
-pre code .token.symbol {
-  font-weight: 500 !important;
+  color: #6a737d;
+  font-style: italic;
 }
 
 .copy-button {
   position: absolute;
-  top: var(--space-md);
-  right: var(--space-md);
-  background: rgba(255, 255, 255, 0.9);
-  color: var(--color-text-primary);
+  top: var(--space-sm);
+  right: var(--space-sm);
+  background: var(--color-bg-secondary);
+  color: var(--color-text-secondary);
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-lg);
-  padding: var(--space-sm) var(--space-md);
-  font-size: 0.8rem;
-  font-weight: 500;
+  border-radius: var(--radius-sm);
+  padding: var(--space-xs) var(--space-sm);
+  font-size: 0.75rem;
   cursor: pointer;
   opacity: 0;
-  transition: all var(--transition-fast);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  box-shadow: var(--shadow-sm);
-  display: flex;
-  align-items: center;
-  gap: var(--space-xs);
+  transition: opacity var(--transition-fast);
 }
 
 pre:hover .copy-button {
   opacity: 1;
-  transform: translateY(-1px);
 }
 
 .copy-button:hover {
-  background: rgba(255, 255, 255, 1);
-  box-shadow: var(--shadow-md);
-  transform: translateY(-2px);
-}
-
-.copy-button:active {
-  transform: translateY(0);
-}
-
-[data-theme="dark"] .copy-button {
-  background: rgba(30, 41, 59, 0.95);
+  background: var(--color-bg-tertiary);
   color: var(--color-text-primary);
-  border-color: var(--color-border);
-}
-
-[data-theme="dark"] .copy-button:hover {
-  background: rgba(30, 41, 59, 1);
 }
 
 /* Install Section */
