@@ -711,12 +711,20 @@ a:hover {
 pre {
   background: var(--color-bg-code);
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-lg);
-  padding: var(--space-lg);
-  margin: var(--space-lg) 0;
+  border-radius: var(--radius-xl);
+  padding: var(--space-xl);
+  margin: var(--space-xl) 0;
   overflow-x: auto;
   position: relative;
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--shadow-md);
+  font-family: var(--font-mono);
+  font-size: 0.9rem;
+  line-height: 1.7;
+  transition: all var(--transition-normal);
+}
+
+pre:hover {
+  box-shadow: var(--shadow-lg);
 }
 
 pre::before {
@@ -725,9 +733,9 @@ pre::before {
   top: 0;
   left: 0;
   right: 0;
-  height: 3px;
-  background: var(--color-primary);
-  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  height: 4px;
+  background: linear-gradient(90deg, var(--color-primary), var(--color-accent));
+  border-radius: var(--radius-xl) var(--radius-xl) 0 0;
 }
 
 pre code {
@@ -736,22 +744,33 @@ pre code {
   border: none !important;
   font-family: var(--font-mono);
   font-size: 0.9rem;
-  line-height: 1.6;
+  line-height: 1.7;
   color: var(--color-text-primary);
   display: block;
   white-space: pre;
   word-wrap: normal;
+  font-weight: 400;
+  letter-spacing: 0.025em;
 }
 
+/* Inline code */
 code {
   background: var(--color-bg-tertiary);
-  padding: 2px 6px;
-  border-radius: var(--radius-sm);
+  padding: 0.25rem 0.5rem;
+  border-radius: var(--radius-md);
   font-family: var(--font-mono);
-  font-size: 0.875rem;
+  font-size: 0.85rem;
   color: var(--color-primary);
   border: 1px solid var(--color-border);
   font-weight: 500;
+  letter-spacing: 0.025em;
+  display: inline-block;
+  transition: all var(--transition-fast);
+}
+
+code:hover {
+  background: var(--color-bg-secondary);
+  transform: translateY(-1px);
 }
 
 /* Remove line numbers from code blocks - AGGRESSIVE OVERRIDES */
@@ -815,12 +834,20 @@ pre[class*="language-"].line-numbers .line-numbers-rows,
 .highlight {
   background: var(--color-bg-code) !important;
   border: 1px solid var(--color-border) !important;
-  border-radius: var(--radius-lg) !important;
-  padding: var(--space-lg) !important;
-  margin: var(--space-lg) 0 !important;
+  border-radius: var(--radius-xl) !important;
+  padding: var(--space-xl) !important;
+  margin: var(--space-xl) 0 !important;
   overflow-x: auto !important;
   position: relative !important;
-  box-shadow: var(--shadow-sm) !important;
+  box-shadow: var(--shadow-md) !important;
+  font-family: var(--font-mono) !important;
+  font-size: 0.9rem !important;
+  line-height: 1.7 !important;
+  transition: all var(--transition-normal) !important;
+}
+
+.highlight:hover {
+  box-shadow: var(--shadow-lg) !important;
 }
 
 .highlight::before {
@@ -829,9 +856,9 @@ pre[class*="language-"].line-numbers .line-numbers-rows,
   top: 0;
   left: 0;
   right: 0;
-  height: 3px;
-  background: var(--color-primary);
-  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  height: 4px;
+  background: linear-gradient(90deg, var(--color-primary), var(--color-accent));
+  border-radius: var(--radius-xl) var(--radius-xl) 0 0;
 }
 
 /* Force clean code block appearance */
@@ -848,25 +875,29 @@ pre[class*="language-"].line-numbers .line-numbers-rows,
 
 /* Dark mode code highlighting */
 [data-theme="dark"] pre,
-[data-theme="dark"] .content-wrapper pre {
+[data-theme="dark"] .content-wrapper pre,
+[data-theme="dark"] .highlight {
   background: var(--color-bg-code) !important;
   border-color: var(--color-border) !important;
 }
 
 [data-theme="dark"] pre code,
-[data-theme="dark"] .content-wrapper pre code {
-  color: #e1e4e8 !important;
+[data-theme="dark"] .content-wrapper pre code,
+[data-theme="dark"] .highlight code {
+  color: #f8f8f2 !important;
 }
 
+/* Enhanced dark mode syntax highlighting - GitHub Dark theme inspired */
 [data-theme="dark"] pre code .token.comment,
 [data-theme="dark"] pre code .token.prolog,
 [data-theme="dark"] pre code .token.doctype,
 [data-theme="dark"] pre code .token.cdata {
-  color: #6a737d !important;
+  color: #8b949e !important;
+  font-style: italic !important;
 }
 
 [data-theme="dark"] pre code .token.punctuation {
-  color: #e1e4e8 !important;
+  color: #f8f8f2 !important;
 }
 
 [data-theme="dark"] pre code .token.property,
@@ -876,7 +907,8 @@ pre[class*="language-"].line-numbers .line-numbers-rows,
 [data-theme="dark"] pre code .token.constant,
 [data-theme="dark"] pre code .token.symbol,
 [data-theme="dark"] pre code .token.deleted {
-  color: #79b8ff !important;
+  color: #79c0ff !important;
+  font-weight: 500 !important;
 }
 
 [data-theme="dark"] pre code .token.selector,
@@ -885,7 +917,7 @@ pre[class*="language-"].line-numbers .line-numbers-rows,
 [data-theme="dark"] pre code .token.char,
 [data-theme="dark"] pre code .token.builtin,
 [data-theme="dark"] pre code .token.inserted {
-  color: #9ecbff !important;
+  color: #a5d6ff !important;
 }
 
 [data-theme="dark"] pre code .token.operator,
@@ -893,47 +925,102 @@ pre[class*="language-"].line-numbers .line-numbers-rows,
 [data-theme="dark"] pre code .token.url,
 [data-theme="dark"] pre code .language-css .token.string,
 [data-theme="dark"] pre code .style .token.string {
-  color: #d1d5da !important;
+  color: #ff7b72 !important;
 }
 
 [data-theme="dark"] pre code .token.atrule,
 [data-theme="dark"] pre code .token.attr-value,
 [data-theme="dark"] pre code .token.keyword {
-  color: #f97583 !important;
+  color: #ff7b72 !important;
+  font-weight: 600 !important;
 }
 
 [data-theme="dark"] pre code .token.function,
 [data-theme="dark"] pre code .token.class-name {
-  color: #b392f0 !important;
+  color: #d2a8ff !important;
+  font-weight: 500 !important;
 }
 
 [data-theme="dark"] pre code .token.regex,
 [data-theme="dark"] pre code .token.important,
 [data-theme="dark"] pre code .token.variable {
-  color: #ffab70 !important;
+  color: #ffa657 !important;
+}
+
+/* Light mode syntax highlighting improvements */
+pre code .token.comment,
+pre code .token.prolog,
+pre code .token.doctype,
+pre code .token.cdata {
+  color: #6a737d !important;
+  font-style: italic !important;
+}
+
+pre code .token.keyword,
+pre code .token.atrule,
+pre code .token.attr-value {
+  font-weight: 600 !important;
+}
+
+pre code .token.function,
+pre code .token.class-name {
+  font-weight: 500 !important;
+}
+
+pre code .token.property,
+pre code .token.tag,
+pre code .token.boolean,
+pre code .token.number,
+pre code .token.constant,
+pre code .token.symbol {
+  font-weight: 500 !important;
 }
 
 .copy-button {
   position: absolute;
-  top: var(--space-sm);
-  right: var(--space-sm);
-  background: var(--color-primary);
-  color: white;
-  border: none;
-  border-radius: var(--radius-md);
-  padding: var(--space-xs) var(--space-sm);
-  font-size: 0.75rem;
+  top: var(--space-md);
+  right: var(--space-md);
+  background: rgba(255, 255, 255, 0.9);
+  color: var(--color-text-primary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-sm) var(--space-md);
+  font-size: 0.8rem;
+  font-weight: 500;
   cursor: pointer;
   opacity: 0;
   transition: all var(--transition-fast);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  box-shadow: var(--shadow-sm);
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
 }
 
 pre:hover .copy-button {
   opacity: 1;
+  transform: translateY(-1px);
 }
 
 .copy-button:hover {
-  background: var(--color-primary-hover);
+  background: rgba(255, 255, 255, 1);
+  box-shadow: var(--shadow-md);
+  transform: translateY(-2px);
+}
+
+.copy-button:active {
+  transform: translateY(0);
+}
+
+[data-theme="dark"] .copy-button {
+  background: rgba(30, 41, 59, 0.95);
+  color: var(--color-text-primary);
+  border-color: var(--color-border);
+}
+
+[data-theme="dark"] .copy-button:hover {
+  background: rgba(30, 41, 59, 1);
 }
 
 /* Install Section */
