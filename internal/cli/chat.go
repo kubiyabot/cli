@@ -576,10 +576,19 @@ For inline agents, use --inline with --tools-file or --tools-json to provide cus
 				style.DisableColors()
 			}
 
-			// Send message with context
+			// Send message with context, with retry mechanism for robustness
 			msgChan, err := client.SendMessageWithContext(cmd.Context(), agentID, enhancedMessage, sessionID, context)
 			if err != nil {
-				return err
+				// If context method fails, try with retry mechanism
+				if strings.Contains(err.Error(), "connection") || strings.Contains(err.Error(), "timeout") {
+					fmt.Printf("⚠️  Initial connection failed, retrying with enhanced resilience...\n")
+					msgChan, err = client.SendMessageWithRetry(cmd.Context(), agentID, enhancedMessage, sessionID, 3)
+					if err != nil {
+						return fmt.Errorf("failed to send message after retries: %w", err)
+					}
+				} else {
+					return err
+				}
 			}
 
 			// Read messages and handle session ID

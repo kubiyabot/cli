@@ -75,6 +75,45 @@ func getOrCreateSession(agentID string) *ChatSession {
 	return session
 }
 
+// SendMessageWithRetry sends a message with retry logic for connection issues
+func (c *Client) SendMessageWithRetry(ctx context.Context, agentID, message string, sessionID string, maxRetries int) (<-chan ChatMessage, error) {
+	var lastErr error
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		if attempt > 0 {
+			// Exponential backoff: 2^attempt seconds
+			waitTime := time.Duration(1<<attempt) * time.Second
+			if logger != nil {
+				logger.Printf("Retry attempt %d/%d after %v", attempt+1, maxRetries, waitTime)
+			}
+			
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(waitTime):
+			}
+		}
+		
+		messagesChan, err := c.SendMessage(ctx, agentID, message, sessionID)
+		if err == nil {
+			return messagesChan, nil
+		}
+		
+		lastErr = err
+		if logger != nil {
+			logger.Printf("Attempt %d failed: %v", attempt+1, err)
+		}
+		
+		// Don't retry on certain errors
+		if strings.Contains(err.Error(), "authentication failed") ||
+		   strings.Contains(err.Error(), "access forbidden") ||
+		   strings.Contains(err.Error(), "rate limit exceeded") {
+			break
+		}
+	}
+	
+	return nil, fmt.Errorf("failed after %d attempts: %w", maxRetries, lastErr)
+}
+
 // SendMessage sends a message to an agent using the workflow-engine compatible streaming approach
 func (c *Client) SendMessage(ctx context.Context, agentID, message string, sessionID string) (<-chan ChatMessage, error) {
 	messagesChan := make(chan ChatMessage, 100)
@@ -192,7 +231,7 @@ func (c *Client) SendMessage(ctx context.Context, agentID, message string, sessi
 		lineCount := 0
 		lastActivityTime := time.Now()
 		
-		// Set up a ticker to check for stream timeout
+		// Set up a ticker to check for stream timeout - increased to 30 minutes for long-running agents
 		ticker := time.NewTicker(30 * time.Second)
 		defer ticker.Stop()
 		
@@ -202,13 +241,13 @@ func (c *Client) SendMessage(ctx context.Context, agentID, message string, sessi
 				case <-ctx.Done():
 					return
 				case <-ticker.C:
-					if time.Since(lastActivityTime) > 5*time.Minute {
+					if time.Since(lastActivityTime) > 30*time.Minute {
 						if logger != nil {
-							logger.Printf("Stream timeout - no activity for 5 minutes")
+							logger.Printf("Stream timeout - no activity for 30 minutes")
 						}
 						// Send timeout message and close
 						messagesChan <- ChatMessage{
-							Content:    "Stream timeout - no activity for 5 minutes",
+							Content:    "Stream timeout - no activity for 30 minutes",
 							Type:       "error",
 							Timestamp:  time.Now().Format(time.RFC3339),
 							SenderName: "System",
@@ -237,6 +276,11 @@ func (c *Client) SendMessage(ctx context.Context, agentID, message string, sessi
 
 			if logger != nil {
 				logger.Printf("Processing line %d: %s", lineCount, line)
+			}
+
+			// Print raw events for debugging (when debug mode is enabled)
+			if os.Getenv("KUBIYA_DEBUG") == "1" || os.Getenv("DEBUG") == "1" {
+				fmt.Printf("[RAW EVENT] %s\n", line)
 			}
 
 			// Handle empty lines gracefully
@@ -316,6 +360,11 @@ func (c *Client) SendMessage(ctx context.Context, agentID, message string, sessi
 					finishReason = reason
 				}
 				
+				// Print raw finish data for debugging
+				if os.Getenv("KUBIYA_DEBUG") == "1" || os.Getenv("DEBUG") == "1" {
+					fmt.Printf("[FINISH DATA] %+v\n", finishData)
+				}
+				
 				messagesChan <- ChatMessage{
 					Content:    textBuilder.String(),
 					Type:       "completion",
@@ -328,7 +377,15 @@ func (c *Client) SendMessage(ctx context.Context, agentID, message string, sessi
 				if logger != nil {
 					logger.Printf("Stream finished with reason: %s", finishReason)
 				}
-				return
+				
+				// Only return if we have a valid finish reason
+				if finishReason != "" {
+					return
+				} else {
+					if logger != nil {
+						logger.Printf("Received finish message without reason, continuing to wait...")
+					}
+				}
 
 			case 'g': // partReasoning
 				var reasoning string
@@ -431,13 +488,28 @@ func (c *Client) SendMessage(ctx context.Context, agentID, message string, sessi
 			if logger != nil {
 				logger.Printf("Scanner error: %v", err)
 			}
-			messagesChan <- ChatMessage{
-				Content:    fmt.Sprintf("Connection lost: %v", err),
-				Timestamp:  time.Now().Format(time.RFC3339),
-				SenderName: "System",
-				Type:       "error",
-				Final:      true,
-				SessionID:  sessionID,
+			
+			// Check if we should attempt reconnection
+			if strings.Contains(err.Error(), "connection") || 
+			   strings.Contains(err.Error(), "network") ||
+			   strings.Contains(err.Error(), "timeout") {
+				messagesChan <- ChatMessage{
+					Content:    fmt.Sprintf("Connection lost: %v - Stream may reconnect automatically", err),
+					Timestamp:  time.Now().Format(time.RFC3339),
+					SenderName: "System",
+					Type:       "warning",
+					Final:      false,
+					SessionID:  sessionID,
+				}
+			} else {
+				messagesChan <- ChatMessage{
+					Content:    fmt.Sprintf("Stream error: %v", err),
+					Timestamp:  time.Now().Format(time.RFC3339),
+					SenderName: "System",
+					Type:       "error",
+					Final:      true,
+					SessionID:  sessionID,
+				}
 			}
 		}
 	}()
@@ -473,14 +545,16 @@ func (c *Client) ReceiveMessages(ctx context.Context, agentID string) (<-chan Ch
 func (c *Client) SendMessageWithContext(ctx context.Context, agentID, message, sessionID string, context map[string]string) (<-chan ChatMessage, error) {
 	var contextMsg strings.Builder
 	contextMsg.WriteString(message)
-	contextMsg.WriteString("\n\nHere's some reference files for context:\n")
-
-	for filename, content := range context {
-		contextMsg.WriteString("\n")
-		contextMsg.WriteString(filename)
-		contextMsg.WriteString(":\n")
-		contextMsg.WriteString(content)
-		contextMsg.WriteString("\n")
+	
+	if len(context) > 0 {
+		contextMsg.WriteString("\n\nHere's some reference files for context:\n")
+		for filename, content := range context {
+			contextMsg.WriteString("\n")
+			contextMsg.WriteString(filename)
+			contextMsg.WriteString(":\n")
+			contextMsg.WriteString(content)
+			contextMsg.WriteString("\n")
+		}
 	}
 
 	return c.SendMessage(ctx, agentID, contextMsg.String(), sessionID)
@@ -623,8 +697,33 @@ func (c *Client) SendInlineAgentMessage(ctx context.Context, message, sessionID 
 		defer close(messagesChan)
 
 		scanner := bufio.NewScanner(resp.Body)
+		// Increase scanner buffer size for large tool outputs
+		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024) // 1MB max token size
+		
 		var textBuilder strings.Builder
 		lineCount := 0
+		lastActivityTime := time.Now()
+		
+		// Set up a ticker to check for stream timeout - increased to 30 minutes for long-running agents
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		
+		go func() {
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+					if time.Since(lastActivityTime) > 30*time.Minute {
+						if logger != nil {
+							logger.Printf("Inline agent stream timeout - no activity for 30 minutes")
+						}
+						fmt.Printf("\n⏰ Stream timeout - no activity for 30 minutes\n")
+						return
+					}
+				}
+			}
+		}()
 
 		for scanner.Scan() {
 			select {
@@ -635,9 +734,15 @@ func (c *Client) SendInlineAgentMessage(ctx context.Context, message, sessionID 
 
 			lineCount++
 			line := scanner.Text()
+			lastActivityTime = time.Now()
 
 			if logger != nil {
 				logger.Printf("Processing line %d: %s", lineCount, line)
+			}
+			
+			// Print raw events for debugging (when debug mode is enabled)
+			if os.Getenv("KUBIYA_DEBUG") == "1" || os.Getenv("DEBUG") == "1" {
+				fmt.Printf("[RAW EVENT] %s\n", line)
 			}
 
 			// Process Vercel AI data-stream protocol
