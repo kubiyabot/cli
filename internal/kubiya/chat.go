@@ -628,7 +628,7 @@ func (c *Client) GetConversationMessages(ctx context.Context, agentID, message, 
 }
 
 // SendInlineAgentMessage sends a message to an inline agent with custom tools
-func (c *Client) SendInlineAgentMessage(ctx context.Context, message, sessionID string, context map[string]string, agentDef map[string]interface{}) error {
+func (c *Client) SendInlineAgentMessage(ctx context.Context, message, sessionID string, context map[string]string, agentDef map[string]interface{}) (<-chan ChatMessage, error) {
 	messagesChan := make(chan ChatMessage, 100)
 	
 	// Add context to the message if provided
@@ -678,7 +678,8 @@ func (c *Client) SendInlineAgentMessage(ctx context.Context, message, sessionID 
 		if logger != nil {
 			logger.Printf("Error marshalling payload: %v", err)
 		}
-		return fmt.Errorf("failed to marshal payload: %w", err)
+		close(messagesChan)
+		return nil, fmt.Errorf("failed to marshal payload: %w", err)
 	}
 
 	req, err := http.NewRequest("POST", reqURL, bytes.NewBuffer(jsonData))
@@ -686,7 +687,8 @@ func (c *Client) SendInlineAgentMessage(ctx context.Context, message, sessionID 
 		if logger != nil {
 			logger.Printf("Error creating request: %v", err)
 		}
-		return fmt.Errorf("failed to create request: %w", err)
+		close(messagesChan)
+		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
 	req.Header.Set("Content-Type", "application/json")
@@ -702,22 +704,24 @@ func (c *Client) SendInlineAgentMessage(ctx context.Context, message, sessionID 
 		if logger != nil {
 			logger.Printf("Error executing request: %v", err)
 		}
-		return fmt.Errorf("failed to execute request: %w", err)
+		close(messagesChan)
+		return nil, fmt.Errorf("failed to execute request: %w", err)
 	}
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
+		close(messagesChan)
 		if logger != nil {
 			logger.Printf("Unexpected status code: %d, body: %s", resp.StatusCode, string(body))
 		}
-		return fmt.Errorf("unexpected status code: %d, body: %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("unexpected status code: %d, body: %s", resp.StatusCode, string(body))
+	}
+	
+	if logger != nil {
+		logger.Printf("HTTP request successful, status: %d, starting stream processing", resp.StatusCode)
 	}
 
-	// Handle the streaming response similar to SendMessage
-	var hasError bool
-	var finishReason string
-	
 	go func() {
 		defer resp.Body.Close()
 		defer close(messagesChan)
@@ -730,9 +734,18 @@ func (c *Client) SendInlineAgentMessage(ctx context.Context, message, sessionID 
 		lineCount := 0
 		lastActivityTime := time.Now()
 		
-		// Set up a ticker to check for stream timeout - increased to 30 minutes for long-running agents
+		// Set up a ticker to check for stream timeout and health - increased to 30 minutes for long-running agents
 		ticker := time.NewTicker(30 * time.Second)
 		defer ticker.Stop()
+		
+		// Stream health monitoring
+		var streamHealthStats struct {
+			lastPing      time.Time
+			totalLines    int
+			errorCount    int
+			reconnectAttempts int
+		}
+		streamHealthStats.lastPing = time.Now()
 		
 		go func() {
 			for {
@@ -740,13 +753,36 @@ func (c *Client) SendInlineAgentMessage(ctx context.Context, message, sessionID 
 				case <-ctx.Done():
 					return
 				case <-ticker.C:
-					if time.Since(lastActivityTime) > 30*time.Minute {
+					now := time.Now()
+					timeSinceLastActivity := now.Sub(lastActivityTime)
+					
+					// Advanced health monitoring
+					if timeSinceLastActivity > 30*time.Minute {
 						if logger != nil {
-							logger.Printf("Inline agent stream timeout - no activity for 30 minutes")
+							logger.Printf("Stream timeout - no activity for 30 minutes")
 						}
-						fmt.Printf("\n⏰ Stream timeout - no activity for 30 minutes\n")
+						// Send timeout message and close
+						messagesChan <- ChatMessage{
+							Content:    "Stream timeout - no activity for 30 minutes",
+							Type:       "error",
+							Timestamp:  time.Now().Format(time.RFC3339),
+							SenderName: "System",
+							Final:      true,
+							SessionID:  sessionID,
+						}
 						return
 					}
+					
+					// Send periodic health status updates
+					if timeSinceLastActivity > 5*time.Minute {
+						if logger != nil {
+							logger.Printf("Stream health check - %d lines processed, %d errors, %v since last activity", 
+								streamHealthStats.totalLines, streamHealthStats.errorCount, timeSinceLastActivity)
+						}
+					}
+					
+					// Update ping time
+					streamHealthStats.lastPing = now
 				}
 			}
 		}()
@@ -754,25 +790,35 @@ func (c *Client) SendInlineAgentMessage(ctx context.Context, message, sessionID 
 		for scanner.Scan() {
 			select {
 			case <-ctx.Done():
+				if logger != nil {
+					logger.Printf("Context cancelled, stopping stream processing")
+				}
 				return
 			default:
 			}
 
 			lineCount++
+			streamHealthStats.totalLines++
 			line := scanner.Text()
 			lastActivityTime = time.Now()
 
 			if logger != nil {
 				logger.Printf("Processing line %d: %s", lineCount, line)
 			}
-			
+
 			// Print raw events for debugging (when debug mode is enabled)
 			if os.Getenv("KUBIYA_DEBUG") == "1" || os.Getenv("DEBUG") == "1" || os.Getenv("KUBIYA_RAW_EVENTS") == "1" {
 				fmt.Printf("[RAW STREAM EVENT] %s\n", line)
 			}
 
+			// Handle empty lines gracefully
+			if strings.TrimSpace(line) == "" {
+				continue
+			}
+
 			// Process Vercel AI data-stream protocol
 			if len(line) < 3 || line[1] != ':' {
+				streamHealthStats.errorCount++
 				if logger != nil {
 					logger.Printf("Malformed line detected: %s", line)
 				}
@@ -793,8 +839,14 @@ func (c *Client) SendInlineAgentMessage(ctx context.Context, message, sessionID 
 				}
 				textBuilder.WriteString(text)
 				
-				// Print the text as it comes
-				fmt.Print(text)
+				messagesChan <- ChatMessage{
+					Content:    textBuilder.String(),
+					Type:       "text",
+					Timestamp:  time.Now().Format(time.RFC3339),
+					SenderName: "Bot",
+					Final:      false,
+					SessionID:  sessionID,
+				}
 
 			case '2': // partData
 				var data []interface{}
@@ -814,8 +866,14 @@ func (c *Client) SendInlineAgentMessage(ctx context.Context, message, sessionID 
 					}
 					continue
 				}
-				fmt.Printf("\n❌ Error: %s\n", errMsg)
-				hasError = true
+				messagesChan <- ChatMessage{
+					Content:    errMsg,
+					Type:       "error",
+					Timestamp:  time.Now().Format(time.RFC3339),
+					SenderName: "System",
+					Final:      true,
+					SessionID:  sessionID,
+				}
 
 			case 'd': // partFinishMessage
 				var finishData map[string]interface{}
@@ -826,20 +884,37 @@ func (c *Client) SendInlineAgentMessage(ctx context.Context, message, sessionID 
 				}
 				
 				// Extract finish reason if available
+				finishReason := ""
 				if reason, ok := finishData["finishReason"].(string); ok {
 					finishReason = reason
 				}
 				
-				if logger != nil {
-					logger.Printf("Inline agent stream finished with reason: %s", finishReason)
+				// Print raw finish data for debugging
+				if os.Getenv("KUBIYA_DEBUG") == "1" || os.Getenv("DEBUG") == "1" {
+					fmt.Printf("[FINISH DATA] %+v\n", finishData)
 				}
 				
-				// Print completion message with reason if available
-				if finishReason != "" && finishReason != "stop" {
-					fmt.Printf("\n🏁 Finished with reason: %s\n", finishReason)
+				messagesChan <- ChatMessage{
+					Content:    textBuilder.String(),
+					Type:       "completion",
+					Timestamp:  time.Now().Format(time.RFC3339),
+					SenderName: "Bot",
+					Final:      true,
+					SessionID:  sessionID,
+					FinishReason: finishReason,
 				}
-				fmt.Println("\n")
-				return
+				if logger != nil {
+					logger.Printf("Stream finished with reason: %s", finishReason)
+				}
+				
+				// Only return if we have a valid finish reason
+				if finishReason != "" {
+					return
+				} else {
+					if logger != nil {
+						logger.Printf("Received finish message without reason, continuing to wait...")
+					}
+				}
 
 			case 'g': // partReasoning
 				var reasoning string
@@ -867,12 +942,23 @@ func (c *Client) SendInlineAgentMessage(ctx context.Context, message, sessionID 
 							argsStr = string(argsBytes)
 						}
 					}
-					fmt.Printf("\n🚀 EXECUTING %s\n", toolName)
-					if argsStr != "" {
-						fmt.Printf("📋 Parameters: %s\n", argsStr)
+					// Generate a unique MessageID for this tool call
+					toolCallID := ""
+					if id, ok := toolCall["toolCallId"].(string); ok {
+						toolCallID = id
 					}
-					fmt.Printf("⏳ Waiting for tool output...\n")
-					fmt.Printf("%s\n", strings.Repeat("─", 50))
+					if toolCallID == "" {
+						toolCallID = uuid.New().String()
+					}
+					messagesChan <- ChatMessage{
+						Content:    fmt.Sprintf("Tool: %s\nArguments: %s", toolName, argsStr),
+						Type:       "tool",
+						Timestamp:  time.Now().Format(time.RFC3339),
+						SenderName: "System",
+						Final:      false,
+						SessionID:  sessionID,
+						MessageID:  toolCallID,
+					}
 				}
 
 			case 'a': // partToolResult
@@ -891,14 +977,33 @@ func (c *Client) SendInlineAgentMessage(ctx context.Context, message, sessionID 
 					}
 				}
 				
-				// Check for errors in tool result
-				if strings.Contains(strings.ToLower(resultStr), "error") || 
-				   strings.Contains(strings.ToLower(resultStr), "failed") ||
-				   strings.Contains(strings.ToLower(resultStr), "fail") {
-					hasError = true
-					fmt.Printf("❌ %s\n", resultStr)
-				} else {
-					fmt.Printf("│ %s\n", resultStr)
+				// Handle streaming tool output with proper buffering
+				if resultStr == "" && toolResult["output"] != nil {
+					if output, ok := toolResult["output"].(string); ok {
+						resultStr = output
+					}
+				}
+				
+				// Use the toolCallId to match with the corresponding tool call
+				toolCallID := ""
+				if id, ok := toolResult["toolCallId"].(string); ok {
+					toolCallID = id
+				}
+				if toolCallID == "" {
+					toolCallID = uuid.New().String()
+				}
+				
+				// Only send non-empty results
+				if strings.TrimSpace(resultStr) != "" {
+					messagesChan <- ChatMessage{
+						Content:    resultStr,
+						Type:       "tool_output",
+						Timestamp:  time.Now().Format(time.RFC3339),
+						SenderName: "System",
+						Final:      false,
+						SessionID:  sessionID,
+						MessageID:  toolCallID,
+					}
 				}
 
 			default:
@@ -912,30 +1017,31 @@ func (c *Client) SendInlineAgentMessage(ctx context.Context, message, sessionID 
 			if logger != nil {
 				logger.Printf("Scanner error: %v", err)
 			}
-			hasError = true
-			fmt.Fprintf(os.Stderr, "\n❌ Connection lost: %v\n", err)
+			
+			// Check if we should attempt reconnection
+			if strings.Contains(err.Error(), "connection") || 
+			   strings.Contains(err.Error(), "network") ||
+			   strings.Contains(err.Error(), "timeout") {
+				messagesChan <- ChatMessage{
+					Content:    fmt.Sprintf("Connection lost: %v - Stream may reconnect automatically", err),
+					Timestamp:  time.Now().Format(time.RFC3339),
+					SenderName: "System",
+					Type:       "warning",
+					Final:      false,
+					SessionID:  sessionID,
+				}
+			} else {
+				messagesChan <- ChatMessage{
+					Content:    fmt.Sprintf("Stream error: %v", err),
+					Timestamp:  time.Now().Format(time.RFC3339),
+					SenderName: "System",
+					Type:       "error",
+					Final:      true,
+					SessionID:  sessionID,
+				}
+			}
 		}
 	}()
 
-	// Wait for the streaming to complete
-	for range messagesChan {
-		// Just consume the messages
-	}
-
-	// Return proper exit code based on completion status
-	if hasError {
-		return fmt.Errorf("inline agent execution completed with errors")
-	}
-	
-	// Check for non-successful completion reasons
-	switch finishReason {
-	case "error":
-		return fmt.Errorf("inline agent execution failed with reason: %s", finishReason)
-	case "stop", "length", "":
-		// Normal successful completion
-		return nil
-	default:
-		// Unknown completion reason - log but don't fail
-		return nil
-	}
+	return messagesChan, nil
 }
