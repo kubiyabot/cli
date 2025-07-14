@@ -606,10 +606,66 @@ func validateAgent(client *kubiya.Client, ctx context.Context, agent *kubiya.Age
 		}
 	}
 
-	// Ensure the starters field is initialized properly
+	// Ensure all required fields are initialized properly
 	if agent.Starters == nil {
 		agent.Starters = []interface{}{}
 	}
+	
+	if agent.Tasks == nil {
+		agent.Tasks = []string{}
+	}
+	
+	if agent.Tools == nil {
+		agent.Tools = []string{}
+	}
+	
+	if agent.Links == nil {
+		agent.Links = []string{}
+	}
+	
+	if agent.Tags == nil {
+		agent.Tags = []string{}
+	}
+	
+	if agent.AllowedUsers == nil {
+		agent.AllowedUsers = []string{}
+	}
+	
+	if agent.AllowedGroups == nil {
+		agent.AllowedGroups = []string{}
+	}
+	
+	if agent.Owners == nil {
+		agent.Owners = []string{}
+	}
+	
+	if agent.Runners == nil {
+		agent.Runners = []string{}
+	}
+	
+	if agent.Environment == nil {
+		agent.Environment = make(map[string]string)
+	}
+	
+	if agent.Secrets == nil {
+		agent.Secrets = []string{}
+	}
+	
+	if agent.Sources == nil {
+		agent.Sources = []string{}
+	}
+	
+	if agent.Integrations == nil {
+		agent.Integrations = []string{}
+	}
+	
+	// Set default image if not provided
+	if agent.Image == "" {
+		agent.Image = "ghcr.io/kubiyabot/kubiya-agent:stable"
+	}
+	
+	// Set UUID to empty string for creation
+	agent.UUID = ""
 
 	return nil
 }

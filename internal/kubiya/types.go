@@ -27,7 +27,7 @@ type Agent struct {
 	InstructionType string            `json:"instruction_type"`
 	LLMModel        string            `json:"llm_model"`
 	Sources         []string          `json:"sources"`
-	Environment     map[string]string `json:"environment"`
+	Environment     map[string]string `json:"environment_variables"`
 	Secrets         []string          `json:"secrets"`
 	AllowedGroups   []string          `json:"allowed_groups"`
 	AllowedUsers    []string          `json:"allowed_users"`
