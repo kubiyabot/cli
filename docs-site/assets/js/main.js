@@ -105,6 +105,32 @@ document.addEventListener('DOMContentLoaded', function() {
     });
 });
 
+// Dark mode toggle
+const darkModeToggle = document.createElement('button');
+darkModeToggle.className = 'dark-mode-toggle';
+darkModeToggle.innerHTML = '<i class="fas fa-moon"></i>';
+darkModeToggle.title = 'Toggle dark mode';
+
+// Add dark mode toggle to navbar actions
+const navbarActions = document.querySelector('.navbar-actions');
+if (navbarActions) {
+    navbarActions.insertBefore(darkModeToggle, navbarActions.firstChild);
+}
+
+// Dark mode functionality
+const isDarkMode = localStorage.getItem('darkMode') === 'true';
+if (isDarkMode) {
+    document.body.classList.add('dark-mode');
+    darkModeToggle.innerHTML = '<i class="fas fa-sun"></i>';
+}
+
+darkModeToggle.addEventListener('click', function() {
+    document.body.classList.toggle('dark-mode');
+    const isDark = document.body.classList.contains('dark-mode');
+    localStorage.setItem('darkMode', isDark);
+    this.innerHTML = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
+});
+
 // Add copy button styling
 const style = document.createElement('style');
 style.textContent = `
@@ -112,15 +138,16 @@ style.textContent = `
         position: absolute;
         top: 10px;
         right: 10px;
-        background: #667eea;
+        background: var(--primary-color);
         color: white;
         border: none;
-        border-radius: 3px;
-        padding: 5px 8px;
+        border-radius: var(--radius-sm);
+        padding: 0.5rem 0.75rem;
         cursor: pointer;
-        font-size: 12px;
+        font-size: 0.75rem;
         opacity: 0;
-        transition: opacity 0.3s ease;
+        transition: all 0.3s ease;
+        box-shadow: var(--shadow-sm);
     }
     
     pre:hover .copy-button {
@@ -128,7 +155,27 @@ style.textContent = `
     }
     
     .copy-button:hover {
-        background: #5a6fd8;
+        background: var(--primary-dark);
+        box-shadow: var(--shadow-md);
+    }
+    
+    .dark-mode-toggle {
+        background: rgba(255, 255, 255, 0.2);
+        color: white;
+        border: none;
+        border-radius: var(--radius-md);
+        padding: 0.5rem;
+        cursor: pointer;
+        font-size: 0.875rem;
+        transition: all 0.3s ease;
+        backdrop-filter: blur(10px);
+        border: 1px solid rgba(255, 255, 255, 0.3);
+        margin-right: 0.5rem;
+    }
+    
+    .dark-mode-toggle:hover {
+        background: rgba(255, 255, 255, 0.3);
+        transform: scale(1.05);
     }
 `;
 document.head.appendChild(style);
