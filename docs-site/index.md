@@ -1,7 +1,7 @@
 ---
 layout: default
 title: Kubiya CLI - Your Agentic Automation Companion
-description: Powerful command-line interface for managing Kubiya sources, serverless agents, and tools. Automate your engineering workflows with AI-powered agents.
+description: Powerful command-line interface for managing Kubiya sources, serverless agents, and tools. Automate your engineering workflows with AI-powered agents available on  the Kubiya Agentic API
 ---
 
 <div class="hero">
