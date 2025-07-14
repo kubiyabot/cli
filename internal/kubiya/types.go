@@ -302,14 +302,15 @@ type ChatResponse struct {
 
 // ChatMessage represents a message in a chat session
 type ChatMessage struct {
-	Content    string `json:"content"`
-	Type       string `json:"type"`
-	MessageID  string `json:"message_id"`
-	Timestamp  string `json:"timestamp"`
-	SenderName string `json:"sender_name"`
-	Final      bool   `json:"final"`
-	SessionID  string `json:"session_id"`
-	Error      string `json:"error"`
+	Content      string `json:"content"`
+	Type         string `json:"type"`
+	MessageID    string `json:"message_id"`
+	Timestamp    string `json:"timestamp"`
+	SenderName   string `json:"sender_name"`
+	Final        bool   `json:"final"`
+	SessionID    string `json:"session_id"`
+	Error        string `json:"error"`
+	FinishReason string `json:"finish_reason,omitempty"`
 }
 
 // Add these new types to support Tool

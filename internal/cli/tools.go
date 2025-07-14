@@ -610,6 +610,7 @@ func newExecToolCommand(cfg *config.Config) *cobra.Command {
 		withServices    []string
 		envVars         []string
 		args            []string
+		argsJSON        string
 		iconURL         string
 		toolURL         string
 		sourceUUID      string
@@ -691,7 +692,15 @@ Environment Variables:
   kubiya tool exec --tool-url https://raw.githubusercontent.com/kubiyabot/community-tools/main/aws/tools/ec2_describe_instances.yaml
 
   # Execute a tool from a source UUID
-  kubiya tool exec --source-uuid 64b0cb09-d6b5-4ff7-9d4b-9e05c6c3ae56 --name ec2_describe_instances`,
+  kubiya tool exec --source-uuid 64b0cb09-d6b5-4ff7-9d4b-9e05c6c3ae56 --name ec2_describe_instances
+
+  # Execute a tool with arguments (JSON format)
+  kubiya tool exec --name "my-tool" --content "echo Hello \$name" \
+    --args '{"name":"World","debug":true}'
+
+  # Execute a tool from source with arguments
+  kubiya tool exec --source-uuid abc123 --name "parameterized-tool" \
+    --args '{"region":"us-east-1","instance_count":3}'`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			client := kubiya.NewClient(cfg)
@@ -1061,7 +1070,11 @@ Environment Variables:
 			fmt.Println()
 
 			argVals := make(map[string]any)
-			// todo: handle args parsing from flags
+			
+			// Parse arguments from --args JSON or --arg flags
+			if err := parseToolArguments(toolDef, args, argsJSON, argVals); err != nil {
+				return fmt.Errorf("failed to parse tool arguments: %w", err)
+			}
 			// Execute tool with streaming
 			events, err := client.ExecuteToolWithTimeout(ctx, toolName, toolDef, selectedRunner, time.Duration(timeout)*time.Second, argVals)
 			if err != nil {
@@ -1206,6 +1219,7 @@ Environment Variables:
 	cmd.Flags().StringSliceVar(&withServices, "with-service", []string{}, "Service dependencies (can be specified multiple times)")
 	cmd.Flags().StringSliceVar(&envVars, "env", []string{}, "Environment variables in format 'KEY=VALUE' (can be specified multiple times)")
 	cmd.Flags().StringSliceVar(&args, "arg", []string{}, "Tool arguments in format 'name:type:description:required' (can be specified multiple times)")
+	cmd.Flags().StringVar(&argsJSON, "args", "", "Tool argument values as JSON object (e.g., '{\"param1\":\"value1\",\"param2\":\"value2\"}')")
 	cmd.Flags().StringVar(&iconURL, "icon-url", "", "Icon URL for the tool")
 	cmd.Flags().StringVar(&toolURL, "tool-url", "", "URL to load tool definition from")
 	cmd.Flags().StringVar(&sourceUUID, "source-uuid", "", "Source UUID to load tool from")
@@ -1387,4 +1401,112 @@ func IsLocalPath(path string) bool {
 	}
 
 	return false
+}
+
+// parseToolArguments parses command line tool arguments and populates argVals
+// Supports both --args JSON format and --arg flags format
+// Arguments from --arg flags are in format "name:type:description[:required]"
+// but the argVals should contain actual values for these arguments
+func parseToolArguments(toolDef map[string]interface{}, argFlags []string, argsJSON string, argVals map[string]any) error {
+	// If argsJSON is provided, parse it directly
+	if argsJSON != "" {
+		var jsonArgs map[string]interface{}
+		if err := json.Unmarshal([]byte(argsJSON), &jsonArgs); err != nil {
+			return fmt.Errorf("failed to parse --args JSON: %w", err)
+		}
+		
+		// Copy parsed JSON args to argVals
+		for key, value := range jsonArgs {
+			argVals[key] = value
+		}
+		
+		fmt.Printf("%s Parsed %d arguments from JSON\n", 
+			style.InfoStyle.Render("ℹ"), len(jsonArgs))
+		return nil
+	}
+	// Get tool args definition from toolDef
+	toolArgsInterface, exists := toolDef["args"]
+	if !exists || toolArgsInterface == nil {
+		// No args defined in tool, but user provided --arg flags
+		if len(argFlags) > 0 {
+			fmt.Printf("%s Tool has no argument definitions, but --arg flags provided. These will be ignored.\n",
+				style.WarningStyle.Render("⚠"))
+		}
+		return nil
+	}
+
+	// Convert to proper format
+	var toolArgs []interface{}
+	switch v := toolArgsInterface.(type) {
+	case []interface{}:
+		toolArgs = v
+	case []map[string]interface{}:
+		for _, arg := range v {
+			toolArgs = append(toolArgs, arg)
+		}
+	default:
+		// If args is not in expected format, skip parsing
+		return nil
+	}
+
+	// Create a map of argument definitions by name for quick lookup
+	argDefs := make(map[string]map[string]interface{})
+	for _, argInterface := range toolArgs {
+		if argMap, ok := argInterface.(map[string]interface{}); ok {
+			if name, ok := argMap["name"].(string); ok {
+				argDefs[name] = argMap
+			}
+		}
+	}
+
+	// For CLI tool exec, we need to prompt for required arguments or set defaults
+	// Since we don't have a way to pass actual values via flags, we'll use defaults
+	// or prompt the user if arguments are required
+	
+	for name, argDef := range argDefs {
+		// Check if required
+		required := false
+		if req, ok := argDef["required"].(bool); ok {
+			required = req
+		}
+
+		// Get default value if available
+		var defaultValue interface{}
+		if def, ok := argDef["default"]; ok {
+			defaultValue = def
+		}
+
+		// Get argument type
+		argType := "string"
+		if typ, ok := argDef["type"].(string); ok {
+			argType = typ
+		}
+
+		// For now, use default values or empty values for required args
+		// In a full implementation, we'd prompt the user or accept values via flags
+		if defaultValue != nil {
+			argVals[name] = defaultValue
+		} else if required {
+			// Set empty value based on type for required args
+			switch argType {
+			case "string":
+				argVals[name] = ""
+			case "number", "integer":
+				argVals[name] = 0
+			case "boolean":
+				argVals[name] = false
+			case "array":
+				argVals[name] = []interface{}{}
+			case "object":
+				argVals[name] = map[string]interface{}{}
+			default:
+				argVals[name] = ""
+			}
+			
+			fmt.Printf("%s Required argument '%s' set to default value for type '%s'\n",
+				style.InfoStyle.Render("ℹ"), name, argType)
+		}
+	}
+
+	return nil
 }

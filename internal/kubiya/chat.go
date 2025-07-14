@@ -185,21 +185,63 @@ func (c *Client) SendMessage(ctx context.Context, agentID, message string, sessi
 		defer close(messagesChan)
 
 		scanner := bufio.NewScanner(resp.Body)
+		// Increase scanner buffer size for large tool outputs
+		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024) // 1MB max token size
+		
 		var textBuilder strings.Builder
 		lineCount := 0
+		lastActivityTime := time.Now()
+		
+		// Set up a ticker to check for stream timeout
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		
+		go func() {
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+					if time.Since(lastActivityTime) > 5*time.Minute {
+						if logger != nil {
+							logger.Printf("Stream timeout - no activity for 5 minutes")
+						}
+						// Send timeout message and close
+						messagesChan <- ChatMessage{
+							Content:    "Stream timeout - no activity for 5 minutes",
+							Type:       "error",
+							Timestamp:  time.Now().Format(time.RFC3339),
+							SenderName: "System",
+							Final:      true,
+							SessionID:  sessionID,
+						}
+						return
+					}
+				}
+			}
+		}()
 
 		for scanner.Scan() {
 			select {
 			case <-ctx.Done():
+				if logger != nil {
+					logger.Printf("Context cancelled, stopping stream processing")
+				}
 				return
 			default:
 			}
 
 			lineCount++
 			line := scanner.Text()
+			lastActivityTime = time.Now()
 
 			if logger != nil {
 				logger.Printf("Processing line %d: %s", lineCount, line)
+			}
+
+			// Handle empty lines gracefully
+			if strings.TrimSpace(line) == "" {
+				continue
 			}
 
 			// Process Vercel AI data-stream protocol
@@ -261,6 +303,19 @@ func (c *Client) SendMessage(ctx context.Context, agentID, message string, sessi
 				}
 
 			case 'd': // partFinishMessage
+				var finishData map[string]interface{}
+				if err := json.Unmarshal([]byte(payload), &finishData); err != nil {
+					if logger != nil {
+						logger.Printf("Failed to unmarshal finish message: %v", err)
+					}
+				}
+				
+				// Extract finish reason if available
+				finishReason := ""
+				if reason, ok := finishData["finishReason"].(string); ok {
+					finishReason = reason
+				}
+				
 				messagesChan <- ChatMessage{
 					Content:    textBuilder.String(),
 					Type:       "completion",
@@ -268,6 +323,10 @@ func (c *Client) SendMessage(ctx context.Context, agentID, message string, sessi
 					SenderName: "Bot",
 					Final:      true,
 					SessionID:  sessionID,
+					FinishReason: finishReason,
+				}
+				if logger != nil {
+					logger.Printf("Stream finished with reason: %s", finishReason)
 				}
 				return
 
@@ -331,6 +390,14 @@ func (c *Client) SendMessage(ctx context.Context, agentID, message string, sessi
 						resultStr = string(resultBytes)
 					}
 				}
+				
+				// Handle streaming tool output with proper buffering
+				if resultStr == "" && toolResult["output"] != nil {
+					if output, ok := toolResult["output"].(string); ok {
+						resultStr = output
+					}
+				}
+				
 				// Use the toolCallId to match with the corresponding tool call
 				toolCallID := ""
 				if id, ok := toolResult["toolCallId"].(string); ok {
@@ -339,14 +406,18 @@ func (c *Client) SendMessage(ctx context.Context, agentID, message string, sessi
 				if toolCallID == "" {
 					toolCallID = uuid.New().String()
 				}
-				messagesChan <- ChatMessage{
-					Content:    resultStr,
-					Type:       "tool_output",
-					Timestamp:  time.Now().Format(time.RFC3339),
-					SenderName: "System",
-					Final:      false,
-					SessionID:  sessionID,
-					MessageID:  toolCallID,
+				
+				// Only send non-empty results
+				if strings.TrimSpace(resultStr) != "" {
+					messagesChan <- ChatMessage{
+						Content:    resultStr,
+						Type:       "tool_output",
+						Timestamp:  time.Now().Format(time.RFC3339),
+						SenderName: "System",
+						Final:      false,
+						SessionID:  sessionID,
+						MessageID:  toolCallID,
+					}
 				}
 
 			default:
@@ -544,6 +615,9 @@ func (c *Client) SendInlineAgentMessage(ctx context.Context, message, sessionID 
 	}
 
 	// Handle the streaming response similar to SendMessage
+	var hasError bool
+	var finishReason string
+	
 	go func() {
 		defer resp.Body.Close()
 		defer close(messagesChan)
@@ -610,8 +684,29 @@ func (c *Client) SendInlineAgentMessage(ctx context.Context, message, sessionID 
 					continue
 				}
 				fmt.Printf("\n❌ Error: %s\n", errMsg)
+				hasError = true
 
 			case 'd': // partFinishMessage
+				var finishData map[string]interface{}
+				if err := json.Unmarshal([]byte(payload), &finishData); err != nil {
+					if logger != nil {
+						logger.Printf("Failed to unmarshal finish message: %v", err)
+					}
+				}
+				
+				// Extract finish reason if available
+				if reason, ok := finishData["finishReason"].(string); ok {
+					finishReason = reason
+				}
+				
+				if logger != nil {
+					logger.Printf("Inline agent stream finished with reason: %s", finishReason)
+				}
+				
+				// Print completion message with reason if available
+				if finishReason != "" && finishReason != "stop" {
+					fmt.Printf("\n🏁 Finished with reason: %s\n", finishReason)
+				}
 				fmt.Println("\n")
 				return
 
@@ -664,7 +759,16 @@ func (c *Client) SendInlineAgentMessage(ctx context.Context, message, sessionID 
 						resultStr = string(resultBytes)
 					}
 				}
-				fmt.Printf("│ %s\n", resultStr)
+				
+				// Check for errors in tool result
+				if strings.Contains(strings.ToLower(resultStr), "error") || 
+				   strings.Contains(strings.ToLower(resultStr), "failed") ||
+				   strings.Contains(strings.ToLower(resultStr), "fail") {
+					hasError = true
+					fmt.Printf("❌ %s\n", resultStr)
+				} else {
+					fmt.Printf("│ %s\n", resultStr)
+				}
 
 			default:
 				if logger != nil {
@@ -677,6 +781,7 @@ func (c *Client) SendInlineAgentMessage(ctx context.Context, message, sessionID 
 			if logger != nil {
 				logger.Printf("Scanner error: %v", err)
 			}
+			hasError = true
 			fmt.Fprintf(os.Stderr, "\n❌ Connection lost: %v\n", err)
 		}
 	}()
@@ -686,5 +791,20 @@ func (c *Client) SendInlineAgentMessage(ctx context.Context, message, sessionID 
 		// Just consume the messages
 	}
 
-	return nil
+	// Return proper exit code based on completion status
+	if hasError {
+		return fmt.Errorf("inline agent execution completed with errors")
+	}
+	
+	// Check for non-successful completion reasons
+	switch finishReason {
+	case "error":
+		return fmt.Errorf("inline agent execution failed with reason: %s", finishReason)
+	case "stop", "length", "":
+		// Normal successful completion
+		return nil
+	default:
+		// Unknown completion reason - log but don't fail
+		return nil
+	}
 }

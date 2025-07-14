@@ -56,17 +56,18 @@ func newChatCommand(cfg *config.Config) *cobra.Command {
 		message      string
 		noClassify   bool
 
-		interactive  bool
-		debug        bool
-		stream       bool
-		clearSession bool
-		sessionID    string
-		contextFiles []string
-		stdinInput   bool
-		sourceTest   bool
-		sourceUUID   string
-		sourceName   string
-		suggestTool  string
+		interactive     bool
+		debug           bool
+		stream          bool
+		clearSession    bool
+		sessionID       string
+		contextFiles    []string
+		stdinInput      bool
+		sourceTest      bool
+		sourceUUID      string
+		sourceName      string
+		suggestTool     string
+		permissionLevel string
 		
 		// Inline agent flags
 		inline          bool
@@ -208,6 +209,11 @@ Enhanced Interactive Mode Features:
 • Auto-save functionality
 • Message history navigation
 
+Permission Levels:
+• read: Execute read-only operations (kubectl get, describe, logs, etc.)
+• readwrite: Execute all operations including read-write (kubectl apply, delete, etc.)
+• ask: Ask for confirmation before executing operations
+
 For inline agents, use --inline with --tools-file or --tools-json to provide custom tools.`,
 		Example: `  # Enhanced interactive chat mode
   kubiya chat --interactive
@@ -230,6 +236,14 @@ For inline agents, use --inline with --tools-file or --tools-json to provide cus
 
   # Auto-classify the most appropriate agent
   kubiya chat -m "Help me with Kubernetes deployment issues"
+
+  # Different permission levels
+  kubiya chat -n "devops" -m "Show me the pods" --permission-level read
+  kubiya chat -n "devops" -m "Deploy the application" --permission-level readwrite
+  kubiya chat -n "devops" -m "Check system status" --permission-level ask
+
+  # Continue a previous conversation
+  kubiya chat --session abc123-def456-ghi789 -m "What about the logs?"
 
   # Inline agent with tools from file
   kubiya chat --inline --tools-file tools.json --ai-instructions "You are a helpful assistant" \
@@ -319,10 +333,33 @@ For inline agents, use --inline with --tools-file or --tools-json to provide cus
 				return fmt.Errorf("message is required (use -m, --stdin, or pipe input)")
 			}
 
+			// Validate permission level
+			if permissionLevel != "" && permissionLevel != "read" && permissionLevel != "readwrite" && permissionLevel != "ask" {
+				return fmt.Errorf("invalid permission level: %s (must be 'read', 'readwrite', or 'ask')", permissionLevel)
+			}
+			if permissionLevel == "" {
+				permissionLevel = "read" // Default to read-only
+			}
+
 			// Load context from all sources
 			context, err := expandAndReadFiles(contextFiles)
 			if err != nil {
 				return fmt.Errorf("failed to load context: %w", err)
+			}
+
+			// Enhance message with permission level context
+			enhancedMessage := message
+			if !interactive {
+				permissionMsg := ""
+				switch permissionLevel {
+				case "read":
+					permissionMsg = "\n\n[SYSTEM] You have permission to execute READ-ONLY operations (kubectl get, describe, logs, etc.). You should execute these operations directly without asking for confirmation."
+				case "readwrite":
+					permissionMsg = "\n\n[SYSTEM] You have FULL PERMISSION to execute any operations including read-write operations (kubectl apply, delete, create, etc.). Execute operations directly without asking for confirmation."
+				case "ask":
+					permissionMsg = "\n\n[SYSTEM] You should ASK for confirmation before executing any operations. Present the commands you want to run and wait for user approval."
+				}
+				enhancedMessage = message + permissionMsg
 			}
 
 			// Setup client
@@ -540,13 +577,17 @@ For inline agents, use --inline with --tools-file or --tools-json to provide cus
 			}
 
 			// Send message with context
-			msgChan, err := client.SendMessageWithContext(cmd.Context(), agentID, message, sessionID, context)
+			msgChan, err := client.SendMessageWithContext(cmd.Context(), agentID, enhancedMessage, sessionID, context)
 			if err != nil {
 				return err
 			}
 
 			// Read messages and handle session ID
 			var finalResponse strings.Builder
+			var completionReason string
+			var hasError bool
+			var actualSessionID string
+			var toolsExecuted bool
 
 			// Add these message type constants
 			const (
@@ -560,7 +601,16 @@ For inline agents, use --inline with --tools-file or --tools-json to provide cus
 			for msg := range msgChan {
 				if msg.Error != "" {
 					fmt.Fprintf(os.Stderr, "%s\n", style.ErrorStyle.Render("❌ Error: " + msg.Error))
+					hasError = true
 					return fmt.Errorf("error from server: %s", msg.Error)
+				}
+				
+				// Capture completion reason and session ID from final messages
+				if msg.Final && msg.FinishReason != "" {
+					completionReason = msg.FinishReason
+				}
+				if msg.SessionID != "" {
+					actualSessionID = msg.SessionID
 				}
 
 				// Handle system messages
@@ -601,9 +651,11 @@ For inline agents, use --inline with --tools-file or --tools-json to provide cus
 									startTime: time.Now(),
 								}
 								toolExecutions[msg.MessageID] = te
+								toolsExecuted = true
 
 								// Enhanced tool execution header with better UX
-								fmt.Printf("\n%s\n", style.InfoBoxStyle.Render(
+								fmt.Printf("\n")
+								fmt.Printf("%s\n", style.InfoBoxStyle.Render(
 									fmt.Sprintf("🚀 %s %s", 
 										style.ToolNameStyle.Render("EXECUTING"), 
 										style.HighlightStyle.Render(toolName))))
@@ -618,8 +670,8 @@ For inline agents, use --inline with --tools-file or --tools-json to provide cus
 									fmt.Printf("%s\n", style.ToolArgsStyle.Render(fmt.Sprintf("📋 Parameters: %s", prettyArgs)))
 								}
 								
-								// Show waiting indicator
-								fmt.Printf("%s\n", style.SpinnerStyle.Render("⏳ Waiting for tool output..."))
+								// Show waiting indicator with animation
+								fmt.Printf("%s\n", style.SpinnerStyle.Render("⏳ Initializing tool execution..."))
 								fmt.Printf("%s\n", style.ToolDividerStyle.Render(strings.Repeat("─", 50)))
 							}
 						}
@@ -628,22 +680,42 @@ For inline agents, use --inline with --tools-file or --tools-json to provide cus
 				case toolOutput:
 					te := toolExecutions[msg.MessageID]
 					if te != nil && !te.isComplete {
+						// Mark that we received output
+						te.hasOutput = true
+						
+						// Update status to running when we start receiving output
+						if te.status == "waiting" {
+							te.status = "running"
+							// Update the status display
+							fmt.Printf("\r%s\n", style.SpinnerStyle.Render("🔄 Processing tool execution..."))
+						}
+						
+						// Also check if we need to mark as complete based on content
+						if strings.Contains(strings.ToLower(msg.Content), "completed") || 
+						   strings.Contains(strings.ToLower(msg.Content), "finished") ||
+						   strings.Contains(strings.ToLower(msg.Content), "done") {
+							te.isComplete = true
+						}
+						
+						// Store the full content
+						te.output.WriteString(msg.Content)
+						
+						// Get the current content buffer for this message
 						storedContent := messageBuffer[msg.MessageID]
 						if storedContent == nil {
 							storedContent = &chatBuffer{}
 							messageBuffer[msg.MessageID] = storedContent
 						}
 
+						// Only process new content since last update
 						newContent := msg.Content
 						if len(storedContent.content) > 0 {
 							newContent = msg.Content[len(storedContent.content):]
 						}
 
+						// Process new content if any
 						trimmedContent := strings.TrimSpace(newContent)
 						if trimmedContent != "" {
-							te.hasOutput = true
-							te.output.WriteString(newContent)
-
 							// Try to parse as JSON first for structured output
 							var outputData struct {
 								State   string `json:"state,omitempty"`
@@ -660,6 +732,7 @@ For inline agents, use --inline with --tools-file or --tools-json to provide cus
 								}
 								if outputData.Error != "" {
 									te.failed = true
+									hasError = true
 									fmt.Printf("%s %s │ %s\n",
 										style.ToolOutputPrefixStyle.Render("❌"),
 										style.ToolNameStyle.Render(te.name),
@@ -670,13 +743,20 @@ For inline agents, use --inline with --tools-file or --tools-json to provide cus
 									if output == "" {
 										output = outputData.Message
 									}
-									fmt.Printf("%s %s │ %s\n",
-										style.ToolOutputPrefixStyle.Render("│"),
-										style.ToolNameStyle.Render(te.name),
-										style.ToolOutputStyle.Render(output))
+									// Split multi-line outputs
+									lines := strings.Split(output, "\n")
+									for _, line := range lines {
+										line = strings.TrimSpace(line)
+										if line != "" {
+											fmt.Printf("%s %s │ %s\n",
+												style.ToolOutputPrefixStyle.Render("│"),
+												style.ToolNameStyle.Render(te.name),
+												style.ToolOutputStyle.Render(line))
+										}
+									}
 								}
 							} else {
-								// Handle plain text output
+								// Handle plain text output - split by lines and process each
 								lines := strings.Split(trimmedContent, "\n")
 								for _, line := range lines {
 									line = strings.TrimSpace(line)
@@ -684,17 +764,23 @@ For inline agents, use --inline with --tools-file or --tools-json to provide cus
 										prefix := "│"
 										outputStyle := style.ToolOutputStyle
 
+										// Detect different types of messages
+										lowerLine := strings.ToLower(line)
 										switch {
-										case strings.Contains(strings.ToLower(line), "error"):
+										case strings.Contains(lowerLine, "error") || strings.Contains(lowerLine, "failed") || strings.Contains(lowerLine, "fail"):
 											prefix = "❌"
 											outputStyle = style.ErrorStyle
 											te.failed = true
-										case strings.Contains(strings.ToLower(line), "warning"):
+											hasError = true
+										case strings.Contains(lowerLine, "warning") || strings.Contains(lowerLine, "warn"):
 											prefix = "⚠️"
 											outputStyle = style.WarningStyle
-										case strings.Contains(strings.ToLower(line), "success"):
+										case strings.Contains(lowerLine, "success") || strings.Contains(lowerLine, "completed") || strings.Contains(lowerLine, "done"):
 											prefix = "✅"
 											outputStyle = style.SuccessStyle
+										case strings.Contains(lowerLine, "info") || strings.Contains(lowerLine, "information"):
+											prefix = "ℹ️"
+											outputStyle = style.ToolOutputStyle
 										}
 
 										fmt.Printf("%s %s │ %s\n",
@@ -705,50 +791,70 @@ For inline agents, use --inline with --tools-file or --tools-json to provide cus
 								}
 							}
 						}
+						
+						// Update stored content
 						storedContent.content = msg.Content
 					}
 
 				default:
-					// Handle tool completion
+					// Handle tool completion - check on any non-tool message type if we have pending tool executions
 					for msgID, te := range toolExecutions {
 						if te.hasOutput && !te.isComplete {
-							te.isComplete = true
-							duration := time.Since(te.startTime).Seconds()
-
-							// Determine status emoji and completion message
-							var statusEmoji string
-							var completionStatus string
-							if te.failed {
-								statusEmoji = statusFailed
-								completionStatus = "failed"
-							} else {
-								statusEmoji = statusDone
-								completionStatus = "completed"
+							// Mark as complete if we receive a final message or if enough time has passed
+							if msg.Final || time.Since(te.startTime) > 2*time.Minute {
+								te.isComplete = true
+							} else if te.status == "running" && time.Since(te.startTime) > 30*time.Second {
+								// If running for more than 30 seconds without completion, mark as complete
+								te.isComplete = true
 							}
+							
+							if te.isComplete {
+								duration := time.Since(te.startTime).Seconds()
 
-							// Print completion status with summary
-							fmt.Printf("\n%s %s (%0.1fs)\n",
-								style.ToolStatusStyle.Render(statusEmoji),
-								style.ToolCompleteStyle.Render(fmt.Sprintf("Tool %s %s",
-									te.name,
-									completionStatus)),
-								duration)
+								// Determine status emoji and completion message
+								var statusEmoji string
+								var completionStatus string
+								if te.failed {
+									statusEmoji = statusFailed
+									completionStatus = "failed"
+								} else {
+									statusEmoji = statusDone
+									completionStatus = "completed"
+								}
 
-							// Print error summary if failed
-							if te.failed {
-								fmt.Printf("%s %s\n",
-									style.ToolOutputPrefixStyle.Render("!"),
-									style.ErrorStyle.Render("Tool encountered errors during execution"))
+								// Print completion status with enhanced summary
+								fmt.Printf("\n%s\n",
+									style.InfoBoxStyle.Render(fmt.Sprintf("%s %s %s (%0.1fs)",
+										statusEmoji,
+										style.ToolNameStyle.Render(te.name),
+										style.ToolCompleteStyle.Render(strings.ToUpper(completionStatus)),
+										duration)))
+
+								// Print error summary if failed
+								if te.failed {
+									fmt.Printf("%s %s\n",
+										style.ToolOutputPrefixStyle.Render("⚠️"),
+										style.ErrorStyle.Render("Tool encountered errors during execution"))
+								}
+
+								// Print output summary with better formatting
+								if te.output.Len() > 0 {
+									outputSize := te.output.Len()
+									var sizeStr string
+									if outputSize < 1024 {
+										sizeStr = fmt.Sprintf("%d bytes", outputSize)
+									} else if outputSize < 1024*1024 {
+										sizeStr = fmt.Sprintf("%.1f KB", float64(outputSize)/1024)
+									} else {
+										sizeStr = fmt.Sprintf("%.1f MB", float64(outputSize)/(1024*1024))
+									}
+									fmt.Printf("%s %s\n",
+										style.ToolOutputPrefixStyle.Render("📊"),
+										style.ToolSummaryStyle.Render(fmt.Sprintf("Output: %s", sizeStr)))
+								}
+								fmt.Printf("%s\n", style.ToolDividerStyle.Render(strings.Repeat("─", 50)))
+								delete(toolExecutions, msgID)
 							}
-
-							// Print output summary
-							if te.output.Len() > 0 {
-								fmt.Printf("%s %s\n",
-									style.ToolOutputPrefixStyle.Render("└"),
-									style.ToolSummaryStyle.Render(fmt.Sprintf("Output: %d bytes", te.output.Len())))
-							}
-							fmt.Println()
-							delete(toolExecutions, msgID)
 						}
 					}
 
@@ -830,7 +936,92 @@ For inline agents, use --inline with --tools-file or --tools-json to provide cus
 				fmt.Println(finalResponse.String())
 			}
 
-			return nil
+			// Handle follow-up for non-interactive sessions without tool execution
+			if !interactive && !toolsExecuted && !hasError && completionReason != "error" {
+				if debug {
+					fmt.Printf("🔄 No tools executed, sending follow-up prompt\n")
+				}
+				
+				followUpMsg := "You didn't seem to execute anything. You're running in a non-interactive session and the user confirms to execute read-only operations. EXECUTE RIGHT AWAY!"
+				
+				// Send follow-up message
+				followUpChan, err := client.SendMessageWithContext(cmd.Context(), agentID, followUpMsg, actualSessionID, map[string]string{})
+				if err != nil {
+					if debug {
+						fmt.Printf("⚠️ Failed to send follow-up message: %v\n", err)
+					}
+				} else {
+					fmt.Printf("\n%s\n", style.InfoBoxStyle.Render("🔄 Following up to ensure execution..."))
+					
+					// Process follow-up response
+					for msg := range followUpChan {
+						if msg.Error != "" {
+							fmt.Fprintf(os.Stderr, "%s\n", style.ErrorStyle.Render("❌ Error: " + msg.Error))
+							hasError = true
+							break
+						}
+						if msg.SessionID != "" {
+							actualSessionID = msg.SessionID
+						}
+						// Handle follow-up messages similar to main processing
+						if msg.Type == "tool" {
+							toolsExecuted = true
+						}
+					}
+				}
+			}
+
+			// Show session continuation message
+			if !interactive && actualSessionID != "" {
+				fmt.Printf("\n%s\n", style.InfoBoxStyle.Render("💬 To continue this conversation, run:"))
+				
+				// Include agent name in the continuation command if available
+				var continuationCmd string
+				if agentName != "" {
+					continuationCmd = fmt.Sprintf("kubiya chat -n %s --session %s -m \"your message here\"", agentName, actualSessionID)
+				} else if agentID != "" {
+					continuationCmd = fmt.Sprintf("kubiya chat -t %s --session %s -m \"your message here\"", agentID, actualSessionID)
+				} else {
+					continuationCmd = fmt.Sprintf("kubiya chat --session %s -m \"your message here\"", actualSessionID)
+				}
+				
+				fmt.Printf("%s\n", style.HighlightStyle.Render(continuationCmd))
+				fmt.Println()
+			}
+
+			// Handle completion status and exit codes
+			if debug {
+				fmt.Printf("🔍 Completion reason: %s, hasError: %v, toolsExecuted: %v\n", completionReason, hasError, toolsExecuted)
+			}
+			
+			// Return proper exit code based on completion status
+			if hasError {
+				if debug {
+					fmt.Printf("🚨 Exiting with error code 1 due to tool failures\n")
+				}
+				return fmt.Errorf("agent execution completed with errors")
+			}
+			
+			// Check for non-successful completion reasons
+			switch completionReason {
+			case "error":
+				if debug {
+					fmt.Printf("🚨 Exiting with error code 1 due to completion reason: %s\n", completionReason)
+				}
+				return fmt.Errorf("agent execution failed with reason: %s", completionReason)
+			case "stop", "length", "":
+				// Normal successful completion
+				if debug {
+					fmt.Printf("✅ Exiting with success code 0\n")
+				}
+				return nil
+			default:
+				// Unknown completion reason - log but don't fail
+				if debug {
+					fmt.Printf("⚠️ Unknown completion reason: %s, treating as success\n", completionReason)
+				}
+				return nil
+			}
 		},
 	}
 
@@ -849,6 +1040,7 @@ For inline agents, use --inline with --tools-file or --tools-json to provide cus
 	cmd.Flags().StringVar(&sourceName, "source-name", "", "Source name")
 	cmd.Flags().StringVar(&suggestTool, "suggest-tool", "", "Suggest a tool to use")
 	cmd.Flags().BoolVar(&noClassify, "no-classify", false, "Disable automatic agent classification")
+	cmd.Flags().StringVar(&permissionLevel, "permission-level", "read", "Permission level for tool execution (read, readwrite, ask)")
 	
 	// Inline agent flags
 	cmd.Flags().BoolVar(&inline, "inline", false, "Use inline agent mode")
