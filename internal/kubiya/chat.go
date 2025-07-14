@@ -672,7 +672,7 @@ func (c *Client) SendInlineAgentMessage(ctx context.Context, message, sessionID 
 		logger.Printf("Payload: %+v", payload)
 	}
 
-	reqURL := fmt.Sprintf("%s/hb/v4/chat", c.baseURL)
+	reqURL := fmt.Sprintf("%s/hb/v4/stream", c.baseURL)
 	jsonData, err := json.Marshal(payload)
 	if err != nil {
 		if logger != nil {
