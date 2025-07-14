@@ -207,14 +207,31 @@ func (c *Client) post(ctx context.Context, path string, payload interface{}) (*h
 	}
 
 	req.Header.Set("Authorization", "UserKey "+c.cfg.APIKey)
-	req.Header.Set("Content-Type", "application/json")
 
-	// Capture request body for logging
-	requestBody := body.Bytes()
+	req.Header.Set("Content-Type", "application/json")
+	return c.client.Do(req)
+}
+
+// PostRaw sends a POST request with raw JSON data
+func (c *Client) PostRaw(ctx context.Context, path string, data []byte) (*http.Response, error) {
+	// Handle paths that may already include query parameters
+	baseURL := c.baseURL
+	if !strings.HasSuffix(baseURL, "/") {
+		baseURL += "/"
+	}
+	url := baseURL + strings.TrimPrefix(path, "/")
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewBuffer(data))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Authorization", "UserKey "+c.cfg.APIKey)
+	req.Header.Set("Content-Type", "application/json")
 
 	if c.debug {
 		fmt.Printf("Making POST request to: %s\n", url)
-		fmt.Printf("Payload: %s\n", body.String())
+		fmt.Printf("Payload: %s\n", string(data))
 	}
 
 	resp, err := c.client.Do(req)
@@ -231,7 +248,7 @@ func (c *Client) post(ctx context.Context, path string, payload interface{}) (*h
 		"Authorization": "UserKey [REDACTED]",
 		"Content-Type":  "application/json",
 	}
-	logAPICall("POST", url, headers, requestBody, resp.StatusCode, responseBody)
+	logAPICall("POST", url, headers, data, resp.StatusCode, responseBody)
 
 	if c.debug && resp.StatusCode != http.StatusOK {
 		fmt.Printf("Response Status: %d\n", resp.StatusCode)
@@ -825,6 +842,11 @@ func (c *Client) CreateAgent(ctx context.Context, agent Agent) (*Agent, error) {
 	// Debug output for the response
 	if c.debug {
 		fmt.Printf("CreateAgent response:\n%s\n", string(bodyBytes))
+	}
+
+	// Check for error status codes
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("agent creation failed with status %d: %s", resp.StatusCode, string(bodyBytes))
 	}
 
 	// Unmarshal into created agent
@@ -2110,4 +2132,38 @@ func (c *Client) streamToolExecution(resp *http.Response, timeout time.Duration,
 	}()
 
 	return events, nil
+}
+
+// GitHubIntegration represents a GitHub integration response
+type GitHubIntegration struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Type        string `json:"type"`
+	AccessToken string `json:"access_token"`
+	Status      string `json:"status"`
+	CreatedAt   string `json:"created_at"`
+	UpdatedAt   string `json:"updated_at"`
+}
+
+// GetGitHubToken retrieves GitHub access token from integrations API
+func (c *Client) GetGitHubToken(ctx context.Context) (string, error) {
+	resp, err := c.get(ctx, "/api/v2/integrations/github_app")
+	if err != nil {
+		return "", fmt.Errorf("failed to get GitHub integration: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var integrations []GitHubIntegration
+	if err := json.NewDecoder(resp.Body).Decode(&integrations); err != nil {
+		return "", fmt.Errorf("failed to decode GitHub integration response: %w", err)
+	}
+
+	// Find the first active GitHub integration
+	for _, integration := range integrations {
+		if integration.Type == "github" && integration.Status == "active" && integration.AccessToken != "" {
+			return integration.AccessToken, nil
+		}
+	}
+
+	return "", fmt.Errorf("no active GitHub integration found")
 }

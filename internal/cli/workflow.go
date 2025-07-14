@@ -14,12 +14,17 @@ func newWorkflowCommand(cfg *config.Config) *cobra.Command {
 
 This command provides comprehensive workflow management capabilities:
 • Generate workflows from natural language descriptions
+• Describe workflows with detailed information and beautiful visualization
 • Test workflows with streaming output
 • Execute workflows from files or inline with reliable connection handling
 • Resume interrupted workflow executions
 • Compose complex workflows from simpler ones`,
 		Example: `  # Generate a workflow from description
   kubiya workflow generate "create a workflow to deploy an app"
+  
+  # Describe a workflow with detailed information
+  kubiya workflow describe my-workflow.yaml
+  kubiya workflow describe my-workflow.yaml --steps --env --deps --outputs
   
   # Test a workflow
   kubiya workflow test my-workflow.yaml
@@ -38,6 +43,7 @@ This command provides comprehensive workflow management capabilities:
 	// Add subcommands
 	cmd.AddCommand(
 		newWorkflowGenerateCommand(cfg),
+		newWorkflowDescribeCommand(cfg),
 		newWorkflowTestCommand(cfg),
 		newWorkflowExecuteCommand(cfg),
 		newWorkflowComposeCommand(cfg),

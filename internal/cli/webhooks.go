@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"os/signal"
 	"regexp"
@@ -28,7 +29,18 @@ func newWebhooksCommand(cfg *config.Config) *cobra.Command {
 		Use:     "webhook",
 		Aliases: []string{"webhooks"},
 		Short:   "🔗 Manage webhooks",
-		Long:    `Create, read, update, and delete webhooks in your Kubiya workspace.`,
+		Long: `Create, read, update, and delete webhooks in your Kubiya workspace.
+
+Webhooks allow you to trigger agents or workflows in response to external events.
+Two types of webhooks are supported:
+
+• Agent Webhooks: Trigger existing agents with custom prompts
+• Workflow Webhooks: Execute workflows directly using inline agents
+
+For detailed documentation, see:
+• docs/webhook-guide.md - Complete webhook guide
+• docs/webhook-examples.md - Practical examples
+• docs/webhook-workflow-reference.md - Technical reference`,
 	}
 
 	cmd.AddCommand(
@@ -457,28 +469,78 @@ func newCreateWebhookCommand(cfg *config.Config) *cobra.Command {
 		hideHeaders bool
 		fromFile    string
 		fromStdin   bool
+		interactive bool
+		// New webhook target options
+		target      string
+		workflowDef string
+		runner      string
 	)
 
 	cmd := &cobra.Command{
 		Use:   "create",
 		Short: "📝 Create new webhook",
-		Example: `  # Create a webhook with basic parameters
+		Long: `Create a new webhook in your Kubiya workspace.
+
+Webhooks can trigger agents or workflows in response to external events.
+Use --target to specify the webhook type:
+
+• --target agent: Trigger existing agents with custom prompts
+• --target workflow: Execute workflows directly using inline agents
+
+WORKFLOW WEBHOOKS:
+For workflow webhooks, the system automatically:
+1. Creates/reuses an inline source with the execute_workflow tool
+2. Creates an agent with the workflow definition in environment variables
+3. Creates the webhook that triggers the agent
+
+The workflow definition can be provided via:
+• file://path/to/workflow.yaml - Local file path
+• https://github.com/org/repo/blob/main/workflow.yaml - HTTPS URL
+• JSON/YAML string directly - Inline definition
+
+TEMPLATE VARIABLES:
+Use template variables in prompts to extract data from webhook events:
+• {{.event.repository.name}} - Repository name
+• {{.event.pull_request.title}} - Pull request title
+• {{.event.issue.number}} - Issue number
+
+EVENT FILTERING:
+Use JMESPath expressions to filter events:
+• event.action == 'opened' - Only opened events
+• event.pull_request.draft == false - Non-draft PRs
+• contains(event.repository.name, 'backend') - Specific repos
+
+For detailed documentation and examples, see:
+• docs/webhook-guide.md - Complete guide
+• docs/webhook-examples.md - Practical examples
+• docs/webhook-workflow-reference.md - Technical reference`,
+		Example: `  # Create an agent-based webhook
   kubiya webhook create \
     --name "GitHub PR" \
     --source "github" \
+    --target "agent" \
     --agent-id "abc-123" \
     --method "Slack" \
     --destination "#devops" \
     --prompt "New PR: {{.event.pull_request.title}}"
 
-  # Create a Teams webhook
+  # Create a workflow-based webhook from file
   kubiya webhook create \
-    --name "Jira Issues" \
-    --source "jira" \
-    --agent-id "abc-123" \
+    --name "Deploy Pipeline" \
+    --source "github" \
+    --target "workflow" \
+    --workflow "file://deploy-workflow.yaml" \
+    --method "Slack" \
+    --destination "#deployments"
+
+  # Create a workflow-based webhook from URL
+  kubiya webhook create \
+    --name "CI Pipeline" \
+    --source "github" \
+    --target "workflow" \
+    --workflow "https://github.com/kubiyabot/community-tools/blob/main/ci/workflow.yaml" \
     --method "Teams" \
-    --destination "kubiya.ai:General" \
-    --prompt "New issue: {{.event.issue.key}}"
+    --destination "kubiya.ai:General"
 
   # Create webhook from JSON/YAML file
   kubiya webhook create --file webhook.json
@@ -571,105 +633,763 @@ func newCreateWebhookCommand(cfg *config.Config) *cobra.Command {
 				return nil
 			}
 
-			// Create webhook from flags
-			webhook := kubiya.Webhook{
-				Name:               name,
-				Source:             source,
-				AgentID:            agentID,
-				Filter:             filter,
-				Prompt:             prompt,
-				HideWebhookHeaders: hideHeaders,
-				Communication:      kubiya.Communication{
-					// No HideHeaders field here anymore
-				},
+			// Handle interactive mode
+			if interactive {
+				return createWebhookInteractive(cmd.Context(), client, cfg)
 			}
 
-			// Set method and destination based on specified method
-			webhook.Communication.Method = method
-
-			// Teams-specific processing
-			if strings.EqualFold(method, "Teams") {
-				if destination != "" {
-					// Parse the destination in format "team:channel"
-					parts := strings.Split(destination, ":")
-					if len(parts) == 2 {
-						// Use the parsed team and channel names directly in the destination format
-						webhook.Communication.Method = "Teams"
-						// Format Teams destination exactly as the API expects it
-						webhook.Communication.Destination = fmt.Sprintf("#{\"team_name\": \"%s\", \"channel_name\": \"%s\"}", parts[0], parts[1])
-					} else {
-						// Try to use as-is (might be in JSON format already)
-						webhook.Communication.Destination = destination
-					}
-				} else {
-					return fmt.Errorf("for Teams webhooks, you must provide --destination in the format 'team:channel' (e.g., 'kubiya.ai:General')")
-				}
-			} else {
-				webhook.Communication.Destination = destination
+			// Validate target parameter
+			if target == "" {
+				target = "agent" // Default to agent for backward compatibility
 			}
 
-			// HTTP doesn't require a destination
-			if strings.EqualFold(method, "HTTP") && destination == "" {
-				// Allow empty destination for HTTP (direct response)
-				webhook.Communication.Method = "HTTP"
+			if target != "agent" && target != "workflow" {
+				return fmt.Errorf("invalid target '%s'. Must be 'agent' or 'workflow'", target)
 			}
 
-			// Create the webhook
-			created, err := client.CreateWebhook(cmd.Context(), webhook)
-			if err != nil {
-				return err
+			// Handle workflow target
+			if target == "workflow" {
+				return createWorkflowWebhook(cmd.Context(), client, name, source, workflowDef, runner, method, destination, filter, hideHeaders)
 			}
 
-			fmt.Printf("✅ Created webhook: %s (%s)\n", created.Name, created.ID)
-			fmt.Printf("📎 Webhook URL: %s\n", created.WebhookURL)
-
-			// Show template variables
-			templateVars := extractTemplateVars(created.Prompt)
-			if len(templateVars) > 0 {
-				fmt.Printf("\n📝 Template Variables:\n")
-				for _, v := range templateVars {
-					fmt.Printf("- %s\n", v)
-				}
-
-				fmt.Printf("\n🧪 To test this webhook with these variables:\n")
-				fmt.Printf("  kubiya webhook test --id %s --data '{", created.ID)
-
-				for i, v := range templateVars {
-					if i > 0 {
-						fmt.Printf(", ")
-					}
-					fmt.Printf("\"%s\": \"example value\"", v)
-				}
-
-				fmt.Printf("}'\n")
-			}
-
-			return nil
+			// Handle agent target (existing behavior)
+			return createAgentWebhook(cmd.Context(), client, name, source, agentID, method, destination, filter, prompt, hideHeaders)
 		},
 	}
 
 	// Basic parameters
 	cmd.Flags().StringVarP(&name, "name", "n", "", "Webhook name")
 	cmd.Flags().StringVarP(&source, "source", "s", "", "Event source")
-	cmd.Flags().StringVarP(&agentID, "agent-id", "a", "", "Agent ID")
+	cmd.Flags().StringVarP(&target, "target", "t", "agent", "Webhook target (agent|workflow)")
+	cmd.Flags().StringVarP(&agentID, "agent-id", "a", "", "Agent ID (required for agent target)")
+	cmd.Flags().StringVarP(&workflowDef, "workflow", "w", "", "Workflow definition (file:// or https:// URL, or JSON/YAML string, required for workflow target)")
+	cmd.Flags().StringVarP(&runner, "runner", "r", "", "Runner name for workflow execution (optional, defaults to kubiya-hosted)")
 	cmd.Flags().StringVarP(&method, "method", "m", "Slack", "Communication method (Slack|Teams|HTTP)")
 	cmd.Flags().StringVarP(&destination, "destination", "d", "", "Communication destination (Slack: #channel, Teams: team:channel)")
 	cmd.Flags().StringVarP(&filter, "filter", "f", "", "Event filter (JMESPath expression)")
-	cmd.Flags().StringVarP(&prompt, "prompt", "p", "", "Agent prompt with template variables ({{.event.*}})")
+	cmd.Flags().StringVarP(&prompt, "prompt", "p", "", "Agent prompt with template variables ({{.event.*}}, required for agent target)")
 	cmd.Flags().BoolVar(&hideHeaders, "hide-headers", false, "Hide webhook headers in notifications")
 
 	// File input flags
 	cmd.Flags().StringVar(&fromFile, "file", "", "File containing webhook definition (JSON or YAML)")
 	cmd.Flags().BoolVar(&fromStdin, "stdin", false, "Read webhook definition from stdin")
+	cmd.Flags().BoolVarP(&interactive, "interactive", "i", false, "Interactive mode for parameter collection")
 
 	// Try to mark flags required together if this Cobra version supports it
 	cobra12OrHigher := true
 	if cobra12OrHigher {
-		cmd.MarkFlagsRequiredTogether("name", "source", "agent-id", "prompt")
+		cmd.MarkFlagsRequiredTogether("name", "source")
 		cmd.MarkFlagsMutuallyExclusive("file", "stdin", "name")
 	}
 
 	return cmd
+}
+
+// createAgentWebhook creates a webhook that targets an agent
+func createAgentWebhook(ctx context.Context, client *kubiya.Client, name, source, agentID, method, destination, filter, prompt string, hideHeaders bool) error {
+	if agentID == "" {
+		return fmt.Errorf("agent-id is required for agent target")
+	}
+
+	if prompt == "" {
+		return fmt.Errorf("prompt is required for agent target")
+	}
+
+	// Create webhook from flags
+	webhook := kubiya.Webhook{
+		Name:               name,
+		Source:             source,
+		AgentID:            agentID,
+		Filter:             filter,
+		Prompt:             prompt,
+		HideWebhookHeaders: hideHeaders,
+		Communication:      kubiya.Communication{},
+	}
+
+	// Set method and destination based on specified method
+	webhook.Communication.Method = method
+
+	// Teams-specific processing
+	if strings.EqualFold(method, "Teams") {
+		if destination != "" {
+			// Parse the destination in format "team:channel"
+			parts := strings.Split(destination, ":")
+			if len(parts) == 2 {
+				// Use the parsed team and channel names directly in the destination format
+				webhook.Communication.Method = "Teams"
+				// Format Teams destination exactly as the API expects it
+				webhook.Communication.Destination = fmt.Sprintf("#{\"team_name\": \"%s\", \"channel_name\": \"%s\"}", parts[0], parts[1])
+			} else {
+				// Try to use as-is (might be in JSON format already)
+				webhook.Communication.Destination = destination
+			}
+		} else {
+			return fmt.Errorf("for Teams webhooks, you must provide --destination in the format 'team:channel' (e.g., 'kubiya.ai:General')")
+		}
+	} else {
+		webhook.Communication.Destination = destination
+	}
+
+	// HTTP doesn't require a destination
+	if strings.EqualFold(method, "HTTP") && destination == "" {
+		// Allow empty destination for HTTP (direct response)
+		webhook.Communication.Method = "HTTP"
+	}
+
+	// Create the webhook
+	created, err := client.CreateWebhook(ctx, webhook)
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("✅ Created agent webhook: %s (%s)\n", created.Name, created.ID)
+	fmt.Printf("📎 Webhook URL: %s\n", created.WebhookURL)
+
+	// Show template variables
+	templateVars := extractTemplateVars(created.Prompt)
+	if len(templateVars) > 0 {
+		fmt.Printf("\n📝 Template Variables:\n")
+		for _, v := range templateVars {
+			fmt.Printf("- %s\n", v)
+		}
+
+		fmt.Printf("\n🧪 To test this webhook with these variables:\n")
+		fmt.Printf("  kubiya webhook test --id %s --data '{", created.ID)
+
+		for i, v := range templateVars {
+			if i > 0 {
+				fmt.Printf(", ")
+			}
+			fmt.Printf("\"%s\": \"example value\"", v)
+		}
+
+		fmt.Printf("}'\n")
+	}
+
+	return nil
+}
+
+// createWorkflowWebhook creates a webhook that targets a workflow using an inline agent
+func createWorkflowWebhook(ctx context.Context, client *kubiya.Client, name, source, workflowDef, runner, method, destination, filter string, hideHeaders bool) error {
+	if workflowDef == "" {
+		return fmt.Errorf("workflow definition is required for workflow target")
+	}
+
+	// Load workflow definition
+	workflowData, err := loadWorkflowDefinition(workflowDef)
+	if err != nil {
+		return fmt.Errorf("failed to load workflow definition: %w", err)
+	}
+
+	// Parse workflow definition to validate it
+	var workflow map[string]interface{}
+	if err := json.Unmarshal(workflowData, &workflow); err != nil {
+		return fmt.Errorf("failed to parse workflow definition: %w", err)
+	}
+
+	// Set default runner if not provided
+	if runner == "" {
+		runner = "kubiya-hosted"
+	}
+
+	// Create a unique agent name for this webhook
+	agentName := fmt.Sprintf("workflow-webhook-%s", name)
+
+	// Extract workflow parameters for templating
+	workflowParams := extractWorkflowParameters(workflow)
+
+	// Create or get the workflow execution source
+	workflowSource, err := createOrGetWorkflowExecutionSource(ctx, client, runner)
+	if err != nil {
+		return fmt.Errorf("failed to create workflow execution source: %w", err)
+	}
+
+	fmt.Printf("📦 Using workflow execution source: %s (%s)\n", workflowSource.Name, workflowSource.UUID)
+
+	// Create the agent payload using direct API call
+	agentPayload := map[string]interface{}{
+		"name":        agentName,
+		"description": fmt.Sprintf("Inline agent for workflow webhook: %s", name),
+		"ai_instructions": fmt.Sprintf("You are a workflow execution agent. Use the execute_workflow tool to run workflows when triggered by webhook events. The workflow definition is provided in the WORKFLOW_JSON environment variable. Workflow: %s", workflow["name"]),
+		"sources":     []string{workflowSource.UUID},
+		"environment_variables": map[string]string{
+			"WORKFLOW_JSON": string(workflowData),
+		},
+		"runners": []string{runner},
+	}
+
+	// Create the agent using direct HTTP call
+	agentData, err := json.Marshal(agentPayload)
+	if err != nil {
+		return fmt.Errorf("failed to marshal agent payload: %w", err)
+	}
+
+	fmt.Printf("Agent creation payload: %s\n", string(agentData))
+
+	resp, err := client.PostRaw(ctx, "/agents", agentData)
+	if err != nil {
+		return fmt.Errorf("failed to create inline agent: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Read response
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("failed to read response body: %w", err)
+	}
+
+	fmt.Printf("Agent creation response status: %d\n", resp.StatusCode)
+	fmt.Printf("Agent creation response: %s\n", string(bodyBytes))
+
+	// Check for error status codes
+	if resp.StatusCode != 200 {
+		return fmt.Errorf("agent creation failed with status %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	// Parse response
+	var createdAgent struct {
+		ID   string `json:"id"`
+		UUID string `json:"uuid"`
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(bodyBytes, &createdAgent); err != nil {
+		return fmt.Errorf("failed to unmarshal agent response: %w\nResponse body: %s", err, string(bodyBytes))
+	}
+
+	fmt.Printf("Created agent response: %+v\n", createdAgent)
+
+	// Use ID if UUID is empty
+	agentID := createdAgent.UUID
+	if agentID == "" {
+		agentID = createdAgent.ID
+	}
+
+	fmt.Printf("✅ Created inline agent: %s (%s)\n", createdAgent.Name, agentID)
+
+	// Create webhook prompt with parameter templating
+	webhookPrompt := createWebhookPrompt(workflowParams)
+
+	if agentID == "" {
+		return fmt.Errorf("failed to get agent ID from created agent")
+	}
+
+	// Create the webhook using the inline agent
+	webhook := kubiya.Webhook{
+		Name:               name,
+		Source:             source,
+		AgentID:            agentID,
+		Filter:             filter,
+		HideWebhookHeaders: hideHeaders,
+		Communication:      kubiya.Communication{},
+		Prompt:             webhookPrompt,
+	}
+
+	// Set method and destination
+	webhook.Communication.Method = method
+	if strings.EqualFold(method, "Teams") {
+		if destination != "" {
+			parts := strings.Split(destination, ":")
+			if len(parts) == 2 {
+				webhook.Communication.Method = "Teams"
+				webhook.Communication.Destination = fmt.Sprintf("#{\"team_name\": \"%s\", \"channel_name\": \"%s\"}", parts[0], parts[1])
+			} else {
+				webhook.Communication.Destination = destination
+			}
+		} else {
+			return fmt.Errorf("for Teams webhooks, you must provide --destination in the format 'team:channel' (e.g., 'kubiya.ai:General')")
+		}
+	} else {
+		webhook.Communication.Destination = destination
+	}
+
+	// Create the webhook using the same API as agent webhooks
+	created, err := client.CreateWebhook(ctx, webhook)
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("✅ Created workflow webhook: %s (%s)\n", created.Name, created.ID)
+	fmt.Printf("📎 Webhook URL: %s\n", created.WebhookURL)
+	fmt.Printf("🔧 Workflow Runner: %s\n", runner)
+	fmt.Printf("🤖 Agent ID: %s\n", agentID)
+
+	// Show workflow info
+	if workflowName, ok := workflow["name"]; ok {
+		fmt.Printf("📄 Workflow Name: %s\n", workflowName)
+	}
+	if workflowDesc, ok := workflow["description"]; ok {
+		fmt.Printf("📄 Workflow Description: %s\n", workflowDesc)
+	}
+
+	fmt.Printf("\n🧪 To test this webhook:\n")
+	fmt.Printf("  kubiya webhook test --id %s --data '{\"test\": true}'\n", created.ID)
+
+	return nil
+}
+
+// Helper function to safely get string values from workflow map
+func getStringFromMap(m map[string]interface{}, key, defaultValue string) string {
+	if val, ok := m[key]; ok {
+		if str, ok := val.(string); ok {
+			return str
+		}
+	}
+	return defaultValue
+}
+
+// Helper function to get steps as JSON string
+func getStepsAsJSON(workflow map[string]interface{}) string {
+	if steps, ok := workflow["steps"]; ok {
+		if stepsJSON, err := json.Marshal(steps); err == nil {
+			return string(stepsJSON)
+		}
+	}
+	return "[]"
+}
+
+// extractWorkflowParameters extracts parameter definitions from workflow
+func extractWorkflowParameters(workflow map[string]interface{}) []WorkflowParameter {
+	var params []WorkflowParameter
+	
+	// Check for params in the workflow definition
+	if paramsInterface, ok := workflow["params"]; ok {
+		if paramsList, ok := paramsInterface.([]interface{}); ok {
+			for _, paramInterface := range paramsList {
+				if param, ok := paramInterface.(map[string]interface{}); ok {
+					workflowParam := WorkflowParameter{
+						Name:        getStringFromMap(param, "name", ""),
+						Type:        getStringFromMap(param, "type", "string"),
+						Description: getStringFromMap(param, "description", ""),
+						Required:    getBoolFromMap(param, "required", false),
+					}
+					if workflowParam.Name != "" {
+						params = append(params, workflowParam)
+					}
+				}
+			}
+		}
+	}
+	
+	// If no explicit params, extract from templated values in steps
+	if len(params) == 0 {
+		paramNames := extractTemplatedParameters(workflow)
+		for _, name := range paramNames {
+			params = append(params, WorkflowParameter{
+				Name:        name,
+				Type:        "string",
+				Description: fmt.Sprintf("Parameter extracted from workflow: %s", name),
+				Required:    false,
+			})
+		}
+	}
+	
+	return params
+}
+
+// extractTemplatedParameters finds templated parameters in workflow steps
+func extractTemplatedParameters(workflow map[string]interface{}) []string {
+	var paramNames []string
+	seen := make(map[string]bool)
+	
+	// Convert workflow to JSON string to search for template patterns
+	if workflowJSON, err := json.Marshal(workflow); err == nil {
+		// Find all {{.param_name}} patterns
+		re := regexp.MustCompile(`\{\{\s*\.(\w+)\s*\}\}`)
+		matches := re.FindAllStringSubmatch(string(workflowJSON), -1)
+		
+		for _, match := range matches {
+			if len(match) > 1 {
+				paramName := match[1]
+				// Skip common webhook fields like 'event'
+				if paramName != "event" && !seen[paramName] {
+					paramNames = append(paramNames, paramName)
+					seen[paramName] = true
+				}
+			}
+		}
+	}
+	
+	return paramNames
+}
+
+// createWorkflowSystemPrompt creates a system prompt for the workflow agent
+func createWorkflowSystemPrompt(workflow map[string]interface{}, params []WorkflowParameter) string {
+	workflowJSON, _ := json.MarshalIndent(workflow, "", "  ")
+	
+	var prompt strings.Builder
+	prompt.WriteString("You are a workflow execution agent. Your task is to execute the following workflow with the provided event data.\n\n")
+	
+	prompt.WriteString("WORKFLOW DEFINITION:\n")
+	prompt.WriteString("```json\n")
+	prompt.WriteString(string(workflowJSON))
+	prompt.WriteString("\n```\n\n")
+	
+	if len(params) > 0 {
+		prompt.WriteString("EXPECTED PARAMETERS:\n")
+		for _, param := range params {
+			prompt.WriteString(fmt.Sprintf("- %s (%s): %s", param.Name, param.Type, param.Description))
+			if param.Required {
+				prompt.WriteString(" [REQUIRED]")
+			}
+			prompt.WriteString("\n")
+		}
+		prompt.WriteString("\n")
+	}
+	
+	prompt.WriteString("INSTRUCTIONS:\n")
+	prompt.WriteString("1. When you receive webhook event data, extract the relevant parameters\n")
+	prompt.WriteString("2. Use the execute_workflow tool to run the workflow with the extracted parameters\n")
+	prompt.WriteString("3. The workflow definition is embedded in this prompt for your reference\n")
+	prompt.WriteString("4. Template variables in the workflow ({{.param_name}}) will be replaced with actual values\n")
+	prompt.WriteString("5. Provide clear feedback about the workflow execution status\n")
+	
+	return prompt.String()
+}
+
+// Helper function to get bool values from map
+func getBoolFromMap(m map[string]interface{}, key string, defaultValue bool) bool {
+	if val, ok := m[key]; ok {
+		if boolVal, ok := val.(bool); ok {
+			return boolVal
+		}
+	}
+	return defaultValue
+}
+
+// WorkflowParameter represents a parameter in a workflow
+type WorkflowParameter struct {
+	Name        string `json:"name"`
+	Type        string `json:"type"`
+	Description string `json:"description"`
+	Required    bool   `json:"required"`
+}
+
+// createOrGetWorkflowExecutionSource creates or gets an existing workflow execution source
+func createOrGetWorkflowExecutionSource(ctx context.Context, client *kubiya.Client, runner string) (*kubiya.Source, error) {
+	sourceName := "workflow-execution-tools"
+	
+	// Check if source already exists
+	sources, err := client.ListSources(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list sources: %w", err)
+	}
+
+	// Look for existing workflow execution source
+	for _, source := range sources {
+		if source.Name == sourceName && source.Type == "inline" {
+			// Check if it has the execute_workflow tool
+			sourceWithTools, err := client.GetSourceMetadata(ctx, source.UUID)
+			if err != nil {
+				continue // Skip if we can't get metadata
+			}
+			
+			// Check if it has the execute_workflow tool
+			for _, tool := range sourceWithTools.Tools {
+				if tool.Name == "execute_workflow" {
+					return sourceWithTools, nil
+				}
+			}
+		}
+	}
+
+	// Create the inline source using direct API call
+	fmt.Printf("Creating inline source with name: %s\n", sourceName)
+	
+	sourcePayload := map[string]interface{}{
+		"name": sourceName,
+		"url":  "",
+		"dynamic_config": map[string]interface{}{},
+		"inline_tools": []map[string]interface{}{
+			{
+				"name":    "execute_workflow",
+				"image":   "python:latest",
+				"content": fmt.Sprintf(`#!/bin/bash
+# Workflow execution tool
+# This tool executes a workflow using the Kubiya workflow API
+
+WORKFLOW_JSON="$1"
+EVENT_PARAMS="$2"
+
+echo "🔄 Executing workflow with parameters..."
+echo "Runner: %s"
+
+# Execute the workflow via curl
+curl -X POST "https://api.kubiya.ai/api/v1/workflow?runner=%s&operation=execute_workflow" \
+    -H "Authorization: UserKey $KUBIYA_API_KEY" \
+    -H "Content-Type: application/json" \
+    -H "Accept: text/event-stream" \
+    -d "{
+        \"workflow_spec\": $WORKFLOW_JSON,
+        \"params\": $EVENT_PARAMS
+    }"
+`, runner, runner),
+			},
+		},
+	}
+
+	// Create the source using direct HTTP call
+	sourceData, err := json.Marshal(sourcePayload)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal source payload: %w", err)
+	}
+
+	fmt.Printf("Source creation payload: %s\n", string(sourceData))
+
+	resp, err := client.PostRaw(ctx, "/sources", sourceData)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create workflow execution source: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Read response
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response body: %w", err)
+	}
+
+	fmt.Printf("Source creation response status: %d\n", resp.StatusCode)
+	fmt.Printf("Source creation response: %s\n", string(bodyBytes))
+
+	// Check for error status codes
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("source creation failed with status %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	// Parse response
+	var createdSource kubiya.Source
+	if err := json.Unmarshal(bodyBytes, &createdSource); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal source response: %w\nResponse body: %s", err, string(bodyBytes))
+	}
+
+	fmt.Printf("Created source response: %+v\n", &createdSource)
+	return &createdSource, nil
+}
+
+// createWebhookPrompt creates a webhook prompt that extracts parameters from event data
+func createWebhookPrompt(params []WorkflowParameter) string {
+	var prompt strings.Builder
+	
+	prompt.WriteString("Execute the workflow with the following event data and extracted parameters:\n\n")
+	prompt.WriteString("Event Data: {{.event}}\n\n")
+	
+	if len(params) > 0 {
+		prompt.WriteString("Extracted Parameters:\n")
+		for _, param := range params {
+			prompt.WriteString(fmt.Sprintf("- %s: {{.event.%s}}\n", param.Name, param.Name))
+		}
+		prompt.WriteString("\n")
+	}
+	
+	prompt.WriteString("Please execute the workflow with these parameters using the execute_workflow tool.")
+	
+	return prompt.String()
+}
+
+// loadWorkflowDefinition loads a workflow definition from various sources
+func loadWorkflowDefinition(def string) ([]byte, error) {
+	if strings.HasPrefix(def, "file://") {
+		// Load from file
+		filePath := strings.TrimPrefix(def, "file://")
+		return os.ReadFile(filePath)
+	} else if strings.HasPrefix(def, "https://") || strings.HasPrefix(def, "http://") {
+		// Load from URL
+		resp, err := http.Get(def)
+		if err != nil {
+			return nil, err
+		}
+		defer resp.Body.Close()
+		return io.ReadAll(resp.Body)
+	} else {
+		// Assume it's a JSON/YAML string
+		return []byte(def), nil
+	}
+}
+
+// createWebhookInteractive creates a webhook in interactive mode
+func createWebhookInteractive(ctx context.Context, client *kubiya.Client, cfg *config.Config) error {
+	fmt.Println("🔗 Interactive Webhook Creation")
+	fmt.Println("==============================")
+	
+	// Get webhook name
+	var name string
+	fmt.Print("Enter webhook name: ")
+	fmt.Scanln(&name)
+	
+	// Get source
+	var source string
+	fmt.Print("Enter event source (e.g., github, slack, custom): ")
+	fmt.Scanln(&source)
+	
+	// Get target type
+	var target string
+	fmt.Print("Select target type (agent/workflow) [agent]: ")
+	fmt.Scanln(&target)
+	if target == "" {
+		target = "agent"
+	}
+	
+	// Get communication method
+	var method string
+	fmt.Print("Select communication method (Slack/Teams/HTTP) [Slack]: ")
+	fmt.Scanln(&method)
+	if method == "" {
+		method = "Slack"
+	}
+	
+	// Get destination
+	var destination string
+	if !strings.EqualFold(method, "HTTP") {
+		if strings.EqualFold(method, "Teams") {
+			fmt.Print("Enter Teams destination (team:channel): ")
+		} else {
+			fmt.Print("Enter Slack destination (#channel): ")
+		}
+		fmt.Scanln(&destination)
+	}
+	
+	// Get filter
+	var filter string
+	fmt.Print("Enter event filter (JMESPath, optional): ")
+	fmt.Scanln(&filter)
+	
+	if target == "workflow" {
+		return createWorkflowWebhookInteractive(ctx, client, name, source, method, destination, filter)
+	} else {
+		return createAgentWebhookInteractive(ctx, client, name, source, method, destination, filter)
+	}
+}
+
+// createWorkflowWebhookInteractive creates a workflow webhook interactively
+func createWorkflowWebhookInteractive(ctx context.Context, client *kubiya.Client, name, source, method, destination, filter string) error {
+	fmt.Println("\n📋 Workflow Configuration")
+	fmt.Println("========================")
+	
+	// Get workflow definition
+	var workflowDef string
+	fmt.Print("Enter workflow definition (file:// path, https:// URL, or JSON): ")
+	fmt.Scanln(&workflowDef)
+	
+	// Get runner
+	var runner string
+	fmt.Print("Enter runner name [kubiya-hosted]: ")
+	fmt.Scanln(&runner)
+	if runner == "" {
+		runner = "kubiya-hosted"
+	}
+	
+	// Load and validate workflow
+	workflowData, err := loadWorkflowDefinition(workflowDef)
+	if err != nil {
+		return fmt.Errorf("failed to load workflow definition: %w", err)
+	}
+	
+	var workflow map[string]interface{}
+	if err := json.Unmarshal(workflowData, &workflow); err != nil {
+		return fmt.Errorf("failed to parse workflow definition: %w", err)
+	}
+	
+	// Extract and show parameters
+	workflowParams := extractWorkflowParameters(workflow)
+	
+	if len(workflowParams) > 0 {
+		fmt.Println("\n📝 Detected Workflow Parameters:")
+		for _, param := range workflowParams {
+			fmt.Printf("  - %s (%s): %s", param.Name, param.Type, param.Description)
+			if param.Required {
+				fmt.Print(" [REQUIRED]")
+			}
+			fmt.Println()
+		}
+		
+		fmt.Println("\nThese parameters will be automatically extracted from webhook event data.")
+		fmt.Println("Example usage patterns:")
+		for _, param := range workflowParams {
+			fmt.Printf("  - {{.event.%s}} -> %s\n", param.Name, param.Description)
+		}
+	}
+	
+	// Show preview
+	fmt.Println("\n🔍 Webhook Preview:")
+	fmt.Printf("  Name: %s\n", name)
+	fmt.Printf("  Source: %s\n", source)
+	fmt.Printf("  Target: workflow\n")
+	fmt.Printf("  Method: %s\n", method)
+	fmt.Printf("  Destination: %s\n", destination)
+	fmt.Printf("  Filter: %s\n", filter)
+	fmt.Printf("  Runner: %s\n", runner)
+	fmt.Printf("  Workflow: %s\n", getStringFromMap(workflow, "name", "Unnamed Workflow"))
+	
+	// Confirm creation
+	var confirm string
+	fmt.Print("\nCreate this webhook? (y/N): ")
+	fmt.Scanln(&confirm)
+	if strings.ToLower(confirm) != "y" {
+		fmt.Println("❌ Webhook creation cancelled")
+		return nil
+	}
+	
+	// Create the webhook
+	return createWorkflowWebhook(ctx, client, name, source, workflowDef, runner, method, destination, filter, false)
+}
+
+// createAgentWebhookInteractive creates an agent webhook interactively
+func createAgentWebhookInteractive(ctx context.Context, client *kubiya.Client, name, source, method, destination, filter string) error {
+	fmt.Println("\n🤖 Agent Configuration")
+	fmt.Println("======================")
+	
+	// List available agents
+	agents, err := client.GetAgents(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to list agents: %w", err)
+	}
+	
+	if len(agents) == 0 {
+		return fmt.Errorf("no agents found. Please create an agent first.")
+	}
+	
+	fmt.Println("Available agents:")
+	for i, agent := range agents {
+		fmt.Printf("  %d. %s (%s) - %s\n", i+1, agent.Name, agent.UUID, agent.Description)
+	}
+	
+	// Get agent selection
+	var agentIndex int
+	fmt.Printf("Select agent (1-%d): ", len(agents))
+	fmt.Scanln(&agentIndex)
+	
+	if agentIndex < 1 || agentIndex > len(agents) {
+		return fmt.Errorf("invalid agent selection")
+	}
+	
+	selectedAgent := agents[agentIndex-1]
+	
+	// Get prompt
+	var prompt string
+	fmt.Print("Enter agent prompt (use {{.event.*}} for template variables): ")
+	fmt.Scanln(&prompt)
+	
+	// Show preview
+	fmt.Println("\n🔍 Webhook Preview:")
+	fmt.Printf("  Name: %s\n", name)
+	fmt.Printf("  Source: %s\n", source)
+	fmt.Printf("  Target: agent\n")
+	fmt.Printf("  Agent: %s (%s)\n", selectedAgent.Name, selectedAgent.UUID)
+	fmt.Printf("  Method: %s\n", method)
+	fmt.Printf("  Destination: %s\n", destination)
+	fmt.Printf("  Filter: %s\n", filter)
+	fmt.Printf("  Prompt: %s\n", prompt)
+	
+	// Confirm creation
+	var confirm string
+	fmt.Print("\nCreate this webhook? (y/N): ")
+	fmt.Scanln(&confirm)
+	if strings.ToLower(confirm) != "y" {
+		fmt.Println("❌ Webhook creation cancelled")
+		return nil
+	}
+	
+	// Create the webhook
+	return createAgentWebhook(ctx, client, name, source, selectedAgent.UUID, method, destination, filter, prompt, false)
 }
 
 func newUpdateWebhookCommand(cfg *config.Config) *cobra.Command {
@@ -1616,7 +2336,6 @@ func printMapInDotNotation(data interface{}, indent string, prefix string) {
 	}
 }
 
-// Add this new helper function to convert dot notation keys to nested objects
 // convertDotNotationToNested transforms keys with dots like "event.issue.key"
 // into nested objects {"event":{"issue":{"key":"value"}}}
 func convertDotNotationToNested(flatMap map[string]interface{}) map[string]interface{} {

@@ -195,12 +195,21 @@ func newChatCommand(cfg *config.Config) *cobra.Command {
 		Use:   "chat",
 		Short: "💬 Chat with a agent",
 		Long: `Start a chat session with a Kubiya agent.
-You can either use interactive mode, specify a message directly, or pipe input from stdin.
+You can either use enhanced interactive mode, specify a message directly, or pipe input from stdin.
 Use --context to include additional files for context (supports wildcards and URLs).
 The command will automatically select the most appropriate agent unless one is specified.
 
+Enhanced Interactive Mode Features:
+• Beautiful terminal UI with colors and formatting
+• Session persistence and history management
+• Connection retry and error handling
+• Tool execution tracking with real-time status
+• Keyboard shortcuts for improved productivity
+• Auto-save functionality
+• Message history navigation
+
 For inline agents, use --inline with --tools-file or --tools-json to provide custom tools.`,
-		Example: `  # Interactive chat mode
+		Example: `  # Enhanced interactive chat mode
   kubiya chat --interactive
 
   # Using context files with wildcards
@@ -237,7 +246,7 @@ For inline agents, use --inline with --tools-file or --tools-json to provide cus
 			cfg.Debug = cfg.Debug || debug
 
 			if interactive {
-				chatUI := tui.NewChatUI(cfg)
+				chatUI := tui.NewEnhancedChatUI(cfg)
 				return chatUI.Run()
 			}
 
