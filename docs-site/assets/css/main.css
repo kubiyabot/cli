@@ -754,17 +754,84 @@ code {
   font-weight: 500;
 }
 
-/* Remove line numbers from code blocks */
-pre code .line-numbers-rows {
+/* Remove line numbers from code blocks - AGGRESSIVE OVERRIDES */
+.line-numbers-rows,
+pre .line-numbers-rows,
+code .line-numbers-rows,
+.highlight .line-numbers-rows,
+.highlighter-rouge .line-numbers-rows {
   display: none !important;
 }
 
-pre[class*="language-"].line-numbers {
+.line-numbers,
+pre.line-numbers,
+code.line-numbers,
+.highlight.line-numbers,
+.highlighter-rouge.line-numbers {
   padding-left: var(--space-lg) !important;
 }
 
-pre[class*="language-"].line-numbers .line-numbers-rows {
+pre[class*="language-"].line-numbers,
+.highlight pre[class*="language-"].line-numbers {
+  padding-left: var(--space-lg) !important;
+}
+
+pre[class*="language-"].line-numbers .line-numbers-rows,
+.highlight pre[class*="language-"].line-numbers .line-numbers-rows {
   display: none !important;
+}
+
+/* Remove Rouge line numbers */
+.rouge-table,
+.rouge-gutter,
+.lineno {
+  display: none !important;
+}
+
+.rouge-code {
+  display: block !important;
+  padding: 0 !important;
+}
+
+/* Remove any numbered line elements */
+.highlight .lineno,
+.highlight .line-numbers,
+.highlight .line-numbers-rows,
+.highlight .rouge-gutter,
+.highlight .rouge-table {
+  display: none !important;
+}
+
+/* Ensure clean code display */
+.highlight pre,
+.highlight code {
+  background: none !important;
+  padding: 0 !important;
+  border: none !important;
+  white-space: pre !important;
+}
+
+/* Override any default Jekyll/Rouge styling */
+.highlight {
+  background: var(--color-bg-code) !important;
+  border: 1px solid var(--color-border) !important;
+  border-radius: var(--radius-lg) !important;
+  padding: var(--space-lg) !important;
+  margin: var(--space-lg) 0 !important;
+  overflow-x: auto !important;
+  position: relative !important;
+  box-shadow: var(--shadow-sm) !important;
+}
+
+.highlight::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: var(--color-primary);
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
 }
 
 /* Force clean code block appearance */
