@@ -231,9 +231,18 @@ func (c *Client) SendMessage(ctx context.Context, agentID, message string, sessi
 		lineCount := 0
 		lastActivityTime := time.Now()
 		
-		// Set up a ticker to check for stream timeout - increased to 30 minutes for long-running agents
+		// Set up a ticker to check for stream timeout and health - increased to 30 minutes for long-running agents
 		ticker := time.NewTicker(30 * time.Second)
 		defer ticker.Stop()
+		
+		// Stream health monitoring
+		var streamHealthStats struct {
+			lastPing      time.Time
+			totalLines    int
+			errorCount    int
+			reconnectAttempts int
+		}
+		streamHealthStats.lastPing = time.Now()
 		
 		go func() {
 			for {
@@ -241,7 +250,11 @@ func (c *Client) SendMessage(ctx context.Context, agentID, message string, sessi
 				case <-ctx.Done():
 					return
 				case <-ticker.C:
-					if time.Since(lastActivityTime) > 30*time.Minute {
+					now := time.Now()
+					timeSinceLastActivity := now.Sub(lastActivityTime)
+					
+					// Advanced health monitoring
+					if timeSinceLastActivity > 30*time.Minute {
 						if logger != nil {
 							logger.Printf("Stream timeout - no activity for 30 minutes")
 						}
@@ -256,6 +269,17 @@ func (c *Client) SendMessage(ctx context.Context, agentID, message string, sessi
 						}
 						return
 					}
+					
+					// Send periodic health status updates
+					if timeSinceLastActivity > 5*time.Minute {
+						if logger != nil {
+							logger.Printf("Stream health check - %d lines processed, %d errors, %v since last activity", 
+								streamHealthStats.totalLines, streamHealthStats.errorCount, timeSinceLastActivity)
+						}
+					}
+					
+					// Update ping time
+					streamHealthStats.lastPing = now
 				}
 			}
 		}()
@@ -271,6 +295,7 @@ func (c *Client) SendMessage(ctx context.Context, agentID, message string, sessi
 			}
 
 			lineCount++
+			streamHealthStats.totalLines++
 			line := scanner.Text()
 			lastActivityTime = time.Now()
 
@@ -279,8 +304,8 @@ func (c *Client) SendMessage(ctx context.Context, agentID, message string, sessi
 			}
 
 			// Print raw events for debugging (when debug mode is enabled)
-			if os.Getenv("KUBIYA_DEBUG") == "1" || os.Getenv("DEBUG") == "1" {
-				fmt.Printf("[RAW EVENT] %s\n", line)
+			if os.Getenv("KUBIYA_DEBUG") == "1" || os.Getenv("DEBUG") == "1" || os.Getenv("KUBIYA_RAW_EVENTS") == "1" {
+				fmt.Printf("[RAW STREAM EVENT] %s\n", line)
 			}
 
 			// Handle empty lines gracefully
@@ -290,6 +315,7 @@ func (c *Client) SendMessage(ctx context.Context, agentID, message string, sessi
 
 			// Process Vercel AI data-stream protocol
 			if len(line) < 3 || line[1] != ':' {
+				streamHealthStats.errorCount++
 				if logger != nil {
 					logger.Printf("Malformed line detected: %s", line)
 				}
@@ -741,8 +767,8 @@ func (c *Client) SendInlineAgentMessage(ctx context.Context, message, sessionID 
 			}
 			
 			// Print raw events for debugging (when debug mode is enabled)
-			if os.Getenv("KUBIYA_DEBUG") == "1" || os.Getenv("DEBUG") == "1" {
-				fmt.Printf("[RAW EVENT] %s\n", line)
+			if os.Getenv("KUBIYA_DEBUG") == "1" || os.Getenv("DEBUG") == "1" || os.Getenv("KUBIYA_RAW_EVENTS") == "1" {
+				fmt.Printf("[RAW STREAM EVENT] %s\n", line)
 			}
 
 			// Process Vercel AI data-stream protocol
