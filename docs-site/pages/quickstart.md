@@ -90,13 +90,13 @@ cat > hello-world.yaml << 'EOF'
 name: hello-world
 description: A simple hello world workflow
 steps:
-  - name: greet
-    executor: command
-    command: echo "Hello from Kubiya CLI!"
-  - name: date
-    executor: command
-    command: date
-    depends_on: [greet]
+- name: greet
+  executor: command
+  command: echo "Hello from Kubiya CLI!"
+- name: date
+  executor: command
+  command: date
+  depends: [greet]
 EOF
 ```
 

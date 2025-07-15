@@ -37,34 +37,31 @@ params:
     default: "Hello"
 
 steps:
-  - name: greet
-    description: Print greeting message
-    executor: command
-    command: echo "$message, $name!"
-    env:
-      message: ${{ params.message }}
-      name: ${{ params.name }}
+- name: greet
+  description: Print greeting message
+  executor: command
+  command: echo "$message, $name!"
 
-  - name: show_date
-    description: Show current date and time
-    executor: command
-    command: date '+%Y-%m-%d %H:%M:%S'
-    depends_on: [greet]
+- name: show_date
+  description: Show current date and time
+  executor: command
+  command: date '+%Y-%m-%d %H:%M:%S'
+  depends: [greet]
 
-  - name: system_info
-    description: Display basic system information
-    executor: command
-    command: |
-      echo "Hostname: $(hostname)"
-      echo "User: $(whoami)"
-      echo "Uptime: $(uptime)"
-    depends_on: [show_date]
+- name: system_info
+  description: Display basic system information
+  executor: command
+  command: |
+    echo "Hostname: $(hostname)"
+    echo "User: $(whoami)"
+    echo "Uptime: $(uptime)"
+  depends: [show_date]
 
-  - name: final_message
-    description: Display completion message
-    executor: command
-    command: echo "Workflow completed successfully!"
-    depends_on: [system_info]
+- name: final_message
+  description: Display completion message
+  executor: command
+  command: echo "Workflow completed successfully!"
+  depends: [system_info]
 ```
 
 ## Execution
@@ -163,41 +160,14 @@ name: env-workflow
 description: Workflow demonstrating environment variable usage
 
 steps:
-  - name: check_env
-    executor: command
-    command: |
-      echo "API Key present: $([ -n "$KUBIYA_API_KEY" ] && echo "Yes" || echo "No")"
-      echo "Debug mode: ${KUBIYA_DEBUG:-false}"
-      echo "Runner: ${KUBIYA_DEFAULT_RUNNER:-default}"
+- name: check_env
+  executor: command
+  command: |
+    echo "API Key present: $([ -n "$KUBIYA_API_KEY" ] && echo "Yes" || echo "No")"
+    echo "Debug mode: ${KUBIYA_DEBUG:-false}"
+    echo "Runner: ${KUBIYA_DEFAULT_RUNNER:-default}"
 ```
 
-### Error Handling
-
-Add error handling to your workflow:
-
-```yaml
-name: error-handling-workflow
-description: Workflow demonstrating error handling
-
-steps:
-  - name: might_fail
-    executor: command
-    command: |
-      if [ "$RANDOM" -gt 16384 ]; then
-        echo "Operation successful"
-        exit 0
-      else
-        echo "Operation failed"
-        exit 1
-      fi
-    continue_on_error: true
-
-  - name: cleanup
-    executor: command
-    command: echo "Cleaning up resources..."
-    depends_on: [might_fail]
-    run_on_failure: true
-```
 
 ## Common Use Cases
 
@@ -214,26 +184,24 @@ params:
     default: "main"
 
 steps:
-  - name: checkout
-    executor: command
-    command: git checkout $branch
-    env:
-      branch: ${{ params.branch }}
+- name: checkout
+  executor: command
+  command: git checkout $branch
 
-  - name: install_deps
-    executor: command
-    command: npm install
-    depends_on: [checkout]
+- name: install_deps
+  executor: command
+  command: npm install
+  depends: [checkout]
 
-  - name: run_tests
-    executor: command
-    command: npm test
-    depends_on: [install_deps]
+- name: run_tests
+  executor: command
+  command: npm test
+  depends: [install_deps]
 
-  - name: build
-    executor: command
-    command: npm run build
-    depends_on: [run_tests]
+- name: build
+  executor: command
+  command: npm run build
+  depends: [run_tests]
 ```
 
 ### System Maintenance
@@ -243,28 +211,28 @@ name: system-maintenance
 description: Basic system maintenance tasks
 
 steps:
-  - name: disk_cleanup
-    executor: command
-    command: |
-      echo "Cleaning temporary files..."
-      rm -rf /tmp/*
-      echo "Disk cleanup completed"
+- name: disk_cleanup
+  executor: command
+  command: |
+    echo "Cleaning temporary files..."
+    rm -rf /tmp/*
+    echo "Disk cleanup completed"
 
-  - name: log_rotation
-    executor: command
-    command: |
-      echo "Rotating logs..."
-      find /var/log -name "*.log" -size +100M -exec gzip {} \;
-      echo "Log rotation completed"
-    depends_on: [disk_cleanup]
+- name: log_rotation
+  executor: command
+  command: |
+    echo "Rotating logs..."
+    find /var/log -name "*.log" -size +100M -exec gzip {} \;
+    echo "Log rotation completed"
+  depends: [disk_cleanup]
 
-  - name: system_update
-    executor: command
-    command: |
-      echo "Checking for updates..."
-      apt list --upgradable
-      echo "Update check completed"
-    depends_on: [log_rotation]
+- name: system_update
+  executor: command
+  command: |
+    echo "Checking for updates..."
+    apt list --upgradable
+    echo "Update check completed"
+  depends: [log_rotation]
 ```
 
 ## Best Practices
@@ -273,26 +241,26 @@ steps:
 
 ```yaml
 steps:
-  - name: validate_input_parameters
-    description: Validate all required input parameters
-    # ... rest of step
+- name: validate_input_parameters
+  description: Validate all required input parameters
+  # ... rest of step
 ```
 
 ### 2. Handle Dependencies
 
 ```yaml
 steps:
-  - name: setup_environment
-    # ... setup step
+- name: setup_environment
+  # ... setup step
 
-  - name: run_application
-    depends_on: [setup_environment]
-    # ... application step
+- name: run_application
+  depends: [setup_environment]
+  # ... application step
 
-  - name: cleanup_resources
-    depends_on: [run_application]
-    run_on_failure: true
-    # ... cleanup step
+- name: cleanup_resources
+  depends: [run_application]
+  run_on_failure: true
+  # ... cleanup step
 ```
 
 ### 3. Use Parameters for Flexibility
@@ -310,13 +278,13 @@ params:
 
 ```yaml
 steps:
-  - name: critical_operation
-    executor: command
-    command: important-command
-    timeout: 300s
-    retry:
-      attempts: 3
-      delay: 10s
+- name: critical_operation
+  executor: command
+  command: important-command
+  timeout: 300s
+  retry:
+    attempts: 3
+    delay: 10s
 ```
 
 ## Troubleshooting
