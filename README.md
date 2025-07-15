@@ -589,8 +589,6 @@ The Kubiya CLI provides comprehensive MCP integration for AI-powered application
 ### Quick MCP Setup
 
 ```bash
-# Interactive setup with guided configuration
-kubiya mcp install
 
 # List available serverless agents for MCP
 kubiya agent list
@@ -598,12 +596,6 @@ kubiya agent list
 # Set up MCP with specific agents
 export AGENT_UUIDS="abc-123,def-456"  # comma-separated agent UUIDs
 kubiya mcp setup
-
-# Apply configuration to Claude Desktop
-kubiya mcp apply claude_desktop
-
-# Apply configuration to Cursor IDE
-kubiya mcp apply cursor_ide
 ```
 
 ### MCP Server Management
@@ -722,20 +714,6 @@ kubiya webhook update abc-123 --name "Updated Alert Handler"
 kubiya webhook delete abc-123
 ```
 
-## Configuration Management ⚙️
-
-### Initialize Configuration
-
-```bash
-# Create initial configuration
-kubiya config init
-
-# Set default values
-kubiya config set default_runner k8s-runner
-kubiya config set default_timeout 300s
-kubiya config set debug_mode true
-```
-
 ### Environment-Specific Configuration
 
 ```bash
@@ -789,8 +767,6 @@ export KUBIYA_DEFAULT_RUNNER="dev-runner"
 # Verify API key
 kubiya agent list
 
-# Check configuration
-kubiya config show
 
 # Test with debug mode
 export KUBIYA_DEBUG=true

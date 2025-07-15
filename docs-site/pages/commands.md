@@ -696,12 +696,12 @@ kubiya webhook delete WEBHOOK_UUID [OPTIONS]
 
 ## MCP Integration
 
-### kubiya mcp install
+### kubiya mcp setup
 
-Install and configure MCP integration.
+Configure MCP integration.
 
 ```bash
-kubiya mcp install [OPTIONS]
+kubiya mcp setup [OPTIONS]
 ```
 
 **Options:**
@@ -711,10 +711,8 @@ kubiya mcp install [OPTIONS]
 **Examples:**
 ```bash
 # Interactive installation
-kubiya mcp install
+kubiya mcp setup
 
-# Force reinstall
-kubiya mcp install --force
 ```
 
 ### kubiya mcp serve
@@ -740,113 +738,6 @@ kubiya mcp serve --config ~/.kubiya/mcp-config.json
 
 # Start with verbose logging
 kubiya mcp serve --verbose
-```
-
-### kubiya mcp apply
-
-Apply MCP configuration to client applications.
-
-```bash
-kubiya mcp apply CLIENT [OPTIONS]
-```
-
-**Clients:**
-- `claude_desktop`: Claude Desktop application
-- `cursor_ide`: Cursor IDE
-
-**Examples:**
-```bash
-# Apply to Claude Desktop
-kubiya mcp apply claude_desktop
-
-# Apply to Cursor IDE
-kubiya mcp apply cursor_ide
-```
-
-### kubiya mcp test
-
-Test MCP server functionality.
-
-```bash
-kubiya mcp test [OPTIONS]
-```
-
-**Options:**
-- `--config`: Configuration file to test
-- `--tool`: Test specific tool
-
-**Examples:**
-```bash
-# Test server functionality
-kubiya mcp test
-
-# Test with specific config
-kubiya mcp test --config test-config.json
-
-# Test specific tool
-kubiya mcp test --tool kubectl
-```
-
-## Configuration Management
-
-### kubiya config init
-
-Initialize configuration file.
-
-```bash
-kubiya config init [OPTIONS]
-```
-
-**Options:**
-- `--force`: Overwrite existing configuration
-
-**Examples:**
-```bash
-# Initialize config
-kubiya config init
-
-# Force overwrite
-kubiya config init --force
-```
-
-### kubiya config set
-
-Set configuration value.
-
-```bash
-kubiya config set KEY VALUE [OPTIONS]
-```
-
-**Examples:**
-```bash
-# Set default runner
-kubiya config set default_runner k8s-runner
-
-# Set debug mode
-kubiya config set debug true
-
-# Set timeout
-kubiya config set timeout 300s
-```
-
-### kubiya config show
-
-Show current configuration.
-
-```bash
-kubiya config show [OPTIONS]
-```
-
-**Options:**
-- `--key`: Show specific key value
-
-**Examples:**
-```bash
-# Show all configuration
-kubiya config show
-
-# Show specific key
-kubiya config show --key default_runner
 ```
 
 ## Integration Management
@@ -928,7 +819,6 @@ kubiya version --build-info
 | `KUBIYA_API_KEY` | API key for authentication | Required |
 | `KUBIYA_BASE_URL` | Base URL for API | `https://api.kubiya.ai/api/v1` |
 | `KUBIYA_DEBUG` | Enable debug logging | `false` |
-| `KUBIYA_CONFIG` | Path to config file | `~/.kubiya/config.yaml` |
 | `KUBIYA_DEFAULT_RUNNER` | Default runner name | None |
 | `KUBIYA_TIMEOUT` | Default timeout | `300s` |
 

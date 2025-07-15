@@ -121,8 +121,7 @@ make build && make install</code></pre>
         <div class="example-grid">
             <div class="example-card">
                 <h3>1. Configure Authentication</h3>
-                <pre><code class="language-bash">export KUBIYA_API_KEY="your-api-key"
-kubiya config init</code></pre>
+                <pre><code class="language-bash">export KUBIYA_API_KEY="your-api-key"</code></pre>
             </div>
             
             <div class="example-card">

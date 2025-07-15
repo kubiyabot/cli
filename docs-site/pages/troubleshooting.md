@@ -25,9 +25,6 @@ kubiya agent list --verbose
 # Check CLI version
 kubiya version --build-info
 
-# Check configuration
-kubiya config show
-
 # Test basic connectivity
 kubiya agent list
 ```
@@ -65,9 +62,6 @@ Error: API key not found
 ```bash
 # Set API key as environment variable
 export KUBIYA_API_KEY="your-api-key"
-
-# Or use config file
-kubiya config set api_key "your-api-key"
 
 # Or pass as flag
 kubiya --api-key "your-api-key" agent list
@@ -120,24 +114,6 @@ export KUBIYA_SKIP_SSL_VERIFY=true
 
 # Or specify custom CA bundle
 export KUBIYA_CA_BUNDLE="/path/to/ca-bundle.pem"
-```
-
-### Proxy Configuration
-
-**Error:**
-```
-Error: connection refused
-```
-
-**Solutions:**
-```bash
-# Set proxy environment variables
-export HTTP_PROXY="http://proxy.company.com:8080"
-export HTTPS_PROXY="http://proxy.company.com:8080"
-export NO_PROXY="localhost,127.0.0.1,.company.com"
-
-# Or use kubiya-specific proxy settings
-kubiya config set proxy_url "http://proxy.company.com:8080"
 ```
 
 ## Agent Issues
@@ -482,8 +458,6 @@ curl -I https://api.kubiya.ai/health
 # Use different runner
 kubiya tool exec --runner faster-runner --name "test" --content "echo test"
 
-# Reduce concurrent operations
-kubiya config set max_concurrent_requests 2
 
 # Check network latency
 ping api.kubiya.ai
@@ -560,13 +534,6 @@ Error: config file not found
 ```bash
 # Create config directory
 mkdir -p ~/.kubiya
-
-# Initialize configuration
-kubiya config init
-
-# Set config path manually
-export KUBIYA_CONFIG=~/.kubiya/config.yaml
-```
 
 ### Invalid Configuration
 
