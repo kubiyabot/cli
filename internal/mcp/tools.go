@@ -7,11 +7,18 @@ import (
 	"strings"
 	"time"
 
+	extism "github.com/extism/go-sdk"
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
 // addExecuteTool adds the core tool execution capability
 func (s *Server) addExecuteTool() error {
+
+	s.server.AddTool(mcp.NewTool("execute_workflow_dsl_wasm",
+		mcp.WithDescription("Execute a Kubiya workflow dsl with wasm"),
+		mcp.WithString("content", mcp.Required(), mcp.Description("Content of workflow dsl script"))),
+		s.executeWorkflowDslWasm)
+
 	s.server.AddTool(mcp.NewTool("execute_tool",
 		mcp.WithDescription("Execute a Kubiya tool with live streaming output"),
 		mcp.WithString("tool_name", mcp.Required(), mcp.Description("Name of the tool to execute")),
@@ -415,4 +422,38 @@ func (s *Server) getKnowledgeHandler(ctx context.Context, request mcp.CallToolRe
 	}
 
 	return mcp.NewToolResultText(string(data)), nil
+}
+
+// Workflow DSL WASM execution
+
+func (s *Server) executeWorkflowDslWasm(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	args := request.Params.Arguments
+	content, ok := args["content"].(string)
+	if !ok || content == "" {
+		return mcp.NewToolResultError("script parameter is required"), nil
+	}
+
+	if err := sem.Acquire(ctx, 1); err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("Failed to acquire semaphore: %v", err)), nil
+	}
+	defer sem.Release(1)
+
+	p := pluginPool.Get()
+	if p == nil {
+		return mcp.NewToolResultError("wasm plugin is unavailable"), nil
+	}
+
+	wrapped := p.(*struct {
+		plugin *extism.Plugin
+		ctx    context.Context
+	})
+	defer pluginPool.Put(p)
+
+	// Execute
+	_, output, err := wrapped.plugin.Call("execute_script", []byte(content))
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("Failed to execute script: %v", err)), nil
+	}
+
+	return mcp.NewToolResultText(string(output)), nil
 }
