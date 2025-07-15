@@ -26,7 +26,7 @@ The fastest way to get started:
 
 ```bash
 # Interactive setup with guided configuration
-kubiya mcp install
+kubiya mcp setup
 ```
 
 This will:
@@ -48,10 +48,6 @@ export AGENT_UUIDS="abc-123,def-456"
 
 # 3. Set up MCP server
 kubiya mcp setup
-
-# 4. Apply to specific applications
-kubiya mcp apply claude_desktop
-kubiya mcp apply cursor_ide
 ```
 
 ## Configuration
