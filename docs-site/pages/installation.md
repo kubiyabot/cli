@@ -109,9 +109,6 @@ kubiya version
 
 # Check help
 kubiya --help
-
-# Test basic functionality
-kubiya config init
 ```
 
 Expected output:
@@ -139,14 +136,6 @@ export KUBIYA_DEBUG=true
 
 # Optional: Default runner
 export KUBIYA_DEFAULT_RUNNER="my-runner"
-```
-
-### Configuration File
-
-Initialize a configuration file:
-
-```bash
-kubiya config init
 ```
 
 This creates `~/.kubiya/config.yaml` with default settings:

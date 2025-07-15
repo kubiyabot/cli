@@ -30,13 +30,6 @@ echo 'export KUBIYA_API_KEY="your-api-key-here"' >> ~/.bashrc
 source ~/.bashrc
 ```
 
-### Initialize Configuration
-
-Create your configuration file:
-
-```bash
-kubiya config init
-```
 
 This creates `~/.kubiya/config.yaml` with default settings. You can customize it as needed.
 
@@ -219,11 +212,8 @@ kubiya source list
 
 ### MCP Integration
 
-Set up MCP integration for Claude Desktop:
-
 ```bash
-kubiya mcp install
-kubiya mcp apply claude_desktop
+kubiya mcp setup
 ```
 
 ### Secret Management
