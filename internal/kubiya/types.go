@@ -443,10 +443,10 @@ type SecretValue struct {
 
 // Add these types
 type EnvVarSource struct {
-	Type     string // "agent", "local", "aws", "manual"
-	Value    string
-	Icon     string
-	Label    string
+	Type  string // "agent", "local", "aws", "manual"
+	Value string
+	Icon  string
+	Label string
 	Agent *Agent // if from agent
 }
 
@@ -455,7 +455,6 @@ type EnvVarStatus struct {
 	Value string
 	// ... other fields if needed
 }
-
 
 // SourceError represents an error in source discovery
 type SourceError struct {
@@ -643,7 +642,7 @@ type ProjectResource struct {
 	Name        string                 `json:"name"`
 	Status      string                 `json:"status"`
 	Properties  map[string]interface{} `json:"properties"`
-	DependsOn   []string               `json:"depends_on,omitempty"`
+	DependsOn   []string               `json:"depends,omitempty"`
 	Provisioner string                 `json:"provisioner,omitempty"`
 }
 
