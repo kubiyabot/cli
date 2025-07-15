@@ -4,9 +4,10 @@ import (
 	"fmt"
 	"log"
 
+	"github.com/mark3labs/mcp-go/server"
+
 	"github.com/kubiyabot/cli/internal/config"
 	"github.com/kubiyabot/cli/internal/kubiya"
-	"github.com/mark3labs/mcp-go/server"
 )
 
 // Server wraps the Kubiya client and provides MCP tools
@@ -19,6 +20,9 @@ type Server struct {
 
 // NewServer creates a new MCP server instance
 func NewServer(cfg *config.Config, serverConfig *Configuration) *Server {
+
+	_ = newWFDslWasmPlugin()
+
 	return &Server{
 		client:       kubiya.NewClient(cfg),
 		config:       cfg,
@@ -70,7 +74,7 @@ func (s *Server) addTools() error {
 
 	// Default behavior: add all tools based on configuration
 	log.Println("Using default mode - adding all configured tools")
-	
+
 	// Core tool execution
 	if err := s.addExecuteTool(); err != nil {
 		return err
@@ -112,7 +116,7 @@ func (s *Server) addResources() error {
 func (s *Server) addWhitelistedToolsOnly() error {
 	for _, tool := range s.serverConfig.WhitelistedTools {
 		log.Printf("Adding whitelisted tool: %s (%s)", tool.Name, tool.Description)
-		
+
 		// Convert WhitelistedTool to Kubiya Tool format
 		kubiyaTool := kubiya.Tool{
 			Name:        tool.Name,
@@ -135,13 +139,13 @@ func (s *Server) addWhitelistedToolsOnly() error {
 
 		// Create the tool handler that executes the whitelisted tool
 		handler := NewWhitelistedToolHandler(s.client, tool, kubiyaTool)
-		
+
 		// Register the tool as an individual MCP tool
 		if err := handler.Register(s.server); err != nil {
 			return fmt.Errorf("failed to register whitelisted tool %s: %w", tool.Name, err)
 		}
 	}
-	
+
 	return nil
 }
 
