@@ -839,16 +839,16 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
-      - name: Install Kubiya CLI
-        run: curl -fsSL https://cli.kubiya.ai/install.sh | bash
-      - name: Execute Deployment Workflow
-        env:
-          KUBIYA_API_KEY: ${{ secrets.KUBIYA_API_KEY }}
-        run: |
-          kubiya workflow execute myorg/deployment-workflows/production.yaml \
-            --var version=${{ github.sha }} \
-            --var environment=production
+    - uses: actions/checkout@v3
+    - name: Install Kubiya CLI
+      run: curl -fsSL https://cli.kubiya.ai/install.sh | bash
+    - name: Execute Deployment Workflow
+      env:
+        KUBIYA_API_KEY: ${{ secrets.KUBIYA_API_KEY }}
+      run: |
+        kubiya workflow execute myorg/deployment-workflows/production.yaml \
+          --var version=${{ github.sha }} \
+          --var environment=production
 ```
 
 #### GitLab CI
