@@ -56,14 +56,12 @@ A powerful command-line interface for managing Kubiya sources, serverless agents
 
 ## Quick Installation 🚀
 
-### Direct Download (Recommended)
+### Mac OSX Using HomeBrew
 
 ```bash
-# Linux/macOS
-curl -fsSL https://cli.kubiya.ai/install.sh | bash
-
-# Windows (PowerShell)
-iwr -useb https://cli.kubiya.ai/install.ps1 | iex
+brew update
+brew tap kubiyabot/kubiya
+brew install kubiya
 ```
 
 ### APT Installation (Debian/Ubuntu)
