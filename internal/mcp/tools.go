@@ -14,10 +14,10 @@ import (
 // addExecuteTool adds the core tool execution capability
 func (s *Server) addExecuteTool() error {
 
-	s.server.AddTool(mcp.NewTool("execute_workflow_dsl_wasm",
+	s.server.AddTool(mcp.NewTool("workflow_dsl_wasm",
 		mcp.WithDescription("Execute a Kubiya workflow dsl with wasm"),
 		mcp.WithString("content", mcp.Required(), mcp.Description("Content of workflow dsl script"))),
-		s.executeWorkflowDslWasm)
+		s.workflowDslWasmHandler)
 
 	s.server.AddTool(mcp.NewTool("execute_tool",
 		mcp.WithDescription("Execute a Kubiya tool with live streaming output"),
@@ -426,7 +426,7 @@ func (s *Server) getKnowledgeHandler(ctx context.Context, request mcp.CallToolRe
 
 // Workflow DSL WASM execution
 
-func (s *Server) executeWorkflowDslWasm(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (s *Server) workflowDslWasmHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	args := request.Params.Arguments
 	content, ok := args["content"].(string)
 	if !ok || content == "" {
