@@ -430,7 +430,7 @@ func (s *Server) workflowDslWasmHandler(ctx context.Context, request mcp.CallToo
 	args := request.Params.Arguments
 	content, ok := args["content"].(string)
 	if !ok || content == "" {
-		return mcp.NewToolResultError("script parameter is required"), nil
+		return mcp.NewToolResultError("content parameter is required"), nil
 	}
 
 	if err := sem.Acquire(ctx, 1); err != nil {
