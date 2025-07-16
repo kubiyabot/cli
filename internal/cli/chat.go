@@ -49,12 +49,12 @@ type connectionStatus struct {
 
 // Add tool call statistics
 type toolCallStats struct {
-	totalCalls    int
-	activeCalls   int
+	totalCalls     int
+	activeCalls    int
 	completedCalls int
-	failedCalls   int
-	toolTypes     map[string]int
-	mu            sync.RWMutex
+	failedCalls    int
+	toolTypes      map[string]int
+	mu             sync.RWMutex
 }
 
 // Add a buffer for chat messages
@@ -75,10 +75,10 @@ const (
 
 func newChatCommand(cfg *config.Config) *cobra.Command {
 	var (
-		agentID   string
-		agentName string
-		message      string
-		noClassify   bool
+		agentID    string
+		agentName  string
+		message    string
+		noClassify bool
 
 		interactive     bool
 		debug           bool
@@ -92,21 +92,22 @@ func newChatCommand(cfg *config.Config) *cobra.Command {
 		sourceName      string
 		suggestTool     string
 		permissionLevel string
+
 		showToolCalls   bool
 		retries         int
 		
 		// Inline agent flags
-		inline          bool
-		toolsFile       string
-		toolsJSON       string
-		aiInstructions  string
-		description     string
-		runners         []string
-		integrations    []string
-		secrets         []string
-		envVars         []string
-		llmModel        string
-		isDebugMode     bool
+		inline         bool
+		toolsFile      string
+		toolsJSON      string
+		aiInstructions string
+		description    string
+		runners        []string
+		integrations   []string
+		secrets        []string
+		envVars        []string
+		llmModel       string
+		isDebugMode    bool
 	)
 
 	// Helper function to fetch content from URL
@@ -310,6 +311,9 @@ For inline agents, use --inline with --tools-file or --tools-json to provide cus
 				if llmModel == "" {
 					llmModel = "azure/gpt-4-32k"
 				}
+				if len(integrations) == 0 {
+					integrations = []string{}
+				}
 			}
 
 			// Session storage file path
@@ -401,24 +405,24 @@ For inline agents, use --inline with --tools-file or --tools-json to provide cus
 					toolTypes: make(map[string]int),
 				}
 				rawEventLogging = os.Getenv("KUBIYA_RAW_EVENTS") == "1" || debug
-				msgChan        <-chan kubiya.ChatMessage
+				msgChan         <-chan kubiya.ChatMessage
 			)
 
 			// Handle inline agent
 			if inline {
 				var tools []kubiya.Tool
-				
+
 				// Parse tools from file or JSON
 				if toolsFile != "" {
 					if debug {
 						fmt.Printf("🔍 Loading tools from file: %s\n", toolsFile)
 					}
-					
+
 					toolsData, err := os.ReadFile(toolsFile)
 					if err != nil {
 						return fmt.Errorf("failed to read tools file: %w", err)
 					}
-					
+
 					tools, err = parseTools(string(toolsData))
 					if err != nil {
 						return fmt.Errorf("failed to parse tools from file: %w", err)
@@ -427,26 +431,31 @@ For inline agents, use --inline with --tools-file or --tools-json to provide cus
 					if debug {
 						fmt.Printf("🔍 Parsing tools from JSON string\n")
 					}
-					
+
 					tools, err = parseTools(toolsJSON)
 					if err != nil {
 						return fmt.Errorf("failed to parse tools from JSON: %w", err)
 					}
 				}
-				
+
 				// Validate tools
 				for i, tool := range tools {
 					if err := validateTool(tool); err != nil {
 						return fmt.Errorf("tool validation failed for tool %d (%s): %w", i, tool.Name, err)
 					}
 				}
-				
+
 				// Parse environment variables
 				envVarsMap, err := parseEnvVars(envVars)
 				if err != nil {
 					return fmt.Errorf("failed to parse environment variables: %w", err)
 				}
-				
+
+				// Add KUBIYA_RUNNER if runners are specified
+				if len(runners) > 0 {
+					envVarsMap["KUBIYA_RUNNER"] = runners[0]
+				}
+
 				if debug {
 					fmt.Printf("🤖 Creating inline agent with %d tools\n", len(tools))
 					fmt.Printf("📋 Tools: %v\n", func() []string {
@@ -457,52 +466,97 @@ For inline agents, use --inline with --tools-file or --tools-json to provide cus
 						return names
 					}())
 				}
-				
+
 				// Convert tools to the correct format for inline agent
 				inlineTools := make([]map[string]interface{}, len(tools))
 				for i, tool := range tools {
+					// Ensure args is an empty slice if nil
+					args := tool.Args
+					if args == nil {
+						args = []kubiya.ToolArg{}
+					}
+
+					// Ensure env is an empty slice if nil
+					env := tool.Env
+					if env == nil {
+						env = []string{}
+					}
+
+					// Ensure with_files is an empty slice if nil
+					withFiles := tool.WithFiles
+					if withFiles == nil {
+						withFiles = []interface{}{}
+					}
+
+					// Ensure with_volumes is an empty slice if nil
+					withVolumes := tool.WithVolumes
+					if withVolumes == nil {
+						withVolumes = []interface{}{}
+					}
+
 					inlineTools[i] = map[string]interface{}{
 						"name":         tool.Name,
-						"description":  tool.Description,
-						"content":      tool.Content,
-						"args":         tool.Args,
-						"env":          tool.Env,
-						"secrets":      tool.Secrets,
-						"image":        tool.Image,
-						"icon_url":     tool.IconURL,
 						"alias":        tool.Alias,
-						"with_files":   tool.WithFiles,
-						"with_volumes": tool.WithVolumes,
+						"description":  tool.Description,
+						"type":         tool.Type,
+						"content":      tool.Content,
+						"args":         args,
+						"env":          env,
+						"image":        tool.Image,
+						"with_files":   withFiles,
+						"with_volumes": withVolumes,
 					}
 				}
-				
+
 				// Create inline agent request - use the same message handling as regular agents
-				msgChan, err = client.SendInlineAgentMessage(cmd.Context(), message, sessionID, context, map[string]interface{}{
-					"uuid":                nil,
-					"name":                "inline",
-					"description":         description,
-					"ai_instructions":     aiInstructions,
-					"tools":               inlineTools,
-					"runners":             runners,
-					"integrations":        integrations,
-					"secrets":             secrets,
+				inlineAgent := map[string]interface{}{
+					"uuid":                  nil,
+					"name":                  "inline",
+					"description":           description,
+					"ai_instructions":       aiInstructions,
+					"tools":                 inlineTools,
+					"runners":               runners,
+					"integrations":          integrations,
+					"secrets":               secrets,
 					"environment_variables": envVarsMap,
-					"llm_model":           llmModel,
-					"is_debug_mode":       isDebugMode,
-					"owners":              []string{},
-					"allowed_users":       []string{},
-					"allowed_groups":      []string{},
-					"starters":            []interface{}{},
-					"tasks":               []string{},
-					"sources":             []string{},
-					"links":               []string{},
-					"image":               "",
-					"additional_data":     map[string]interface{}{},
-				})
+					"llm_model":             llmModel,
+					"is_debug_mode":         true, // Always true for inline agents to capture tool output
+					"owners":                []string{},
+					"allowed_users":         []string{},
+					"allowed_groups":        []string{},
+					"starters":              []interface{}{},
+					"tasks":                 []string{},
+					"sources":               []string{},
+					"links":                 []string{},
+					"image":                 "",
+					"additional_data":       map[string]interface{}{},
+				}
+
+				if debug {
+					fmt.Printf("🔍 CLI: Creating inline agent with payload:\n")
+					if jsonPayload, err := json.MarshalIndent(inlineAgent, "", "  "); err == nil {
+						fmt.Printf("Agent Definition: %s\n", string(jsonPayload))
+					}
+					fmt.Printf("Message: %s\n", message)
+					fmt.Printf("SessionID: %s\n", sessionID)
+					fmt.Printf("Context files: %d\n", len(context))
+					fmt.Printf("User Email: %s\n", os.Getenv("KUBIYA_USER_EMAIL"))
+					fmt.Printf("Organization: %s\n", os.Getenv("KUBIYA_ORG"))
+					apiKey := os.Getenv("KUBIYA_API_KEY")
+					if len(apiKey) > 20 {
+						fmt.Printf("API Key: %s\n", apiKey[:20]+"...")
+					} else {
+						fmt.Printf("API Key: %s\n", apiKey)
+					}
+					fmt.Printf("Base URL: %s\n", cfg.BaseURL)
+					fmt.Printf("Debug mode: %v\n", debug)
+				}
+
+				msgChan, err = client.SendInlineAgentMessage(cmd.Context(), message, sessionID, context, inlineAgent)
 				if err != nil {
 					return err
 				}
-				
+
 				// Set agentID for inline agent to use the same processing logic
 				agentID = "inline"
 			}
@@ -527,9 +581,8 @@ For inline agents, use --inline with --tools-file or --tools-json to provide cus
 
 				// Create HTTP request
 				baseURL := strings.TrimSuffix(cfg.BaseURL, "/")
-				if strings.HasSuffix(baseURL, "/api/v1") {
-					baseURL = strings.TrimSuffix(baseURL, "/api/v1")
-				}
+				baseURL = strings.TrimSuffix(baseURL, "/api/v1")
+
 				classifyURL := fmt.Sprintf("%s/http-bridge/v1/classify/agent", baseURL)
 				req, err := http.NewRequestWithContext(cmd.Context(), http.MethodPost, classifyURL, bytes.NewBuffer(reqJSON))
 				if err != nil {
@@ -673,7 +726,7 @@ For inline agents, use --inline with --tools-file or --tools-json to provide cus
 			
 			// Show enhanced connection status with progress indicators
 			fmt.Printf("%s\n", style.InfoBoxStyle.Render(
-				fmt.Sprintf("🔗 Connecting to agent runner service at: runner://%s (%s)", 
+				fmt.Sprintf("🔗 Connecting to agent runner service at: runner://%s (%s)",
 					connStatus.runner, connStatus.runnerType)))
 			
 			// Show additional agent details if available
@@ -688,6 +741,7 @@ For inline agents, use --inline with --tools-file or --tools-json to provide cus
 			
 			// Show connection steps
 			fmt.Printf("%s\n", style.SpinnerStyle.Render("⏳ Establishing secure connection..."))
+
 			fmt.Printf("%s\n", style.SpinnerStyle.Render("🔐 Authenticating with API key..."))
 			fmt.Printf("%s\n", style.SpinnerStyle.Render("🤖 Initializing agent session..."))
 			
@@ -707,11 +761,12 @@ For inline agents, use --inline with --tools-file or --tools-json to provide cus
 					}
 				}
 			}
-			
+
 			// Connection established
 			connStatus.connected = true
 			connStatus.lastPing = time.Now()
 			connStatus.latency = time.Since(connStatus.connectTime)
+
 			
 			// Clear previous status lines and show success
 			fmt.Printf("\r\033[K")  // Clear current line
@@ -778,13 +833,13 @@ For inline agents, use --inline with --tools-file or --tools-json to provide cus
 						return fmt.Errorf("error from server: %s", msg.Error)
 					}
 				}
-				
+
 				// Raw event logging for debugging
 				if rawEventLogging {
 					fmt.Printf("[RAW EVENT] Type: %s, Content: %s, MessageID: %s, Final: %v, SessionID: %s\n",
 						msg.Type, msg.Content, msg.MessageID, msg.Final, msg.SessionID)
 				}
-				
+
 				// Capture completion reason and session ID from final messages
 				if msg.Final && msg.FinishReason != "" {
 					completionReason = msg.FinishReason
@@ -795,7 +850,7 @@ For inline agents, use --inline with --tools-file or --tools-json to provide cus
 
 				// Handle system messages
 				if msg.Type == systemMsg {
-					fmt.Fprintf(os.Stderr, "%s\n", style.SystemStyle.Render("🔄 " + msg.Content))
+					fmt.Fprintf(os.Stderr, "%s\n", style.SystemStyle.Render("🔄 "+msg.Content))
 					continue
 				}
 
@@ -828,7 +883,7 @@ For inline agents, use --inline with --tools-file or --tools-json to provide cus
 								toolStats.activeCalls++
 								toolStats.toolTypes[toolName]++
 								toolStats.mu.Unlock()
-								
+
 								// Create new tool execution
 								te := &toolExecution{
 									name:       toolName,
@@ -841,6 +896,7 @@ For inline agents, use --inline with --tools-file or --tools-json to provide cus
 								}
 								toolExecutions[msg.MessageID] = te
 								toolsExecuted = true
+
 
 								// Only show tool calls if flag is enabled
 								if showToolCalls {
@@ -885,7 +941,7 @@ For inline agents, use --inline with --tools-file or --tools-json to provide cus
 					if te != nil && !te.isComplete {
 						// Mark that we received output
 						te.hasOutput = true
-						
+
 						// Update status to running when we start receiving output
 						if te.status == "waiting" {
 							te.status = "running"
@@ -894,17 +950,17 @@ For inline agents, use --inline with --tools-file or --tools-json to provide cus
 								fmt.Printf("\r%s\n", style.SpinnerStyle.Render("🔄 Processing tool execution..."))
 							}
 						}
-						
+
 						// Also check if we need to mark as complete based on content
-						if strings.Contains(strings.ToLower(msg.Content), "completed") || 
-						   strings.Contains(strings.ToLower(msg.Content), "finished") ||
-						   strings.Contains(strings.ToLower(msg.Content), "done") {
+						if strings.Contains(strings.ToLower(msg.Content), "completed") ||
+							strings.Contains(strings.ToLower(msg.Content), "finished") ||
+							strings.Contains(strings.ToLower(msg.Content), "done") {
 							te.isComplete = true
 						}
-						
+
 						// Store the full content
 						te.output.WriteString(msg.Content)
-						
+
 						// Get the current content buffer for this message
 						storedContent := messageBuffer[msg.MessageID]
 						if storedContent == nil {
@@ -1011,7 +1067,7 @@ For inline agents, use --inline with --tools-file or --tools-json to provide cus
 								}
 							}
 						}
-						
+
 						// Update stored content
 						storedContent.content = msg.Content
 					}
@@ -1027,7 +1083,7 @@ For inline agents, use --inline with --tools-file or --tools-json to provide cus
 								// If running for more than 30 seconds without completion, mark as complete
 								te.isComplete = true
 							}
-							
+
 							if te.isComplete {
 								// Update tool statistics
 								toolStats.mu.Lock()
@@ -1038,7 +1094,7 @@ For inline agents, use --inline with --tools-file or --tools-json to provide cus
 									toolStats.completedCalls++
 								}
 								toolStats.mu.Unlock()
-								
+
 								duration := time.Since(te.startTime).Seconds()
 
 								// Determine status emoji and completion message
@@ -1209,9 +1265,9 @@ For inline agents, use --inline with --tools-file or --tools-json to provide cus
 				if debug {
 					fmt.Printf("🔄 No tools executed, sending follow-up prompt\n")
 				}
-				
+
 				followUpMsg := "You didn't seem to execute anything. You're running in a non-interactive session and the user confirms to execute read-only operations. EXECUTE RIGHT AWAY!"
-				
+
 				// Send follow-up message
 				followUpChan, err := client.SendMessageWithContext(cmd.Context(), agentID, followUpMsg, actualSessionID, map[string]string{})
 				if err != nil {
@@ -1220,11 +1276,11 @@ For inline agents, use --inline with --tools-file or --tools-json to provide cus
 					}
 				} else {
 					fmt.Printf("\n%s\n", style.InfoBoxStyle.Render("🔄 Following up to ensure execution..."))
-					
+
 					// Process follow-up response
 					for msg := range followUpChan {
 						if msg.Error != "" {
-							fmt.Fprintf(os.Stderr, "%s\n", style.ErrorStyle.Render("❌ Error: " + msg.Error))
+							fmt.Fprintf(os.Stderr, "%s\n", style.ErrorStyle.Render("❌ Error: "+msg.Error))
 							hasError = true
 							break
 						}
@@ -1242,7 +1298,7 @@ For inline agents, use --inline with --tools-file or --tools-json to provide cus
 			// Show session continuation message
 			if !interactive && actualSessionID != "" {
 				fmt.Printf("\n%s\n", style.InfoBoxStyle.Render("💬 To continue this conversation, run:"))
-				
+
 				// Include agent name in the continuation command if available
 				var continuationCmd string
 				if agentName != "" {
@@ -1252,7 +1308,7 @@ For inline agents, use --inline with --tools-file or --tools-json to provide cus
 				} else {
 					continuationCmd = fmt.Sprintf("kubiya chat --session %s -m \"your message here\"", actualSessionID)
 				}
-				
+
 				fmt.Printf("%s\n", style.HighlightStyle.Render(continuationCmd))
 				fmt.Println()
 			}
@@ -1270,7 +1326,7 @@ For inline agents, use --inline with --tools-file or --tools-json to provide cus
 			if debug {
 				fmt.Printf("🔍 Completion reason: %s, hasError: %v, toolsExecuted: %v\n", completionReason, hasError, toolsExecuted)
 			}
-			
+
 			// Return proper exit code based on completion status
 			if hasError {
 				if debug {
@@ -1278,7 +1334,7 @@ For inline agents, use --inline with --tools-file or --tools-json to provide cus
 				}
 				return fmt.Errorf("agent execution completed with errors")
 			}
-			
+
 			// Check for non-successful completion reasons
 			switch completionReason {
 			case "error":
