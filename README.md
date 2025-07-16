@@ -41,10 +41,14 @@ A powerful command-line interface for managing Kubiya sources, serverless agents
   - Monitor runner health and status
   - Configure runner-specific settings
 
-- **Webhook Management** 🔗
-  - Create and manage webhooks
-  - Support for Slack, Teams, and HTTP
-  - Custom webhook configurations
+- **Enhanced Webhook Management** 🔗
+  - Create and manage webhooks for agents and workflows
+  - Support for Slack, Teams, and HTTP notifications
+  - JMESPath templating for dynamic prompts (`{{.event.repository.name}}`)
+  - Event filtering with JMESPath expressions
+  - Workflow webhooks with automatic inline agent creation
+  - YAML/JSON workflow definition support
+  - Interactive webhook creation and testing tools
 
 - **MCP Integration** 💻↔️🤖 (Model Context Protocol)
   - Serve MCP server with whitelisted tools and configurations
@@ -678,38 +682,113 @@ Create a custom MCP configuration (`~/.kubiya/mcp-config.json`):
 }
 ```
 
-## Webhook Management 🔗
+## Enhanced Webhook Management 🔗
 
-### Create Webhooks
+### Agent Webhooks
+
+Create webhooks that trigger existing agents with JMESPath templating:
 
 ```bash
-# Create Slack webhook for alerts
-kubiya webhook create --type slack --destination "#infrastructure-alerts" \
-  --name "Infrastructure Alerts" --prompt "Analyze and respond to this infrastructure alert"
+# GitHub Pull Request webhook
+kubiya webhook create \
+  --name "GitHub PR Review" \
+  --source "github" \
+  --target "agent" \
+  --agent-id "your-agent-id" \
+  --method "Slack" \
+  --destination "#code-review" \
+  --prompt "New PR: {{.event.pull_request.title}} in {{.event.repository.name}}" \
+  --filter "event.action == 'opened' && event.pull_request.draft == false"
 
-# Create HTTP webhook for custom integrations
-kubiya webhook create --type http --destination "https://api.example.com/webhook" \
-  --name "API Integration" --prompt "Process this webhook payload"
-
-# Create Teams webhook
-kubiya webhook create --type teams --destination "team-channel-url" \
-  --name "Teams Notifications" --prompt "Handle this notification"
+# Issue tracking webhook
+kubiya webhook create \
+  --name "Issue Alert" \
+  --source "github" \
+  --target "agent" \
+  --agent-id "your-agent-id" \
+  --method "Teams" \
+  --destination "team:channel" \
+  --prompt "Issue #{{.event.issue.number}}: {{.event.issue.title}}" \
+  --filter "event.action == 'opened' && contains(event.issue.labels[*].name, 'bug')"
 ```
 
-### Manage Webhooks
+### Workflow Webhooks
+
+Create webhooks that execute workflows directly:
 
 ```bash
-# List all webhooks
+# Deployment workflow from file
+kubiya webhook create \
+  --name "Auto Deploy" \
+  --source "github" \
+  --target "workflow" \
+  --workflow "file://deploy-workflow.yaml" \
+  --method "Slack" \
+  --destination "#deployments" \
+  --runner "kubiya-hosted" \
+  --filter "event.action == 'push' && event.ref == 'refs/heads/main'"
+
+# Notification workflow from URL
+kubiya webhook create \
+  --name "Slack Notifier" \
+  --source "github" \
+  --target "workflow" \
+  --workflow "https://raw.githubusercontent.com/myorg/workflows/main/notify.yaml" \
+  --method "Slack" \
+  --destination "#notifications"
+```
+
+### Webhook Management
+
+```bash
+# List all webhooks with type indicators
 kubiya webhook list
 
-# Get webhook details
-kubiya webhook get abc-123
+# Detailed view with all fields
+kubiya webhook list --output wide
 
-# Update webhook configuration
-kubiya webhook update abc-123 --name "Updated Alert Handler"
+# Get webhook details
+kubiya webhook describe webhook-id
+
+# Test webhook with event data
+kubiya webhook test --id webhook-id --data '{"event": {"action": "opened"}}'
 
 # Delete webhook
-kubiya webhook delete abc-123
+kubiya webhook delete webhook-id
+```
+
+### JMESPath Templating Examples
+
+Common template variables for GitHub events:
+
+```bash
+# Repository and PR information
+--prompt "PR {{.event.pull_request.number}}: {{.event.pull_request.title}} in {{.event.repository.name}}"
+
+# Issue tracking
+--prompt "Issue #{{.event.issue.number}}: {{.event.issue.title}} by {{.event.issue.user.login}}"
+
+# Release notifications
+--prompt "🚀 Release {{.event.release.tag_name}} published for {{.event.repository.name}}"
+
+# Push notifications
+--prompt "Push to {{.event.repository.name}}: {{.event.commits[0].message}}"
+```
+
+### Event Filtering Examples
+
+```bash
+# Only non-draft PRs
+--filter "event.action == 'opened' && event.pull_request.draft == false"
+
+# Only main branch pushes
+--filter "event.action == 'push' && event.ref == 'refs/heads/main'"
+
+# Only critical issues
+--filter "event.action == 'opened' && contains(event.issue.labels[*].name, 'critical')"
+
+# Repository-specific events
+--filter "contains(event.repository.name, 'production') && event.action == 'published'"
 ```
 
 ### Environment-Specific Configuration

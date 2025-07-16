@@ -99,6 +99,7 @@ func newListWebhooksCommand(cfg *config.Config) *cobra.Command {
 				// Write colored header
 				fmt.Fprintln(w, style.HeaderStyle.Render("ID")+"\t"+
 					style.HeaderStyle.Render("NAME")+"\t"+
+					style.HeaderStyle.Render("TYPE")+"\t"+
 					style.HeaderStyle.Render("SOURCE")+"\t"+
 					style.HeaderStyle.Render("DESTINATION")+"\t"+
 					style.HeaderStyle.Render("METHOD")+"\t"+
@@ -108,6 +109,7 @@ func newListWebhooksCommand(cfg *config.Config) *cobra.Command {
 
 				fmt.Fprintln(w, "───────────────────────────────\t"+
 					"───────────────────────\t"+
+					"───────────\t"+
 					"───────────\t"+
 					"───────────────────────\t"+
 					"───────────\t"+
@@ -129,6 +131,12 @@ func newListWebhooksCommand(cfg *config.Config) *cobra.Command {
 							managedBy = style.DimStyle.Render("<none>")
 						}
 
+						// Determine webhook type
+						webhookType := "🤖 Agent"
+						if wh.Workflow != "" {
+							webhookType = "📋 Workflow"
+						}
+
 						// Truncate long values
 						name := truncateString(wh.Name, 25)
 						source := truncateString(wh.Source, 12)
@@ -137,9 +145,10 @@ func newListWebhooksCommand(cfg *config.Config) *cobra.Command {
 						createdBy := truncateString(wh.CreatedBy, 15)
 						managedBy = truncateString(managedBy, 15)
 
-						fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+						fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 							style.DimStyle.Render(wh.ID),
 							style.HighlightStyle.Render(name),
+							webhookType,
 							style.SubtitleStyle.Render(source),
 							destination,
 							getMethodWithIcon(wh.Communication.Method),
@@ -354,7 +363,18 @@ func newDescribeWebhookCommand(cfg *config.Config) *cobra.Command {
 				fmt.Printf("%s\n", style.SubtitleStyle.Render("📋 Basic Information"))
 				fmt.Printf("   ID:       %s\n", style.DimStyle.Render(webhook.ID))
 				fmt.Printf("   Source:   %s\n", style.SubtitleStyle.Render(webhook.Source))
-				fmt.Printf("   Agent ID: %s\n", style.DimStyle.Render(webhook.AgentID))
+				
+				// Type and target information
+				if webhook.Workflow != "" {
+					fmt.Printf("   Type:     %s\n", style.HighlightStyle.Render("📋 Workflow"))
+					fmt.Printf("   Agent ID: %s\n", style.DimStyle.Render(webhook.AgentID))
+					if webhook.Runner != "" {
+						fmt.Printf("   Runner:   %s\n", style.SubtitleStyle.Render(webhook.Runner))
+					}
+				} else {
+					fmt.Printf("   Type:     %s\n", style.HighlightStyle.Render("🤖 Agent"))
+					fmt.Printf("   Agent ID: %s\n", style.DimStyle.Render(webhook.AgentID))
+				}
 
 				// Communication section
 				fmt.Printf("\n%s\n", style.SubtitleStyle.Render("🔌 Communication"))
@@ -413,6 +433,25 @@ func newDescribeWebhookCommand(cfg *config.Config) *cobra.Command {
 					}
 					if webhook.UpdatedAt != "" && webhook.UpdatedAt != "0001-01-01T00:00:00Z" {
 						fmt.Printf("   Updated At: %s\n", style.DimStyle.Render(webhook.UpdatedAt))
+					}
+				}
+
+				// Workflow Details section (only for workflow webhooks)
+				if webhook.Workflow != "" {
+					fmt.Printf("\n%s\n", style.SubtitleStyle.Render("📋 Workflow Details"))
+					
+					// Parse workflow to extract details
+					var workflowData map[string]interface{}
+					if err := json.Unmarshal([]byte(webhook.Workflow), &workflowData); err == nil {
+						if name, ok := workflowData["name"].(string); ok {
+							fmt.Printf("   Name:        %s\n", style.HighlightStyle.Render(name))
+						}
+						if desc, ok := workflowData["description"].(string); ok {
+							fmt.Printf("   Description: %s\n", desc)
+						}
+						if steps, ok := workflowData["steps"].([]interface{}); ok {
+							fmt.Printf("   Steps:       %d\n", len(steps))
+						}
 					}
 				}
 
@@ -878,6 +917,8 @@ func createWorkflowWebhook(ctx context.Context, client *kubiya.Client, name, sou
 		Name:               name,
 		Source:             source,
 		AgentID:            agentID,
+		Workflow:           string(workflowData),
+		Runner:             runner,
 		Filter:             filter,
 		HideWebhookHeaders: hideHeaders,
 		Communication:      kubiya.Communication{},
@@ -1187,10 +1228,16 @@ func createWebhookPrompt(params []WorkflowParameter) string {
 
 // loadWorkflowDefinition loads a workflow definition from various sources
 func loadWorkflowDefinition(def string) ([]byte, error) {
+	var data []byte
+	var err error
+	
 	if strings.HasPrefix(def, "file://") {
 		// Load from file
 		filePath := strings.TrimPrefix(def, "file://")
-		return os.ReadFile(filePath)
+		data, err = os.ReadFile(filePath)
+		if err != nil {
+			return nil, err
+		}
 	} else if strings.HasPrefix(def, "https://") || strings.HasPrefix(def, "http://") {
 		// Load from URL
 		resp, err := http.Get(def)
@@ -1198,11 +1245,32 @@ func loadWorkflowDefinition(def string) ([]byte, error) {
 			return nil, err
 		}
 		defer resp.Body.Close()
-		return io.ReadAll(resp.Body)
+		data, err = io.ReadAll(resp.Body)
+		if err != nil {
+			return nil, err
+		}
 	} else {
 		// Assume it's a JSON/YAML string
-		return []byte(def), nil
+		data = []byte(def)
 	}
+	
+	// Convert YAML to JSON if needed
+	data = bytes.TrimSpace(data)
+	if len(data) > 0 && data[0] != '{' && data[0] != '[' {
+		// Likely YAML, convert to JSON
+		var yamlData interface{}
+		if err := yaml.Unmarshal(data, &yamlData); err != nil {
+			return nil, fmt.Errorf("failed to parse YAML: %w", err)
+		}
+		
+		jsonData, err := json.Marshal(yamlData)
+		if err != nil {
+			return nil, fmt.Errorf("failed to convert YAML to JSON: %w", err)
+		}
+		return jsonData, nil
+	}
+	
+	return data, nil
 }
 
 // createWebhookInteractive creates a webhook in interactive mode

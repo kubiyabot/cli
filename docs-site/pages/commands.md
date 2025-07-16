@@ -634,32 +634,50 @@ kubiya runner helm-chart my-runner > runner-chart.yaml
 
 ## Webhook Management
 
+Webhooks allow you to trigger agents or workflows in response to external events. Two types of webhooks are supported:
+
+- **Agent Webhooks**: Trigger existing agents with custom prompts
+- **Workflow Webhooks**: Execute workflows directly using inline agents
+
 ### kubiya webhook create
 
-Create a new webhook.
+Create a new webhook interactively.
 
 ```bash
 kubiya webhook create [OPTIONS]
 ```
 
 **Options:**
-- `--type`: Webhook type (slack, teams, http)
-- `--destination`: Webhook destination
+- `--target`: Webhook target type (agent, workflow)
+- `--agent-uuid`: Agent UUID to trigger (for agent webhooks)
+- `--workflow-file`: Workflow file path (for workflow webhooks)
 - `--name`: Webhook name
 - `--prompt`: Webhook prompt message
+- `--filter`: JMESPath filter expression for events
+- `--method`: Communication method (slack, teams, http)
+- `--destination`: Communication destination
+- `--interactive, -i`: Interactive creation mode
 
 **Examples:**
 ```bash
-# Create Slack webhook
-kubiya webhook create --type slack \
-  --destination "#alerts" \
-  --name "Alert Handler" \
-  --prompt "Process this alert"
+# Interactive webhook creation
+kubiya webhook create --interactive
 
-# Create HTTP webhook
-kubiya webhook create --type http \
-  --destination "https://api.example.com/webhook" \
-  --name "API Integration"
+# Create agent webhook
+kubiya webhook create --target agent \
+  --agent-uuid abc-123 \
+  --name "Alert Handler" \
+  --prompt "Process this alert: {{event.title}}" \
+  --method slack \
+  --destination "#alerts"
+
+# Create workflow webhook
+kubiya webhook create --target workflow \
+  --workflow-file deploy.yaml \
+  --name "Deploy Webhook" \
+  --filter "event.action == 'push'" \
+  --method teams \
+  --destination "https://teams.webhook.url"
 ```
 
 ### kubiya webhook list
@@ -671,16 +689,71 @@ kubiya webhook list [OPTIONS]
 ```
 
 **Options:**
-- `--all, -a`: Show all details
-- `--type`: Filter by webhook type
+- `--output, -o`: Output format (table, json, yaml, wide)
+- `--limit`: Limit number of results
 
 **Examples:**
 ```bash
 # List all webhooks
 kubiya webhook list
 
-# Filter by type
-kubiya webhook list --type slack
+# Detailed view with full information
+kubiya webhook list --output wide
+
+# JSON output
+kubiya webhook list --output json
+
+# Limit results
+kubiya webhook list --limit 5
+```
+
+### kubiya webhook describe
+
+Show detailed information about a webhook.
+
+```bash
+kubiya webhook describe WEBHOOK_UUID [OPTIONS]
+```
+
+**Options:**
+- `--output, -o`: Output format (table, json, yaml)
+
+**Examples:**
+```bash
+# Describe webhook
+kubiya webhook describe abc-123
+
+# JSON output
+kubiya webhook describe abc-123 --output json
+```
+
+### kubiya webhook update
+
+Update an existing webhook.
+
+```bash
+kubiya webhook update WEBHOOK_UUID [OPTIONS]
+```
+
+**Options:**
+- `--name`: Update webhook name
+- `--prompt`: Update webhook prompt
+- `--filter`: Update JMESPath filter expression
+- `--method`: Update communication method
+- `--destination`: Update communication destination
+
+**Examples:**
+```bash
+# Update webhook name
+kubiya webhook update abc-123 --name "Updated Alert Handler"
+
+# Update prompt with template variables
+kubiya webhook update abc-123 \
+  --prompt "Alert: {{event.title}} - Severity: {{event.severity}}"
+
+# Update filter expression
+kubiya webhook update abc-123 \
+  --filter "event.severity == 'critical'"
 ```
 
 ### kubiya webhook delete
@@ -693,6 +766,147 @@ kubiya webhook delete WEBHOOK_UUID [OPTIONS]
 
 **Options:**
 - `--force, -f`: Force deletion without confirmation
+
+**Examples:**
+```bash
+# Delete with confirmation
+kubiya webhook delete abc-123
+
+# Force delete
+kubiya webhook delete abc-123 --force
+```
+
+### kubiya webhook test
+
+Test a webhook with sample data.
+
+```bash
+kubiya webhook test WEBHOOK_UUID [OPTIONS]
+```
+
+**Options:**
+- `--data`: JSON data to send to webhook
+- `--file`: File containing JSON data
+- `--follow, -f`: Follow execution logs
+
+**Examples:**
+```bash
+# Test with inline data
+kubiya webhook test abc-123 --data '{"event": {"title": "Test Alert"}}'
+
+# Test with file data
+kubiya webhook test abc-123 --file test-event.json
+
+# Test and follow execution
+kubiya webhook test abc-123 --file test-event.json --follow
+```
+
+### kubiya webhook wizard
+
+Interactive webhook creation wizard.
+
+```bash
+kubiya webhook wizard [OPTIONS]
+```
+
+**Examples:**
+```bash
+# Launch interactive wizard
+kubiya webhook wizard
+```
+
+### kubiya webhook import
+
+Import webhook configuration from file.
+
+```bash
+kubiya webhook import FILE [OPTIONS]
+```
+
+**Options:**
+- `--format`: File format (json, yaml)
+
+**Examples:**
+```bash
+# Import from JSON
+kubiya webhook import webhooks.json
+
+# Import from YAML
+kubiya webhook import webhooks.yaml --format yaml
+```
+
+### kubiya webhook export
+
+Export webhook configurations to file.
+
+```bash
+kubiya webhook export [OPTIONS]
+```
+
+**Options:**
+- `--output, -o`: Output file path
+- `--format`: Output format (json, yaml)
+- `--webhook-uuid`: Export specific webhook
+
+**Examples:**
+```bash
+# Export all webhooks to JSON
+kubiya webhook export --output webhooks.json
+
+# Export specific webhook to YAML
+kubiya webhook export --webhook-uuid abc-123 \
+  --output webhook.yaml --format yaml
+```
+
+## Webhook Templates and Examples
+
+### JMESPath Template Variables
+
+Use template variables in prompts to extract data from webhook events:
+
+```bash
+# GitHub webhook templates
+--prompt "PR {{event.pull_request.title}} by {{event.pull_request.user.login}}"
+--prompt "Issue {{event.issue.title}} - {{event.issue.body}}"
+--prompt "Release {{event.release.name}} published"
+
+# Generic event templates
+--prompt "Event: {{event.action}} on {{event.repository.name}}"
+--prompt "Alert: {{event.title}} - Severity: {{event.severity}}"
+```
+
+### JMESPath Filter Examples
+
+Filter events using JMESPath expressions:
+
+```bash
+# GitHub events
+--filter "event.action == 'opened'"
+--filter "event.pull_request.base.ref == 'main'"
+--filter "event.issue.labels[?name == 'bug']"
+
+# Alert filtering
+--filter "event.severity == 'critical'"
+--filter "event.source == 'monitoring'"
+```
+
+### Communication Methods
+
+**Slack Integration:**
+```bash
+--method slack --destination "#channel-name"
+--method slack --destination "@username"
+```
+
+**Microsoft Teams:**
+```bash
+--method teams --destination "https://teams.webhook.url"
+```
+
+**HTTP Endpoint:**
+```bash
+--method http --destination "https://api.example.com/webhook"
+```
 
 ## MCP Integration
 
