@@ -409,6 +409,8 @@ type Webhook struct {
 	Name               string        `json:"name"`
 	Source             string        `json:"source"`
 	AgentID            string        `json:"agent_id"`
+	Workflow           string        `json:"workflow,omitempty"`
+	Runner             string        `json:"runner,omitempty"`
 	Communication      Communication `json:"communication"`
 	CreatedAt          string        `json:"created_at,omitempty"`
 	CreatedBy          string        `json:"created_by,omitempty"`
