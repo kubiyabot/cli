@@ -970,7 +970,7 @@ For inline agents, use --inline with --tools-file or --tools-json to provide cus
 
 						// Only process new content since last update
 						newContent := msg.Content
-						if len(storedContent.content) > 0 {
+						if len(storedContent.content) > 0 && len(msg.Content) > len(storedContent.content) {
 							newContent = msg.Content[len(storedContent.content):]
 						}
 
