@@ -34,6 +34,7 @@ type toolExecution struct {
 	startTime  time.Time
 	runner     string
 	toolCallId string
+	outputTruncated bool
 }
 
 // Add connection status tracking
@@ -91,6 +92,8 @@ func newChatCommand(cfg *config.Config) *cobra.Command {
 		sourceName      string
 		suggestTool     string
 		permissionLevel string
+		showToolCalls   bool
+		retries         int
 		
 		// Inline agent flags
 		inline          bool
@@ -631,19 +634,62 @@ For inline agents, use --inline with --tools-file or --tools-json to provide cus
 				style.DisableColors()
 			}
 
-			// Initialize connection status
+			// Initialize connection status - fetch actual runner from agent
+			var agentRunner string
+			var agentInfo *kubiya.Agent
+			
+			// Fetch agent information to get the actual runner (skip for inline agents)
+			if !inline {
+				if agentInfo, err = client.GetAgent(cmd.Context(), agentID); err != nil {
+					if debug {
+						fmt.Printf("⚠️ Failed to get agent info: %v, using default runner\n", err)
+					}
+					agentRunner = "kubiyamanaged"
+				} else if len(agentInfo.Runners) > 0 {
+					agentRunner = agentInfo.Runners[0] // Use first runner
+				} else {
+					agentRunner = "kubiyamanaged" // fallback
+				}
+			} else {
+				// For inline agents, use the provided runners or default
+				if len(runners) > 0 {
+					agentRunner = runners[0]
+				} else {
+					agentRunner = "kubiyamanaged"
+				}
+			}
+			
+			// Override with environment variable if set
+			if os.Getenv("KUBIYA_RUNNER") != "" {
+				agentRunner = os.Getenv("KUBIYA_RUNNER")
+			}
+			
 			connStatus = &connectionStatus{
-				runner:      "kubiya-prod", // Default runner
+				runner:      agentRunner,
 				runnerType:  "k8s",
 				connected:   false,
 				connectTime: time.Now(),
 			}
 			
-			// Show enhanced connection status
+			// Show enhanced connection status with progress indicators
 			fmt.Printf("%s\n", style.InfoBoxStyle.Render(
 				fmt.Sprintf("🔗 Connecting to agent runner service at: runner://%s (%s)", 
 					connStatus.runner, connStatus.runnerType)))
+			
+			// Show additional agent details if available
+			if agentInfo != nil {
+				fmt.Printf("%s\n", style.InfoBoxStyle.Render(
+					fmt.Sprintf("🤖 Agent: %s (%s)", agentInfo.Name, agentInfo.Description)))
+				if agentInfo.LLMModel != "" {
+					fmt.Printf("%s\n", style.InfoBoxStyle.Render(
+						fmt.Sprintf("🧠 Model: %s", agentInfo.LLMModel)))
+				}
+			}
+			
+			// Show connection steps
 			fmt.Printf("%s\n", style.SpinnerStyle.Render("⏳ Establishing secure connection..."))
+			fmt.Printf("%s\n", style.SpinnerStyle.Render("🔐 Authenticating with API key..."))
+			fmt.Printf("%s\n", style.SpinnerStyle.Render("🤖 Initializing agent session..."))
 			
 			// Send message with context, with retry mechanism for robustness (skip for inline agents)
 			if !inline {
@@ -651,10 +697,10 @@ For inline agents, use --inline with --tools-file or --tools-json to provide cus
 				if err != nil {
 					// If context method fails, try with retry mechanism
 					if strings.Contains(err.Error(), "connection") || strings.Contains(err.Error(), "timeout") {
-						fmt.Printf("⚠️  Initial connection failed, retrying with enhanced resilience...\n")
-						msgChan, err = client.SendMessageWithRetry(cmd.Context(), agentID, enhancedMessage, sessionID, 3)
+						fmt.Printf("\r%s\n", style.WarningStyle.Render("⚠️  Initial connection failed, retrying with enhanced resilience..."))
+						msgChan, err = client.SendMessageWithRetry(cmd.Context(), agentID, enhancedMessage, sessionID, retries)
 						if err != nil {
-							return fmt.Errorf("failed to send message after retries: %w", err)
+							return fmt.Errorf("failed to send message after %d retries: %w", retries, err)
 						}
 					} else {
 						return err
@@ -666,9 +712,16 @@ For inline agents, use --inline with --tools-file or --tools-json to provide cus
 			connStatus.connected = true
 			connStatus.lastPing = time.Now()
 			connStatus.latency = time.Since(connStatus.connectTime)
-			fmt.Printf("\r%s\n", style.SuccessStyle.Render(
+			
+			// Clear previous status lines and show success
+			fmt.Printf("\r\033[K")  // Clear current line
+			fmt.Printf("\033[3A")   // Move up 3 lines
+			fmt.Printf("\033[J")    // Clear from cursor to end of screen
+			
+			fmt.Printf("%s\n", style.SuccessStyle.Render(
 				fmt.Sprintf("✅ Connected to runner://%s (%s) - latency: %v", 
 					connStatus.runner, connStatus.runnerType, connStatus.latency)))
+			fmt.Printf("%s\n", style.InfoBoxStyle.Render("🚀 Agent is ready and processing your request..."))
 
 			// Read messages and handle session ID
 			var finalResponse strings.Builder
@@ -676,6 +729,8 @@ For inline agents, use --inline with --tools-file or --tools-json to provide cus
 			var hasError bool
 			var actualSessionID string
 			var toolsExecuted bool
+			var streamRetryCount int
+			var anyOutputTruncated bool
 
 			// Add these message type constants
 			const (
@@ -685,12 +740,43 @@ For inline agents, use --inline with --tools-file or --tools-json to provide cus
 				toolOutput = "tool_output"
 			)
 
-			// Update the message handling loop:
+			// Update the message handling loop with stream error handling:
 			for msg := range msgChan {
 				if msg.Error != "" {
-					fmt.Fprintf(os.Stderr, "%s\n", style.ErrorStyle.Render("❌ Error: " + msg.Error))
-					hasError = true
-					return fmt.Errorf("error from server: %s", msg.Error)
+					// Check if this is a stream error that we can retry
+					if strings.Contains(strings.ToLower(msg.Error), "stream_error") || 
+					   strings.Contains(strings.ToLower(msg.Error), "connection") ||
+					   strings.Contains(strings.ToLower(msg.Error), "timeout") {
+						
+						if streamRetryCount < retries {
+							streamRetryCount++
+							fmt.Printf("\r%s\n", style.WarningStyle.Render(
+								fmt.Sprintf("⚠️  Stream error detected (attempt %d/%d): %s", 
+									streamRetryCount, retries, msg.Error)))
+							fmt.Printf("%s\n", style.SpinnerStyle.Render("🔄 Attempting to reconnect..."))
+							
+							// Attempt to reconnect
+							time.Sleep(time.Duration(streamRetryCount) * time.Second) // Exponential backoff
+							if !inline {
+								msgChan, err = client.SendMessageWithRetry(cmd.Context(), agentID, enhancedMessage, actualSessionID, 1)
+								if err != nil {
+									fmt.Printf("%s\n", style.ErrorStyle.Render(fmt.Sprintf("❌ Reconnection failed: %v", err)))
+									continue
+								}
+								fmt.Printf("%s\n", style.SuccessStyle.Render("✅ Reconnected successfully, continuing..."))
+								continue
+							}
+						} else {
+							fmt.Fprintf(os.Stderr, "%s\n", style.ErrorStyle.Render(
+								fmt.Sprintf("❌ Stream failed after %d retries: %s", retries, msg.Error)))
+							hasError = true
+							return fmt.Errorf("stream failed after %d retries: %s", retries, msg.Error)
+						}
+					} else {
+						fmt.Fprintf(os.Stderr, "%s\n", style.ErrorStyle.Render("❌ Error: " + msg.Error))
+						hasError = true
+						return fmt.Errorf("error from server: %s", msg.Error)
+					}
 				}
 				
 				// Raw event logging for debugging
@@ -756,37 +842,40 @@ For inline agents, use --inline with --tools-file or --tools-json to provide cus
 								toolExecutions[msg.MessageID] = te
 								toolsExecuted = true
 
-								// Enhanced tool execution header with better UX and stats
-								fmt.Printf("\n")
-								
-								// Show tool statistics inline
-								toolStats.mu.RLock()
-								statsStr := fmt.Sprintf("[%d/%d tools]", toolStats.activeCalls, toolStats.totalCalls)
-								if toolStats.activeCalls > 1 {
-									statsStr = fmt.Sprintf("[+%d active tools]", toolStats.activeCalls)
-								}
-								toolStats.mu.RUnlock()
-								
-								fmt.Printf("%s\n", style.InfoBoxStyle.Render(
-									fmt.Sprintf("🚀 %s %s %s", 
-										style.ToolNameStyle.Render("EXECUTING"), 
-										style.HighlightStyle.Render(toolName),
-										style.ToolStatsStyle.Render(statsStr))))
-								
-								if toolArgs != "" {
-									prettyArgs := toolArgs
-									if json.Valid([]byte(toolArgs)) {
-										var prettyJSON bytes.Buffer
-										json.Indent(&prettyJSON, []byte(toolArgs), "  ", "  ")
-										prettyArgs = prettyJSON.String()
+								// Only show tool calls if flag is enabled
+								if showToolCalls {
+									// Enhanced tool execution header with better UX and stats
+									fmt.Printf("\n")
+									
+									// Show tool statistics inline
+									toolStats.mu.RLock()
+									statsStr := fmt.Sprintf("[%d/%d tools]", toolStats.activeCalls, toolStats.totalCalls)
+									if toolStats.activeCalls > 1 {
+										statsStr = fmt.Sprintf("[+%d active tools]", toolStats.activeCalls)
 									}
-									fmt.Printf("%s\n", style.ToolArgsStyle.Render(fmt.Sprintf("📋 Parameters: %s", prettyArgs)))
+									toolStats.mu.RUnlock()
+									
+									fmt.Printf("%s\n", style.InfoBoxStyle.Render(
+										fmt.Sprintf("🚀 %s %s %s", 
+											style.ToolNameStyle.Render("EXECUTING"), 
+											style.HighlightStyle.Render(toolName),
+											style.ToolStatsStyle.Render(statsStr))))
+									
+									if toolArgs != "" {
+										prettyArgs := toolArgs
+										if json.Valid([]byte(toolArgs)) {
+											var prettyJSON bytes.Buffer
+											json.Indent(&prettyJSON, []byte(toolArgs), "  ", "  ")
+											prettyArgs = prettyJSON.String()
+										}
+										fmt.Printf("%s\n", style.ToolArgsStyle.Render(fmt.Sprintf("📋 Parameters: %s", prettyArgs)))
+									}
+									
+									// Show waiting indicator with animation and runner info
+									fmt.Printf("%s\n", style.SpinnerStyle.Render(
+										fmt.Sprintf("⏳ Initializing on runner://%s...", connStatus.runner)))
+									fmt.Printf("%s\n", style.ToolDividerStyle.Render(strings.Repeat("─", 50)))
 								}
-								
-								// Show waiting indicator with animation and runner info
-								fmt.Printf("%s\n", style.SpinnerStyle.Render(
-									fmt.Sprintf("⏳ Initializing on runner://%s...", connStatus.runner)))
-								fmt.Printf("%s\n", style.ToolDividerStyle.Render(strings.Repeat("─", 50)))
 							}
 						}
 					}
@@ -800,8 +889,10 @@ For inline agents, use --inline with --tools-file or --tools-json to provide cus
 						// Update status to running when we start receiving output
 						if te.status == "waiting" {
 							te.status = "running"
-							// Update the status display
-							fmt.Printf("\r%s\n", style.SpinnerStyle.Render("🔄 Processing tool execution..."))
+							// Update the status display only if showing tool calls
+							if showToolCalls {
+								fmt.Printf("\r%s\n", style.SpinnerStyle.Render("🔄 Processing tool execution..."))
+							}
 						}
 						
 						// Also check if we need to mark as complete based on content
@@ -829,7 +920,18 @@ For inline agents, use --inline with --tools-file or --tools-json to provide cus
 
 						// Process new content if any
 						trimmedContent := strings.TrimSpace(newContent)
-						if trimmedContent != "" {
+						
+						// Check for empty output scenarios that should show "output truncated"
+						if trimmedContent == "" || trimmedContent == "\"\"" || trimmedContent == "{}" {
+							te.outputTruncated = true
+							anyOutputTruncated = true
+							if showToolCalls {
+								fmt.Printf("%s %s │ %s\n",
+									style.ToolOutputPrefixStyle.Render("📋"),
+									style.ToolNameStyle.Render(te.name),
+									style.ToolOutputStyle.Render("output truncated"))
+							}
+						} else if trimmedContent != "" {
 							// Try to parse as JSON first for structured output
 							var outputData struct {
 								State   string `json:"state,omitempty"`
@@ -847,10 +949,12 @@ For inline agents, use --inline with --tools-file or --tools-json to provide cus
 								if outputData.Error != "" {
 									te.failed = true
 									hasError = true
-									fmt.Printf("%s %s │ %s\n",
-										style.ToolOutputPrefixStyle.Render("❌"),
-										style.ToolNameStyle.Render(te.name),
-										style.ErrorStyle.Render(outputData.Error))
+									if showToolCalls {
+										fmt.Printf("%s %s │ %s\n",
+											style.ToolOutputPrefixStyle.Render("❌"),
+											style.ToolNameStyle.Render(te.name),
+											style.ErrorStyle.Render(outputData.Error))
+									}
 								}
 								if outputData.Output != "" || outputData.Message != "" {
 									output := outputData.Output
@@ -861,7 +965,7 @@ For inline agents, use --inline with --tools-file or --tools-json to provide cus
 									lines := strings.Split(output, "\n")
 									for _, line := range lines {
 										line = strings.TrimSpace(line)
-										if line != "" {
+										if line != "" && showToolCalls {
 											fmt.Printf("%s %s │ %s\n",
 												style.ToolOutputPrefixStyle.Render("│"),
 												style.ToolNameStyle.Render(te.name),
@@ -897,10 +1001,12 @@ For inline agents, use --inline with --tools-file or --tools-json to provide cus
 											outputStyle = style.ToolOutputStyle
 										}
 
-										fmt.Printf("%s %s │ %s\n",
-											style.ToolOutputPrefixStyle.Render(prefix),
-											style.ToolNameStyle.Render(te.name),
-											outputStyle.Render(line))
+										if showToolCalls {
+											fmt.Printf("%s %s │ %s\n",
+												style.ToolOutputPrefixStyle.Render(prefix),
+												style.ToolNameStyle.Render(te.name),
+												outputStyle.Render(line))
+										}
 									}
 								}
 							}
@@ -946,44 +1052,63 @@ For inline agents, use --inline with --tools-file or --tools-json to provide cus
 									completionStatus = "completed"
 								}
 
-								// Show updated statistics
-								toolStats.mu.RLock()
-								updatedStatsStr := fmt.Sprintf("[%d active, %d completed, %d failed]", 
-									toolStats.activeCalls, toolStats.completedCalls, toolStats.failedCalls)
-								toolStats.mu.RUnlock()
+								// Show updated statistics only if tool calls are enabled
+								if showToolCalls {
+									toolStats.mu.RLock()
+									updatedStatsStr := fmt.Sprintf("[%d active, %d completed, %d failed]", 
+										toolStats.activeCalls, toolStats.completedCalls, toolStats.failedCalls)
+									toolStats.mu.RUnlock()
 
-								// Print completion status with enhanced summary
-								fmt.Printf("\n%s\n",
-									style.InfoBoxStyle.Render(fmt.Sprintf("%s %s %s (%0.1fs) %s",
-										statusEmoji,
-										style.ToolNameStyle.Render(te.name),
-										style.ToolCompleteStyle.Render(strings.ToUpper(completionStatus)),
-										duration,
-										style.ToolStatsStyle.Render(updatedStatsStr))))
+									// Print completion status with enhanced summary
+									fmt.Printf("\n%s\n",
+										style.InfoBoxStyle.Render(fmt.Sprintf("%s %s %s (%0.1fs) %s",
+											statusEmoji,
+											style.ToolNameStyle.Render(te.name),
+											style.ToolCompleteStyle.Render(strings.ToUpper(completionStatus)),
+											duration,
+											style.ToolStatsStyle.Render(updatedStatsStr))))
 
-								// Print error summary if failed
-								if te.failed {
-									fmt.Printf("%s %s\n",
-										style.ToolOutputPrefixStyle.Render("⚠️"),
-										style.ErrorStyle.Render("Tool encountered errors during execution"))
-								}
-
-								// Print output summary with better formatting
-								if te.output.Len() > 0 {
-									outputSize := te.output.Len()
-									var sizeStr string
-									if outputSize < 1024 {
-										sizeStr = fmt.Sprintf("%d bytes", outputSize)
-									} else if outputSize < 1024*1024 {
-										sizeStr = fmt.Sprintf("%.1f KB", float64(outputSize)/1024)
-									} else {
-										sizeStr = fmt.Sprintf("%.1f MB", float64(outputSize)/(1024*1024))
+									// Print error summary if failed
+									if te.failed {
+										fmt.Printf("%s %s\n",
+											style.ToolOutputPrefixStyle.Render("⚠️"),
+											style.ErrorStyle.Render("Tool encountered errors during execution"))
 									}
-									fmt.Printf("%s %s\n",
-										style.ToolOutputPrefixStyle.Render("📊"),
-										style.ToolSummaryStyle.Render(fmt.Sprintf("Output: %s on runner://%s", sizeStr, te.runner)))
+
+									// Print output summary with better formatting
+									if te.output.Len() > 0 {
+										outputSize := te.output.Len()
+										var sizeStr string
+										if outputSize < 1024 {
+											sizeStr = fmt.Sprintf("%d bytes", outputSize)
+										} else if outputSize < 1024*1024 {
+											sizeStr = fmt.Sprintf("%.1f KB", float64(outputSize)/1024)
+										} else {
+											sizeStr = fmt.Sprintf("%.1f MB", float64(outputSize)/(1024*1024))
+										}
+										
+										outputSummary := fmt.Sprintf("Output: %s on runner://%s", sizeStr, te.runner)
+										if te.outputTruncated {
+											outputSummary += " (output was truncated)"
+										}
+										
+										fmt.Printf("%s %s\n",
+											style.ToolOutputPrefixStyle.Render("📊"),
+											style.ToolSummaryStyle.Render(outputSummary))
+									} else if te.outputTruncated {
+										fmt.Printf("%s %s\n",
+											style.ToolOutputPrefixStyle.Render("📋"),
+											style.ToolSummaryStyle.Render(fmt.Sprintf("Output was truncated on runner://%s", te.runner)))
+									}
+									
+									// Show KUBIYA_DEBUG recommendation if output was truncated
+									if te.outputTruncated {
+										fmt.Printf("%s %s\n",
+											style.ToolOutputPrefixStyle.Render("💡"),
+											style.WarningStyle.Render("Tip: Set KUBIYA_DEBUG=1 environment variable to see full tool outputs"))
+									}
+									fmt.Printf("%s\n", style.ToolDividerStyle.Render(strings.Repeat("─", 50)))
 								}
-								fmt.Printf("%s\n", style.ToolDividerStyle.Render(strings.Repeat("─", 50)))
 								delete(toolExecutions, msgID)
 							}
 						}
@@ -1053,9 +1178,21 @@ For inline agents, use --inline with --tools-file or --tools-json to provide cus
 						if buf, exists := messageBuffer[msg.MessageID]; exists {
 							remaining := strings.TrimSpace(buf.sentence.String())
 							if remaining != "" {
-								fmt.Printf("%s %s\n",
-									style.AgentNameStyle.Render("["+msg.SenderName+"]"),
+								fmt.Printf("%s\n",
 									style.AgentStyle.Render(remaining))
+							}
+							// Also handle any remaining code block
+							if buf.codeBlock.Len() > 0 {
+								fmt.Printf("%s\n%s\n%s\n",
+									style.CodeBlockStyle.Render("```"),
+									style.CodeBlockStyle.Render(buf.codeBlock.String()),
+									style.CodeBlockStyle.Render("```"))
+							}
+						}
+						// Add final completion message to ensure stream end is visible
+						if msg.Type == "completion" && msg.FinishReason != "" {
+							if debug {
+								fmt.Printf("\n[STREAM COMPLETE] Reason: %s\n", msg.FinishReason)
 							}
 						}
 						fmt.Println()
@@ -1119,6 +1256,15 @@ For inline agents, use --inline with --tools-file or --tools-json to provide cus
 				fmt.Printf("%s\n", style.HighlightStyle.Render(continuationCmd))
 				fmt.Println()
 			}
+			
+			// Show KUBIYA_DEBUG recommendation if any output was truncated
+			if anyOutputTruncated && !interactive {
+				fmt.Printf("\n%s\n", style.InfoBoxStyle.Render("💡 Tool Output Visibility"))
+				fmt.Printf("%s\n", style.WarningStyle.Render("Some tool outputs were truncated. To see full tool outputs, set:"))
+				fmt.Printf("%s\n", style.HighlightStyle.Render("export KUBIYA_DEBUG=1"))
+				fmt.Printf("%s\n", style.WarningStyle.Render("Then re-run your command to see detailed tool execution logs."))
+				fmt.Println()
+			}
 
 			// Handle completion status and exit codes
 			if debug {
@@ -1172,6 +1318,8 @@ For inline agents, use --inline with --tools-file or --tools-json to provide cus
 	cmd.Flags().StringVar(&suggestTool, "suggest-tool", "", "Suggest a tool to use")
 	cmd.Flags().BoolVar(&noClassify, "no-classify", false, "Disable automatic agent classification")
 	cmd.Flags().StringVar(&permissionLevel, "permission-level", "read", "Permission level for tool execution (read, readwrite, ask)")
+	cmd.Flags().BoolVar(&showToolCalls, "show-tool-calls", true, "Show tool call execution details")
+	cmd.Flags().IntVar(&retries, "retries", 3, "Number of retries for stream errors")
 	
 	// Inline agent flags
 	cmd.Flags().BoolVar(&inline, "inline", false, "Use inline agent mode")
