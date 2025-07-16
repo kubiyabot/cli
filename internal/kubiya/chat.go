@@ -410,6 +410,7 @@ func (c *Client) SendMessage(ctx context.Context, agentID, message string, sessi
 					SenderName: "Bot",
 					Final:      false,
 					SessionID:  sessionID,
+					MessageID:  "text-" + sessionID,
 				}
 
 			case '2': // partData
@@ -982,6 +983,7 @@ func (c *Client) SendInlineAgentMessage(ctx context.Context, message, sessionID 
 					SenderName: "Bot",
 					Final:      false,
 					SessionID:  sessionID,
+					MessageID:  "text-" + sessionID,
 				}
 
 			case '2': // partData
