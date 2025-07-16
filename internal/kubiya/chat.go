@@ -128,6 +128,16 @@ func (c *Client) SendMessage(ctx context.Context, agentID, message string, sessi
 		sessionID = session.ID
 	}
 
+	// Get user email and org from environment variables with fallback to config
+	userEmail := os.Getenv("KUBIYA_USER_EMAIL")
+	org := os.Getenv("KUBIYA_ORG")
+	if userEmail == "" {
+		userEmail = c.cfg.Email
+	}
+	if org == "" {
+		org = c.cfg.Org
+	}
+	
 	payload := struct {
 		Message   string `json:"message"`
 		AgentUUID string `json:"agent_uuid"`
@@ -138,17 +148,26 @@ func (c *Client) SendMessage(ctx context.Context, agentID, message string, sessi
 		Message:   message,
 		AgentUUID: agentID,
 		SessionID: sessionID,
-		UserEmail: os.Getenv("KUBIYA_USER_EMAIL"),
-		Org:       os.Getenv("KUBIYA_ORG"),
+		UserEmail: userEmail,
+		Org:       org,
 	}
 
+	reqURL := fmt.Sprintf("%s/hb/v4/stream", c.baseURL)
+	
 	// Safety check for logger
 	if logger != nil {
 		logger.Printf("=== Starting SendMessage ===")
 		logger.Printf("Payload: %+v", payload)
+		
+		// Log the complete request details for debugging
+		if jsonPayload, err := json.MarshalIndent(payload, "", "  "); err == nil {
+			logger.Printf("Complete request payload: %s", string(jsonPayload))
+		}
+		
+		logger.Printf("Request URL: %s", reqURL)
+		logger.Printf("User Email: %s", os.Getenv("KUBIYA_USER_EMAIL"))
+		logger.Printf("Organization: %s", os.Getenv("KUBIYA_ORG"))
 	}
-
-	reqURL := fmt.Sprintf("%s/hb/v4/stream", c.baseURL)
 	jsonData, err := json.Marshal(payload)
 	if err != nil {
 		if logger != nil {
@@ -170,8 +189,26 @@ func (c *Client) SendMessage(ctx context.Context, agentID, message string, sessi
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("x-vercel-ai-data-stream", "v1") // protocol flag
 	req.Header.Set("Authorization", "UserKey "+c.cfg.APIKey)
-	req.Header.Set("Cache-Control", "no-cache")
-	req.Header.Set("Connection", "keep-alive")
+	// Remove extra headers to match working Go program
+	// req.Header.Set("Cache-Control", "no-cache")
+	// req.Header.Set("Connection", "keep-alive")
+	
+	// Log all request headers for debugging
+	if logger != nil {
+		logger.Printf("=== Request Headers ===")
+		for key, values := range req.Header {
+			for _, value := range values {
+				// Mask sensitive Authorization header
+				if key == "Authorization" {
+					logger.Printf("%s: %s", key, "UserKey [REDACTED]")
+				} else {
+					logger.Printf("%s: %s", key, value)
+				}
+			}
+		}
+		logger.Printf("=== End Headers ===")
+		logger.Printf("Request body length: %d bytes", len(jsonData))
+	}
 
 	client := &http.Client{Timeout: 0} // No timeout for streaming
 
@@ -191,13 +228,38 @@ func (c *Client) SendMessage(ctx context.Context, agentID, message string, sessi
 		}
 		return nil, fmt.Errorf("failed to execute request: %w", err)
 	}
+	
+	// Log successful response details
+	if logger != nil {
+		logger.Printf("=== HTTP Response Success ===")
+		logger.Printf("Status Code: %d", resp.StatusCode)
+		logger.Printf("Status: %s", resp.Status)
+		logger.Printf("Response Headers:")
+		for key, values := range resp.Header {
+			for _, value := range values {
+				logger.Printf("  %s: %s", key, value)
+			}
+		}
+		logger.Printf("Starting stream processing...")
+		logger.Printf("=== End HTTP Response Success ===")
+	}
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
 		close(messagesChan)
 		if logger != nil {
-			logger.Printf("Unexpected status code: %d, body: %s", resp.StatusCode, string(body))
+			logger.Printf("=== HTTP Response Error ===")
+			logger.Printf("Status Code: %d", resp.StatusCode)
+			logger.Printf("Status: %s", resp.Status)
+			logger.Printf("Response Headers:")
+			for key, values := range resp.Header {
+				for _, value := range values {
+					logger.Printf("  %s: %s", key, value)
+				}
+			}
+			logger.Printf("Response body: %s", string(body))
+			logger.Printf("=== End HTTP Response Error ===")
 		}
 		
 		// Provide user-friendly error messages based on status code
@@ -306,6 +368,11 @@ func (c *Client) SendMessage(ctx context.Context, agentID, message string, sessi
 			// Print raw events for debugging (when debug mode is enabled)
 			if os.Getenv("KUBIYA_DEBUG") == "1" || os.Getenv("DEBUG") == "1" || os.Getenv("KUBIYA_RAW_EVENTS") == "1" {
 				fmt.Printf("[RAW STREAM EVENT] %s\n", line)
+			}
+			
+			// Also log to file for detailed debugging
+			if logger != nil {
+				logger.Printf("[STREAM] Line %d: %s", lineCount, line)
 			}
 
 			// Handle empty lines gracefully
@@ -651,29 +718,56 @@ func (c *Client) SendInlineAgentMessage(ctx context.Context, message, sessionID 
 		sessionID = uuid.New().String()
 	}
 	
+	
+	
+	
+	// Log session and user details
+	if logger != nil {
+		logger.Printf("Session ID: %s", sessionID)
+		logger.Printf("User Email: %s", os.Getenv("KUBIYA_USER_EMAIL"))
+		logger.Printf("Organization: %s", os.Getenv("KUBIYA_ORG"))
+	}
+	
+	// Get user email and org from environment variables with fallback to config
+	userEmail := os.Getenv("KUBIYA_USER_EMAIL")
+	org := os.Getenv("KUBIYA_ORG")
+	if userEmail == "" {
+		userEmail = c.cfg.Email
+	}
+	if org == "" {
+		org = c.cfg.Org
+	}
+	
 	payload := struct {
 		Message   string                 `json:"message"`
 		SessionID string                 `json:"session_id"`
-		UserUUID  string                 `json:"user_uuid"`
 		UserEmail string                 `json:"user_email"`
 		Org       string                 `json:"org"`
 		Agent     map[string]interface{} `json:"agent"`
 	}{
 		Message:   contextMsg.String(),
 		SessionID: sessionID,
-		UserUUID:  uuid.New().String(),
-		UserEmail: os.Getenv("KUBIYA_USER_EMAIL"),
-		Org:       os.Getenv("KUBIYA_ORG"),
+		UserEmail: userEmail,
+		Org:       org,
 		Agent:     agentDef,
 	}
 
+	reqURL := fmt.Sprintf("%s/hb/v4/stream", c.baseURL)
+	
 	// Safety check for logger
 	if logger != nil {
 		logger.Printf("=== Starting SendInlineAgentMessage ===")
 		logger.Printf("Payload: %+v", payload)
+		
+		// Log the complete request details for debugging
+		if jsonPayload, err := json.MarshalIndent(payload, "", "  "); err == nil {
+			logger.Printf("Complete request payload: %s", string(jsonPayload))
+		}
+		
+		logger.Printf("Request URL: %s", reqURL)
+		logger.Printf("User Email: %s", os.Getenv("KUBIYA_USER_EMAIL"))
+		logger.Printf("Organization: %s", os.Getenv("KUBIYA_ORG"))
 	}
-
-	reqURL := fmt.Sprintf("%s/hb/v4/stream", c.baseURL)
 	jsonData, err := json.Marshal(payload)
 	if err != nil {
 		if logger != nil {
@@ -693,10 +787,27 @@ func (c *Client) SendInlineAgentMessage(ctx context.Context, message, sessionID 
 	}
 
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("x-vercel-ai-data-stream", "v1") // protocol flag
 	req.Header.Set("Authorization", "UserKey "+c.cfg.APIKey)
-	req.Header.Set("Cache-Control", "no-cache")
-	req.Header.Set("Connection", "keep-alive")
+	// Remove extra headers to match working Go program
+	// req.Header.Set("Cache-Control", "no-cache")
+	// req.Header.Set("Connection", "keep-alive")
+	
+	// Log all request headers for debugging
+	if logger != nil {
+		logger.Printf("=== Request Headers ===")
+		for key, values := range req.Header {
+			for _, value := range values {
+				// Mask sensitive Authorization header
+				if key == "Authorization" {
+					logger.Printf("%s: %s", key, "UserKey [REDACTED]")
+				} else {
+					logger.Printf("%s: %s", key, value)
+				}
+			}
+		}
+		logger.Printf("=== End Headers ===")
+		logger.Printf("Request body length: %d bytes", len(jsonData))
+	}
 
 	client := &http.Client{Timeout: 0}
 
@@ -714,13 +825,33 @@ func (c *Client) SendInlineAgentMessage(ctx context.Context, message, sessionID 
 		resp.Body.Close()
 		close(messagesChan)
 		if logger != nil {
-			logger.Printf("Unexpected status code: %d, body: %s", resp.StatusCode, string(body))
+			logger.Printf("=== HTTP Response Error ===")
+			logger.Printf("Status Code: %d", resp.StatusCode)
+			logger.Printf("Status: %s", resp.Status)
+			logger.Printf("Response Headers:")
+			for key, values := range resp.Header {
+				for _, value := range values {
+					logger.Printf("  %s: %s", key, value)
+				}
+			}
+			logger.Printf("Response body: %s", string(body))
+			logger.Printf("=== End HTTP Response Error ===")
 		}
 		return nil, fmt.Errorf("unexpected status code: %d, body: %s", resp.StatusCode, string(body))
 	}
 	
 	if logger != nil {
-		logger.Printf("HTTP request successful, status: %d, starting stream processing", resp.StatusCode)
+		logger.Printf("=== HTTP Response Success ===")
+		logger.Printf("Status Code: %d", resp.StatusCode)
+		logger.Printf("Status: %s", resp.Status)
+		logger.Printf("Response Headers:")
+		for key, values := range resp.Header {
+			for _, value := range values {
+				logger.Printf("  %s: %s", key, value)
+			}
+		}
+		logger.Printf("Starting stream processing...")
+		logger.Printf("=== End HTTP Response Success ===")
 	}
 
 	go func() {
@@ -810,6 +941,11 @@ func (c *Client) SendInlineAgentMessage(ctx context.Context, message, sessionID 
 			// Print raw events for debugging (when debug mode is enabled)
 			if os.Getenv("KUBIYA_DEBUG") == "1" || os.Getenv("DEBUG") == "1" || os.Getenv("KUBIYA_RAW_EVENTS") == "1" {
 				fmt.Printf("[RAW STREAM EVENT] %s\n", line)
+			}
+			
+			// Also log to file for detailed debugging
+			if logger != nil {
+				logger.Printf("[STREAM] Line %d: %s", lineCount, line)
 			}
 
 			// Handle empty lines gracefully
