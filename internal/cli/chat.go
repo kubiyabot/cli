@@ -3,6 +3,7 @@ package cli
 import (
 	"bufio"
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -217,6 +218,31 @@ func newChatCommand(cfg *config.Config) *cobra.Command {
 			envMap[parts[0]] = parts[1]
 		}
 		return envMap, nil
+	}
+
+	// Helper function to encode files to base64 and create with_files entries
+	encodeFilesToBase64 := func(context map[string]string) ([]map[string]interface{}, error) {
+		var withFiles []map[string]interface{}
+		
+		for filename, content := range context {
+			// Skip URLs as they can't be encoded as files
+			if strings.HasPrefix(filename, "http://") || strings.HasPrefix(filename, "https://") {
+				continue
+			}
+			
+			// Encode content to base64
+			encodedContent := base64.StdEncoding.EncodeToString([]byte(content))
+			
+			// Create with_files entry - place all files in /tmp/<filename>
+			fileEntry := map[string]interface{}{
+				"destination": "/tmp/" + filepath.Base(filename), // Place in /tmp/<filename>
+				"content":     encodedContent,
+			}
+			
+			withFiles = append(withFiles, fileEntry)
+		}
+		
+		return withFiles, nil
 	}
 
 	cmd := &cobra.Command{
@@ -456,6 +482,18 @@ For inline agents, use --inline with --tools-file or --tools-json to provide cus
 					envVarsMap["KUBIYA_RUNNER"] = runners[0]
 				}
 
+				// Encode context files to base64 if provided
+				var contextFiles []map[string]interface{}
+				if len(context) > 0 {
+					contextFiles, err = encodeFilesToBase64(context)
+					if err != nil {
+						return fmt.Errorf("failed to encode context files: %w", err)
+					}
+					if debug && len(contextFiles) > 0 {
+						fmt.Printf("📁 Encoded %d context files for inline agent\n", len(contextFiles))
+					}
+				}
+
 				if debug {
 					fmt.Printf("🤖 Creating inline agent with %d tools\n", len(tools))
 					fmt.Printf("📋 Tools: %v\n", func() []string {
@@ -482,17 +520,51 @@ For inline agents, use --inline with --tools-file or --tools-json to provide cus
 						env = []string{}
 					}
 
-					// Ensure with_files is an empty slice if nil
-					withFiles := tool.WithFiles
-					if withFiles == nil {
-						withFiles = []interface{}{}
+					// Start with existing with_files from the tool
+					withFiles := []interface{}{}
+					if tool.WithFiles != nil {
+						switch v := tool.WithFiles.(type) {
+						case []interface{}:
+							withFiles = v
+						case []string:
+							for _, f := range v {
+								withFiles = append(withFiles, f)
+							}
+						case map[string]interface{}:
+							withFiles = append(withFiles, v)
+						default:
+							withFiles = []interface{}{v}
+						}
 					}
 
-					// Ensure with_volumes is an empty slice if nil
-					withVolumes := tool.WithVolumes
-					if withVolumes == nil {
-						withVolumes = []interface{}{}
+					// Add context files to with_files for each tool
+					for _, contextFile := range contextFiles {
+						withFiles = append(withFiles, contextFile)
 					}
+
+					// Start with existing with_volumes from the tool
+					withVolumes := []interface{}{}
+					if tool.WithVolumes != nil {
+						switch v := tool.WithVolumes.(type) {
+						case []interface{}:
+							withVolumes = v
+						case []string:
+							for _, vol := range v {
+								withVolumes = append(withVolumes, vol)
+							}
+						case map[string]interface{}:
+							withVolumes = append(withVolumes, v)
+						default:
+							withVolumes = []interface{}{v}
+						}
+					}
+
+					// Add shared volume by default for inline agents
+					sharedVolume := map[string]interface{}{
+						"path": "/shared",
+						"name": "shared-data",
+					}
+					withVolumes = append(withVolumes, sharedVolume)
 
 					inlineTools[i] = map[string]interface{}{
 						"name":         tool.Name,
@@ -970,8 +1042,10 @@ For inline agents, use --inline with --tools-file or --tools-json to provide cus
 
 						// Only process new content since last update
 						newContent := msg.Content
-						if len(storedContent.content) > 0 {
+						if len(storedContent.content) > 0 && len(msg.Content) > len(storedContent.content) {
 							newContent = msg.Content[len(storedContent.content):]
+						} else if len(storedContent.content) > 0 {
+							newContent = ""
 						}
 
 						// Process new content if any
