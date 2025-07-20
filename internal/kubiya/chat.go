@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math/rand"
 	"net/http"
 	"os"
 	"strings"
@@ -80,8 +81,23 @@ func (c *Client) SendMessageWithRetry(ctx context.Context, agentID, message stri
 	var lastErr error
 	for attempt := 0; attempt < maxRetries; attempt++ {
 		if attempt > 0 {
-			// Exponential backoff: 2^attempt seconds
-			waitTime := time.Duration(1<<attempt) * time.Second
+			// Exponential backoff with jitter and max delay
+			baseDelay := time.Second
+			maxDelay := 30 * time.Second
+			waitTime := time.Duration(1<<uint(attempt)) * baseDelay
+			
+			if waitTime > maxDelay {
+				waitTime = maxDelay
+			}
+			
+			// Add jitter (±25% random variation)
+			jitter := time.Duration(float64(waitTime) * 0.25 * (2*rand.Float64() - 1))
+			waitTime = waitTime + jitter
+			
+			if waitTime < 0 {
+				waitTime = baseDelay
+			}
+			
 			if logger != nil {
 				logger.Printf("Retry attempt %d/%d after %v", attempt+1, maxRetries, waitTime)
 			}
@@ -103,10 +119,36 @@ func (c *Client) SendMessageWithRetry(ctx context.Context, agentID, message stri
 			logger.Printf("Attempt %d failed: %v", attempt+1, err)
 		}
 		
-		// Don't retry on certain errors
-		if strings.Contains(err.Error(), "authentication failed") ||
-		   strings.Contains(err.Error(), "access forbidden") ||
-		   strings.Contains(err.Error(), "rate limit exceeded") {
+		// Use smart error classification - don't retry non-retryable errors
+		errorStr := strings.ToLower(err.Error())
+		
+		// Don't retry these permanent errors
+		nonRetryableErrors := []string{
+			"authentication failed",
+			"access forbidden", 
+			"unauthorized",
+			"permission denied",
+			"invalid api key",
+			"rate limit exceeded",
+			"quota exceeded",
+			"payment required",
+			"agent not found",
+			"bad request",
+			"invalid request",
+		}
+		
+		isNonRetryable := false
+		for _, nonRetryable := range nonRetryableErrors {
+			if strings.Contains(errorStr, nonRetryable) {
+				isNonRetryable = true
+				break
+			}
+		}
+		
+		if isNonRetryable {
+			if logger != nil {
+				logger.Printf("Non-retryable error detected, stopping retries: %v", err)
+			}
 			break
 		}
 	}
