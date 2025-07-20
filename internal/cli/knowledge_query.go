@@ -66,6 +66,15 @@ Features:
 			// Create client
 			client := kubiya.NewClient(cfg)
 
+			// Set default org ID if not provided
+			if orgID == "" {
+				orgID = cfg.Org
+				// If still empty, default to kubiya-ai (the main Kubiya organization)
+				if orgID == "" {
+					orgID = "kubiya-ai"
+				}
+			}
+
 			// Prepare request
 			req := kubiya.KnowledgeQueryRequest{
 				Query:          prompt,
@@ -78,7 +87,7 @@ Features:
 			// If not streaming, accumulate all responses
 			if !stream {
 				fmt.Printf("🔍 Querying knowledge base... ")
-				
+
 				// Query and collect all events
 				events, err := client.Knowledge().Query(cmd.Context(), req)
 				if err != nil {
@@ -172,4 +181,4 @@ Features:
 	cmd.Flags().StringVar(&orgID, "org-id", "", "Organization ID for the query")
 
 	return cmd
-} 
+}

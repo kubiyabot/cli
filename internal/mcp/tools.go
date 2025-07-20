@@ -8,6 +8,7 @@ import (
 	"time"
 
 	extism "github.com/extism/go-sdk"
+	"github.com/kubiyabot/cli/internal/kubiya"
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
@@ -386,22 +387,41 @@ func (s *Server) searchKnowledgeHandler(ctx context.Context, request mcp.CallToo
 		return mcp.NewToolResultError("query parameter is required"), nil
 	}
 
-	limit := 10
-	if l, ok := args["limit"].(float64); ok {
-		limit = int(l)
+	// Use the working Query method instead of SearchKnowledge
+	req := kubiya.KnowledgeQueryRequest{
+		Query: query,
+		OrgID: s.config.Org, // Automatically set org_id from user config
+		// BearerToken will be set automatically by the Query method from the client config
+		ResponseFormat: "vercel",
 	}
 
-	results, err := s.client.SearchKnowledge(ctx, query, limit)
+	events, err := s.client.Knowledge().Query(ctx, req)
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("Failed to search knowledge: %v", err)), nil
 	}
 
-	data, err := json.MarshalIndent(results, "", "  ")
-	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("Failed to marshal search results: %v", err)), nil
+	// Accumulate the streaming response
+	var output strings.Builder
+	var hasError bool
+
+	for event := range events {
+		switch event.Type {
+		case "data":
+			output.WriteString(event.Data)
+		case "error":
+			hasError = true
+			output.WriteString(fmt.Sprintf("❌ Error: %s\n", event.Data))
+		case "done":
+			// Query completed successfully
+			break
+		}
 	}
 
-	return mcp.NewToolResultText(string(data)), nil
+	if hasError {
+		return mcp.NewToolResultError(output.String()), nil
+	}
+
+	return mcp.NewToolResultText(output.String()), nil
 }
 
 func (s *Server) getKnowledgeHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
