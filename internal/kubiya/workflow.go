@@ -113,14 +113,9 @@ func (wc *WorkflowClient) GenerateWorkflow(ctx context.Context, prompt string, o
 	req.Header.Set("Cache-Control", "no-cache")
 	req.Header.Set("Connection", "keep-alive")
 
-	// Try both authentication methods
-	if strings.HasPrefix(options.BearerToken, "ey") {
-		// Looks like a JWT token, use Bearer
-		req.Header.Set("Authorization", "Bearer "+options.BearerToken)
-	} else {
-		// Use UserKey format
-		req.Header.Set("Authorization", "UserKey "+wc.client.cfg.APIKey)
-	}
+	// Always use UserKey format for API key authentication
+	// The orchestrator expects UserKey format for Kubiya API keys (even if they are JWTs)
+	req.Header.Set("Authorization", "UserKey "+options.BearerToken)
 
 	// Execute request
 	// Create a custom client with longer timeout for orchestration
