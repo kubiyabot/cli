@@ -202,6 +202,46 @@ var (
 			Foreground(lipgloss.Color("#60A5FA")).
 			MarginTop(1).
 			MarginBottom(1)
+
+	// Enhanced tool execution styles - clean and minimal
+	ToolExecutingStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("#3B82F6")).
+				Bold(true)
+
+	ToolRunningStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("#10B981")).
+				Bold(true)
+
+	ToolWaitingStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("#F59E0B")).
+				Bold(true)
+
+	ToolFailedStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("#EF4444")).
+				Bold(true)
+
+	ToolBoxStyle = lipgloss.NewStyle().
+				Border(lipgloss.NormalBorder()).
+				BorderForeground(lipgloss.Color("#6B7280")).
+				Padding(0, 1).
+				MarginTop(0)
+
+	ProgressDotStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("#3B82F6")).
+				Bold(true)
+
+	LiveStatusStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("#6B7280")).
+				Italic(false)
+
+	// Clean animation and completion styles
+	AnimationStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("#60A5FA")).
+				Bold(false)
+
+	CompletionStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("#10B981")).
+				Bold(false)
 )
 
 // DisableColors disables all color styling for non-TTY environments
@@ -258,6 +298,13 @@ func DisableColors() {
 	InfoStyle = noStyle
 	OutputStyle = noStyle
 	SectionStyle = noStyle
+	ToolExecutingStyle = noStyle
+	ToolRunningStyle = noStyle
+	ToolWaitingStyle = noStyle
+	ToolFailedStyle = noStyle
+	ToolBoxStyle = noStyle
+	ProgressDotStyle = noStyle
+	LiveStatusStyle = noStyle
 }
 
 // Add this function to check if colors should be enabled
