@@ -10,7 +10,7 @@ import (
 	"golang.org/x/sync/semaphore"
 )
 
-//go:embed wfdsl.wasm
+//go:embed wf_dsl_compile.wasm
 var wfDslWasmData embed.FS
 
 var pluginPool sync.Pool
@@ -18,7 +18,7 @@ var pluginPool sync.Pool
 var sem = semaphore.NewWeighted(10)
 
 func newWFDslWasmPlugin() error {
-	path := "wfdsl.wasm"
+	path := "wf_dsl_compile.wasm"
 
 	data, err := fs.ReadFile(wfDslWasmData, path)
 	if err != nil {
