@@ -23,17 +23,17 @@ type Configuration struct {
 
 // Config defines complete configuration for the production MCP server
 type Config struct {
-	ServerName             string                     `json:"server_name" yaml:"server_name"`
-	ServerVersion          string                     `json:"server_version" yaml:"server_version"`
-	SessionTimeout         int                        `json:"session_timeout" yaml:"session_timeout"` // in seconds
-	RequireAuth            bool                       `json:"require_auth" yaml:"require_auth"`
-	EnableTimeRestrictions bool                       `json:"enable_time_restrictions" yaml:"enable_time_restrictions"`
-	FeatureFlags           map[string]bool            `json:"feature_flags,omitempty" yaml:"feature_flags,omitempty"`
-	ToolPermissions        map[string][]string        `json:"tool_permissions,omitempty" yaml:"tool_permissions,omitempty"`
-	ToolTimeouts           map[string]int             `json:"tool_timeouts,omitempty" yaml:"tool_timeouts,omitempty"` // in seconds
-	WhitelistedTools       []WhitelistedTool          `json:"whitelisted_tools,omitempty" yaml:"whitelisted_tools,omitempty"`
-	ToolContexts           []ToolContext              `json:"tool_contexts,omitempty" yaml:"tool_contexts,omitempty"`
-	RateLimit              RateLimitConfig            `json:"rate_limit" yaml:"rate_limit"`
+	ServerName             string              `json:"server_name" yaml:"server_name"`
+	ServerVersion          string              `json:"server_version" yaml:"server_version"`
+	SessionTimeout         int                 `json:"session_timeout" yaml:"session_timeout"` // in seconds
+	RequireAuth            bool                `json:"require_auth" yaml:"require_auth"`
+	EnableTimeRestrictions bool                `json:"enable_time_restrictions" yaml:"enable_time_restrictions"`
+	FeatureFlags           map[string]bool     `json:"feature_flags,omitempty" yaml:"feature_flags,omitempty"`
+	ToolPermissions        map[string][]string `json:"tool_permissions,omitempty" yaml:"tool_permissions,omitempty"`
+	ToolTimeouts           map[string]int      `json:"tool_timeouts,omitempty" yaml:"tool_timeouts,omitempty"` // in seconds
+	WhitelistedTools       []WhitelistedTool   `json:"whitelisted_tools,omitempty" yaml:"whitelisted_tools,omitempty"`
+	ToolContexts           []ToolContext       `json:"tool_contexts,omitempty" yaml:"tool_contexts,omitempty"`
+	RateLimit              RateLimitConfig     `json:"rate_limit" yaml:"rate_limit"`
 
 	// Core functionality flags
 	EnableRunners     bool `json:"enable_runners" yaml:"enable_runners"`
@@ -41,6 +41,9 @@ type Config struct {
 	EnableOPAPolicies bool `json:"enable_opa_policies" yaml:"enable_opa_policies"`
 	AllowDynamicTools bool `json:"allow_dynamic_tools" yaml:"allow_dynamic_tools"`
 	VerboseLogging    bool `json:"verbose_logging" yaml:"verbose_logging"`
+
+	// User organization ID (set automatically from user config)
+	OrgID string `json:"org_id,omitempty" yaml:"org_id,omitempty"`
 }
 
 // RateLimitConfig defines rate limiting configuration
@@ -69,7 +72,7 @@ type WhitelistedTool struct {
 	Metadata    interface{} `json:"metadata,omitempty"` // Can be []string or other formats
 	Mermaid     string      `json:"mermaid,omitempty"`
 	Image       string      `json:"image,omitempty"`
-	
+
 	// MCP-specific overrides
 	Integrations  []string                          `json:"integrations,omitempty" yaml:"integrations,omitempty"` // Integration templates to apply
 	Parameters    map[string]interface{}            `json:"parameters,omitempty" yaml:"parameters,omitempty"`

@@ -92,14 +92,14 @@ func (kc *KnowledgeClient) Query(ctx context.Context, req KnowledgeQueryRequest)
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Accept", "text/event-stream")
 
-	// Try both authentication methods
-	if strings.HasPrefix(req.BearerToken, "ey") {
-		// Looks like a JWT token, use Bearer
-		httpReq.Header.Set("Authorization", "Bearer "+req.BearerToken)
-	} else {
-		// Use UserKey format
-		httpReq.Header.Set("Authorization", "UserKey "+kc.client.cfg.APIKey)
+	// Set the org_id header if provided (required by orchestrator API)
+	if req.OrgID != "" {
+		httpReq.Header.Set("x-org-id", req.OrgID)
 	}
+
+	// Always use UserKey format for API key authentication
+	// The orchestrator expects UserKey format for Kubiya API keys (even if they are JWTs)
+	httpReq.Header.Set("Authorization", "UserKey "+req.BearerToken)
 
 	// Execute request with a custom client with longer timeout
 	queryClient := &http.Client{
@@ -140,12 +140,12 @@ func (kc *KnowledgeClient) Query(ctx context.Context, req KnowledgeQueryRequest)
 			// Convert JSON response to events
 			events <- KnowledgeSSEEvent{Type: "data", Data: fmt.Sprintf("🔍 Searching knowledge base...\n")}
 			events <- KnowledgeSSEEvent{Type: "data", Data: fmt.Sprintf("Session ID: %s\n", queryResp.SessionID)}
-			
+
 			if queryResp.TotalResults == 0 {
 				events <- KnowledgeSSEEvent{Type: "data", Data: "\n❌ No results found in the knowledge base.\n"}
 			} else {
 				events <- KnowledgeSSEEvent{Type: "data", Data: fmt.Sprintf("\n✅ Found %d results:\n\n", queryResp.TotalResults)}
-				
+
 				for i, result := range queryResp.Results {
 					resultJSON, _ := json.MarshalIndent(result, "", "  ")
 					events <- KnowledgeSSEEvent{Type: "data", Data: fmt.Sprintf("Result %d:\n%s\n\n", i+1, string(resultJSON))}
@@ -225,7 +225,7 @@ func (kc *KnowledgeClient) Query(ctx context.Context, req KnowledgeQueryRequest)
 // Knowledge-related client methods
 func (c *Client) ListKnowledge(ctx context.Context, query string, limit int) ([]Knowledge, error) {
 	url := fmt.Sprintf("%s/knowledge", c.cfg.BaseURL)
-	
+
 	// Add query parameters
 	if query != "" || limit > 0 {
 		params := make([]string, 0)
@@ -242,7 +242,7 @@ func (c *Client) ListKnowledge(ctx context.Context, query string, limit int) ([]
 			}
 		}
 	}
-	
+
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return nil, err
@@ -273,7 +273,7 @@ func (c *Client) SearchKnowledge(ctx context.Context, query string, limit int) (
 	if limit > 0 {
 		url += fmt.Sprintf("&limit=%d", limit)
 	}
-	
+
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return nil, err

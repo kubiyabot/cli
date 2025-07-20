@@ -594,8 +594,47 @@ func (ps *ProductionServer) handleListSources(ctx context.Context, req mcp.CallT
 }
 
 func (ps *ProductionServer) handleSearchKB(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	// Implementation would go here
-	return mcp.NewToolResultText("Knowledge base search not yet implemented"), nil
+	args := req.Params.Arguments
+	query, ok := args["query"].(string)
+	if !ok || query == "" {
+		return mcp.NewToolResultError("query parameter is required"), nil
+	}
+
+	// Use the working Query method instead of SearchKnowledge
+	knowledgeReq := kubiya.KnowledgeQueryRequest{
+		Query: query,
+		OrgID: ps.config.OrgID, // Automatically set org_id from user config
+		// BearerToken will be set automatically by the Query method from the client config
+		ResponseFormat: "vercel",
+	}
+
+	events, err := ps.kubiyaClient.Knowledge().Query(ctx, knowledgeReq)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("Failed to search knowledge: %v", err)), nil
+	}
+
+	// Accumulate the streaming response
+	var output strings.Builder
+	var hasError bool
+
+	for event := range events {
+		switch event.Type {
+		case "data":
+			output.WriteString(event.Data)
+		case "error":
+			hasError = true
+			output.WriteString(fmt.Sprintf("❌ Error: %s\n", event.Data))
+		case "done":
+			// Query completed successfully
+			break
+		}
+	}
+
+	if hasError {
+		return mcp.NewToolResultError(output.String()), nil
+	}
+
+	return mcp.NewToolResultText(output.String()), nil
 }
 
 // createWhitelistedToolHandler creates a handler for whitelisted tools
