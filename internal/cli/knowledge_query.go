@@ -66,15 +66,6 @@ Features:
 			// Create client
 			client := kubiya.NewClient(cfg)
 
-			// Set default org ID if not provided
-			if orgID == "" {
-				orgID = cfg.Org
-				// If still empty, default to kubiya-ai (the main Kubiya organization)
-				if orgID == "" {
-					orgID = "kubiya-ai"
-				}
-			}
-
 			// Prepare request
 			req := kubiya.KnowledgeQueryRequest{
 				Query:          prompt,
