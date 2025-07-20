@@ -85,6 +85,9 @@ func NewMCPServeCmd() *cobra.Command {
 				// Create Kubiya client
 				kubiyaClient := kubiya.NewClient(cfg)
 
+				// Set org ID from user config
+				serverConfig.OrgID = cfg.Org
+
 				// Create production server
 				server, err := mcp.NewProductionServer(kubiyaClient, serverConfig)
 				if err != nil {
@@ -158,19 +161,19 @@ func NewMCPServeCmd() *cobra.Command {
 	// Configuration flags
 	cmd.Flags().StringVarP(&configFile, "config", "c", "", "Path to MCP server configuration file")
 	cmd.Flags().BoolVar(&productionMode, "production", false, "Run in production mode with session management, middleware, and hooks")
-	
+
 	// Core functionality flags
 	cmd.Flags().BoolVar(&disablePlatformAPIs, "disable-platform-apis", false, "Disable access to platform management APIs (platform APIs are enabled by default)")
 	cmd.Flags().BoolVar(&disableRunners, "disable-runners", false, "Disable tool runners")
 	cmd.Flags().BoolVar(&enableOPAPolicies, "enable-opa-policies", false, "Enable OPA policy enforcement")
-	
+
 	// Tool configuration flags
 	cmd.Flags().StringSliceVar(&whitelistedTools, "whitelist-tools", []string{}, "Comma-separated list of tools to whitelist (e.g., kubectl,helm,terraform)")
 	cmd.Flags().BoolVar(&disableDynamicTools, "disable-dynamic-tools", false, "Disable dynamic tool generation (dynamic tools enabled by default)")
-	
+
 	// Logging and debugging flags
 	cmd.Flags().BoolVar(&enableVerboseLogging, "verbose", false, "Enable verbose logging output")
-	
+
 	// Production mode specific flags
 	cmd.Flags().BoolVar(&requireAuth, "require-auth", false, "Require authentication for MCP connections")
 	cmd.Flags().IntVar(&sessionTimeout, "session-timeout", 0, "Session timeout in seconds (default: 1800)")

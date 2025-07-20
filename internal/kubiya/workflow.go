@@ -54,13 +54,13 @@ type MCPServerConfig struct {
 
 // WorkflowExecutionRequest represents a direct workflow execution request
 type WorkflowExecutionRequest struct {
-	Command     string                 `json:"command"`               // Required: should be "execute_workflow"
+	Command     string                 `json:"command"` // Required: should be "execute_workflow"
 	Name        string                 `json:"name"`
 	Description string                 `json:"description"`
 	Steps       []interface{}          `json:"steps"`
-	Params      map[string]interface{} `json:"params,omitempty"`      // Use 'params' instead of 'variables'
-	Secrets     map[string]interface{} `json:"secrets,omitempty"`     // Secrets passed in request body
-	Env         map[string]interface{} `json:"env,omitempty"`         // Environment variables
+	Params      map[string]interface{} `json:"params,omitempty"`  // Use 'params' instead of 'variables'
+	Secrets     map[string]interface{} `json:"secrets,omitempty"` // Secrets passed in request body
+	Env         map[string]interface{} `json:"env,omitempty"`     // Environment variables
 }
 
 // WorkflowSSEEvent represents a workflow-specific SSE event
@@ -113,14 +113,9 @@ func (wc *WorkflowClient) GenerateWorkflow(ctx context.Context, prompt string, o
 	req.Header.Set("Cache-Control", "no-cache")
 	req.Header.Set("Connection", "keep-alive")
 
-	// Try both authentication methods
-	if strings.HasPrefix(options.BearerToken, "ey") {
-		// Looks like a JWT token, use Bearer
-		req.Header.Set("Authorization", "Bearer "+options.BearerToken)
-	} else {
-		// Use UserKey format
-		req.Header.Set("Authorization", "UserKey "+wc.client.cfg.APIKey)
-	}
+	// Always use UserKey format for API key authentication
+	// The orchestrator expects UserKey format for Kubiya API keys (even if they are JWTs)
+	req.Header.Set("Authorization", "UserKey "+options.BearerToken)
 
 	// Execute request
 	// Create a custom client with longer timeout for orchestration
@@ -156,7 +151,7 @@ func (wc *WorkflowClient) GenerateWorkflow(ctx context.Context, prompt string, o
 		scanner := bufio.NewScanner(resp.Body)
 		// Increase scanner buffer size for large events
 		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-		
+
 		for scanner.Scan() {
 			// Check if context was cancelled
 			select {
@@ -169,7 +164,7 @@ func (wc *WorkflowClient) GenerateWorkflow(ctx context.Context, prompt string, o
 				return
 			default:
 			}
-			
+
 			line := scanner.Text()
 
 			// Debug logging
@@ -332,7 +327,7 @@ func (wc *WorkflowClient) ExecuteWorkflow(ctx context.Context, req WorkflowExecu
 		scanner := bufio.NewScanner(resp.Body)
 		// Increase scanner buffer size for large events
 		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-		
+
 		for scanner.Scan() {
 			// Check if context was cancelled
 			select {
@@ -345,7 +340,7 @@ func (wc *WorkflowClient) ExecuteWorkflow(ctx context.Context, req WorkflowExecu
 				return
 			default:
 			}
-			
+
 			line := scanner.Text()
 
 			// Debug logging
