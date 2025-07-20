@@ -78,7 +78,7 @@ Features:
 			// If not streaming, accumulate all responses
 			if !stream {
 				fmt.Printf("🔍 Querying knowledge base... ")
-				
+
 				// Query and collect all events
 				events, err := client.Knowledge().Query(cmd.Context(), req)
 				if err != nil {
@@ -172,4 +172,4 @@ Features:
 	cmd.Flags().StringVar(&orgID, "org-id", "", "Organization ID for the query")
 
 	return cmd
-} 
+}
