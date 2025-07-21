@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/kubiyabot/cli/internal/config"
@@ -41,6 +42,9 @@ It provides real-time streaming output so you can monitor the workflow execution
 		RunE: func(cmd *cobra.Command, args []string) error {
 			client := kubiya.NewClient(cfg)
 			ctx := context.Background()
+
+			// Check for automation mode (either --silent flag or KUBIYA_AUTOMATION env var)
+			automationMode := os.Getenv("KUBIYA_AUTOMATION") != ""
 
 			// Read and parse workflow file
 			workflowFile := args[0]
@@ -91,7 +95,7 @@ It provides real-time streaming output so you can monitor the workflow execution
 			// Process streaming events
 			var hasError bool
 			for event := range events {
-				hasError = processWorkflowEvent(event) || hasError
+				hasError = processWorkflowEvent(event, automationMode) || hasError
 			}
 
 			if hasError {
@@ -109,7 +113,7 @@ It provides real-time streaming output so you can monitor the workflow execution
 }
 
 // processWorkflowEvent processes a single workflow event and returns true if an error occurred
-func processWorkflowEvent(event kubiya.WorkflowSSEEvent) bool {
+func processWorkflowEvent(event kubiya.WorkflowSSEEvent, automationMode bool) bool {
 	switch event.Type {
 	case "data":
 		// Try to parse as JSON for structured output
@@ -120,7 +124,7 @@ func processWorkflowEvent(event kubiya.WorkflowSSEEvent) bool {
 				switch eventType {
 				case "step_running":
 					if step, ok := jsonData["step"].(map[string]interface{}); ok {
-						if stepName, ok := step["name"].(string); ok {
+						if stepName, ok := step["name"].(string); ok && !automationMode {
 							fmt.Printf("\n%s Step: %s\n", style.BulletStyle.Render("▶"), style.ToolNameStyle.Render(stepName))
 							fmt.Printf("  %s Running...\n", style.DimStyle.Render("⏳"))
 						}
@@ -128,25 +132,33 @@ func processWorkflowEvent(event kubiya.WorkflowSSEEvent) bool {
 				case "step_complete":
 					if step, ok := jsonData["step"].(map[string]interface{}); ok {
 						if stepName, ok := step["name"].(string); ok && stepName != "" {
-							if output, ok := step["output"].(string); ok && output != "" {
-								fmt.Printf("  %s Output: %s\n", style.DimStyle.Render("📤"), style.ToolOutputStyle.Render(output))
-							}
-							if status, ok := step["status"].(string); ok {
-								if status == "finished" {
-									fmt.Printf("  %s Step completed successfully\n", style.SuccessStyle.Render("✓"))
-								} else if status == "failed" {
-									fmt.Printf("  %s Step failed\n", style.ErrorStyle.Render("✗"))
-									return true
+							if !automationMode {
+								if output, ok := step["output"].(string); ok && output != "" {
+									fmt.Printf("  %s Output: %s\n", style.DimStyle.Render("📤"), style.ToolOutputStyle.Render(output))
 								}
+								if status, ok := step["status"].(string); ok {
+									if status == "finished" {
+										fmt.Printf("  %s Step completed successfully\n", style.SuccessStyle.Render("✓"))
+									} else if status == "failed" {
+										fmt.Printf("  %s Step failed\n", style.ErrorStyle.Render("✗"))
+									}
+								}
+							}
+							if status, ok := step["status"].(string); ok && status == "failed" {
+								return true
 							}
 						}
 					}
 				case "workflow_complete":
 					if status, ok := jsonData["status"].(string); ok {
 						if status == "finished" && jsonData["success"] == true {
-							fmt.Printf("\n%s Workflow test completed successfully!\n", style.SuccessStyle.Render("✅"))
+							if !automationMode {
+								fmt.Printf("\n%s Workflow test completed successfully!\n", style.SuccessStyle.Render("✅"))
+							}
 						} else {
-							fmt.Printf("\n%s Workflow test failed\n", style.ErrorStyle.Render("❌"))
+							if !automationMode {
+								fmt.Printf("\n%s Workflow test failed\n", style.ErrorStyle.Render("❌"))
+							}
 							return true
 						}
 					}
@@ -155,21 +167,25 @@ func processWorkflowEvent(event kubiya.WorkflowSSEEvent) bool {
 			// Check for error events
 			if details, ok := jsonData["details"].(map[string]interface{}); ok {
 				if errorMsg, ok := jsonData["error"].(string); ok {
-					fmt.Printf("\n%s Error: %s\n", style.ErrorStyle.Render("❌"), errorMsg)
-					if errorType, ok := details["errorType"].(string); ok {
-						fmt.Printf("  %s Error Type: %s\n", style.DimStyle.Render("ℹ️"), errorType)
+					if !automationMode {
+						fmt.Printf("\n%s Error: %s\n", style.ErrorStyle.Render("❌"), errorMsg)
+						if errorType, ok := details["errorType"].(string); ok {
+							fmt.Printf("  %s Error Type: %s\n", style.DimStyle.Render("ℹ️"), errorType)
+						}
 					}
 					return true
 				}
 			}
 		} else {
 			// Plain text output
-			if event.Data != "" {
+			if event.Data != "" && !automationMode {
 				fmt.Println(event.Data)
 			}
 		}
 	case "error":
-		fmt.Printf("%s Error: %s\n", style.ErrorStyle.Render("✗"), event.Data)
+		if !automationMode {
+			fmt.Printf("%s Error: %s\n", style.ErrorStyle.Render("✗"), event.Data)
+		}
 		return true
 	case "done":
 		// Workflow execution finished

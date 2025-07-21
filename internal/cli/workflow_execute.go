@@ -511,6 +511,9 @@ The format will be auto-detected and you can provide variables and choose the ru
 			client := kubiya.NewClient(cfg)
 			ctx := context.Background()
 
+			// Check for automation mode (either --silent flag or KUBIYA_AUTOMATION env var)
+			automationMode := os.Getenv("KUBIYA_AUTOMATION") != ""
+
 			// Set the config for helper functions
 			getCurrentConfig = func() *config.Config { return cfg }
 
@@ -570,41 +573,45 @@ The format will be auto-detected and you can provide variables and choose the ru
 				}
 			}
 
-			// Show format detection info if helpful
-			if format != "" {
-				fmt.Printf("%s Detected format: %s\n", style.DimStyle.Render("📄"), format)
-			}
+			if !automationMode {
+				// Show format detection info if helpful
+				if format != "" {
+					fmt.Printf("%s Detected format: %s\n", style.DimStyle.Render("📄"), format)
+				}
 
-			fmt.Printf("%s Executing workflow: %s\n", style.StatusStyle.Render("🚀"), style.HighlightStyle.Render(req.Name))
-			
-			// Show source information
-			switch urlInfo.Type {
-			case "local_file":
-				fmt.Printf("%s %s\n", style.DimStyle.Render("Source:"), "Local file")
-				fmt.Printf("%s %s\n", style.DimStyle.Render("File:"), workflowFile)
-			case "raw_url":
-				fmt.Printf("%s %s\n", style.DimStyle.Render("Source:"), "Raw URL")
-				fmt.Printf("%s %s\n", style.DimStyle.Render("URL:"), urlInfo.Original)
-			case "github_repo":
-				fmt.Printf("%s %s\n", style.DimStyle.Render("Source:"), "GitHub Repository")
-				fmt.Printf("%s %s\n", style.DimStyle.Render("Repository:"), urlInfo.RepoURL)
-				if urlInfo.Branch != "main" {
-					fmt.Printf("%s %s\n", style.DimStyle.Render("Branch:"), urlInfo.Branch)
-				}
-				if urlInfo.FilePath != "" {
-					fmt.Printf("%s %s\n", style.DimStyle.Render("File:"), urlInfo.FilePath)
-				}
-			}
-			if runner != "" {
-				fmt.Printf("%s %s\n", style.DimStyle.Render("Runner:"), runner)
-			}
-			if len(req.Params) > 0 {
-				fmt.Printf("%s\n", style.DimStyle.Render("Params:"))
-				for k, v := range req.Params {
-					fmt.Printf("  %s = %v\n", style.KeyStyle.Render(k), v)
+				fmt.Printf("%s Executing workflow: %s\n", style.StatusStyle.Render("🚀"), style.HighlightStyle.Render(req.Name))
+				
+				// Show source information
+				switch urlInfo.Type {
+				case "local_file":
+					fmt.Printf("%s %s\n", style.DimStyle.Render("Source:"), "Local file")
+					fmt.Printf("%s %s\n", style.DimStyle.Render("File:"), workflowFile)
+				case "raw_url":
+					fmt.Printf("%s %s\n", style.DimStyle.Render("Source:"), "Raw URL")
+					fmt.Printf("%s %s\n", style.DimStyle.Render("URL:"), urlInfo.Original)
+				case "github_repo":
+					fmt.Printf("%s %s\n", style.DimStyle.Render("Source:"), "GitHub Repository")
+					fmt.Printf("%s %s\n", style.DimStyle.Render("Repository:"), urlInfo.RepoURL)
+					if urlInfo.Branch != "main" {
+						fmt.Printf("%s %s\n", style.DimStyle.Render("Branch:"), urlInfo.Branch)
+					}
+					if urlInfo.FilePath != "" {
+						fmt.Printf("%s %s\n", style.DimStyle.Render("File:"), urlInfo.FilePath)
+					}
 				}
 			}
-			fmt.Println()
+			if !automationMode {
+				if runner != "" {
+					fmt.Printf("%s %s\n", style.DimStyle.Render("Runner:"), runner)
+				}
+				if len(req.Params) > 0 {
+					fmt.Printf("%s\n", style.DimStyle.Render("Params:"))
+					for k, v := range req.Params {
+						fmt.Printf("  %s = %v\n", style.KeyStyle.Render(k), v)
+					}
+				}
+				fmt.Println()
+			}
 
 			// Policy validation (if enabled)
 			if !skipPolicyCheck {
@@ -662,18 +669,24 @@ The format will be auto-detected and you can provide variables and choose the ru
 			if runner == "kubiya-hosted" {
 				runnerDisplayName = "Kubiya Hosted Runner"
 			}
-			fmt.Printf("%s Connecting to %s...", 
-				style.InfoStyle.Render("🔌"), runnerDisplayName)
+			if !automationMode {
+				fmt.Printf("%s Connecting to %s...", 
+					style.InfoStyle.Render("🔌"), runnerDisplayName)
+			}
 			
 			// Execute workflow directly with simple client (like it worked 3 days ago!)
 			workflowClient := client.Workflow()
 			events, err := workflowClient.ExecuteWorkflow(ctx, req, runner)
 			if err != nil {
-				fmt.Printf(" %s\n", style.ErrorStyle.Render("failed!"))
+				if !automationMode {
+					fmt.Printf(" %s\n", style.ErrorStyle.Render("failed!"))
+				}
 				return fmt.Errorf("failed to execute workflow: %w", err)
 			}
 			
-			fmt.Printf(" %s\n", style.SuccessStyle.Render("connected!"))
+			if !automationMode {
+				fmt.Printf(" %s\n", style.SuccessStyle.Render("connected!"))
+			}
 
 			// Process workflow events 
 			var hasError bool
@@ -683,15 +696,17 @@ The format will be auto-detected and you can provide variables and choose the ru
 			// Count total steps for progress tracking
 			stepCount = len(req.Steps)
 			
-			fmt.Printf("\n%s Starting workflow execution...\n\n", 
-				style.InfoStyle.Render("🚀"))
-			
-			// Show initial progress
-			progressBar := generateProgressBar(completedSteps, stepCount)
-			fmt.Printf("%s %s %s\n\n", 
-				style.InfoStyle.Render("📊"),
-				progressBar,
-				style.HighlightStyle.Render(fmt.Sprintf("%d/%d steps completed", completedSteps, stepCount)))
+			if !automationMode {
+				fmt.Printf("\n%s Starting workflow execution...\n\n", 
+					style.InfoStyle.Render("🚀"))
+				
+				// Show initial progress
+				progressBar := generateProgressBar(completedSteps, stepCount)
+				fmt.Printf("%s %s %s\n\n", 
+					style.InfoStyle.Render("📊"),
+					progressBar,
+					style.HighlightStyle.Render(fmt.Sprintf("%d/%d steps completed", completedSteps, stepCount)))
+			}
 			
 			// Initialize workflow execution tracking
 			var stepStartTimes = make(map[string]time.Time)
@@ -712,13 +727,15 @@ The format will be auto-detected and you can provide variables and choose the ru
 										// Update workflow trace
 										workflowTrace.StartStep(stepName)
 										
-										// Show step starting
-										progress := fmt.Sprintf("[%d/%d]", completedSteps+1, stepCount)
-										fmt.Printf("%s %s %s\n", 
-											style.BulletStyle.Render("▶️"), 
-											style.InfoStyle.Render(progress),
-											style.ToolNameStyle.Render(stepName))
-										fmt.Printf("  %s Running...\n", style.StatusStyle.Render("⏳"))
+										if !automationMode {
+											// Show step starting
+											progress := fmt.Sprintf("[%d/%d]", completedSteps+1, stepCount)
+											fmt.Printf("%s %s %s\n", 
+												style.BulletStyle.Render("▶️"), 
+												style.InfoStyle.Render(progress),
+												style.ToolNameStyle.Render(stepName))
+											fmt.Printf("  %s Running...\n", style.StatusStyle.Render("⏳"))
+										}
 									}
 								}
 								
@@ -742,36 +759,40 @@ The format will be auto-detected and you can provide variables and choose the ru
 											stepStatus = status
 										}
 										
-										// Show step completion with status
-										if duration > 0 {
-											fmt.Printf("  %s Step %s in %v\n", 
-												style.SuccessStyle.Render("✅"), 
-												stepStatus,
-												duration.Round(time.Millisecond))
-										} else {
-											fmt.Printf("  %s Step %s\n", 
-												style.SuccessStyle.Render("✅"),
-												stepStatus)
+										if !automationMode {
+											// Show step completion with status
+											if duration > 0 {
+												fmt.Printf("  %s Step %s in %v\n", 
+													style.SuccessStyle.Render("✅"), 
+													stepStatus,
+													duration.Round(time.Millisecond))
+											} else {
+												fmt.Printf("  %s Step %s\n", 
+													style.SuccessStyle.Render("✅"),
+													stepStatus)
+											}
+											
+											// Show step output if available
+											if stepOutput != "" {
+												// Format output nicely
+												fmt.Printf("  %s %s\n", 
+													style.DimStyle.Render("📤 Output:"),
+													style.ToolOutputStyle.Render(formatStepOutput(stepOutput)))
+											}
+											
+											// Update progress
+											progressBar := generateProgressBar(completedSteps+1, stepCount)
+											fmt.Printf("  %s %s %s\n\n", 
+												style.SuccessStyle.Render("📊"),
+												progressBar,
+												style.HighlightStyle.Render(fmt.Sprintf("%d/%d steps completed", completedSteps+1, stepCount)))
 										}
 										
 										// Update workflow trace
 										workflowTrace.CompleteStep(stepName, stepStatus, stepOutput)
 										
-										// Show step output if available
-										if stepOutput != "" {
-											// Format output nicely
-											fmt.Printf("  %s %s\n", 
-												style.DimStyle.Render("📤 Output:"),
-												style.ToolOutputStyle.Render(formatStepOutput(stepOutput)))
-										}
-										
 										// Update progress
 										completedSteps++
-										progressBar := generateProgressBar(completedSteps, stepCount)
-										fmt.Printf("  %s %s %s\n\n", 
-											style.SuccessStyle.Render("📊"),
-											progressBar,
-											style.HighlightStyle.Render(fmt.Sprintf("%d/%d steps completed", completedSteps, stepCount)))
 									}
 								}
 								
@@ -779,17 +800,23 @@ The format will be auto-detected and you can provide variables and choose the ru
 								// Workflow finished
 								if success, ok := jsonData["success"].(bool); ok && success {
 									workflowTrace.Complete("completed")
-									fmt.Printf("%s Workflow completed successfully!\n", 
-										style.SuccessStyle.Render("🎉"))
+									if !automationMode {
+										fmt.Printf("%s Workflow completed successfully!\n", 
+											style.SuccessStyle.Render("🎉"))
+									}
 								} else {
 									workflowTrace.Complete("failed")
-									fmt.Printf("%s Workflow execution failed\n", 
-										style.ErrorStyle.Render("💥"))
+									if !automationMode {
+										fmt.Printf("%s Workflow execution failed\n", 
+											style.ErrorStyle.Render("💥"))
+									}
 									hasError = true
 								}
 								
-								// Show workflow execution graph
-								fmt.Print(workflowTrace.GenerateGraph())
+								if !automationMode {
+									// Show workflow execution graph
+									fmt.Print(workflowTrace.GenerateGraph())
+								}
 								
 								// Save trace to file if requested
 								if saveTrace {
@@ -803,9 +830,11 @@ The format will be auto-detected and you can provide variables and choose the ru
 						}
 					}
 				} else if event.Type == "error" {
-					fmt.Printf("%s %s\n", 
-						style.ErrorStyle.Render("💀 Error:"), 
-						event.Data)
+					if !automationMode {
+						fmt.Printf("%s %s\n", 
+							style.ErrorStyle.Render("💀 Error:"), 
+							event.Data)
+					}
 					hasError = true
 				} else if event.Type == "done" {
 					// Stream ended
@@ -820,9 +849,11 @@ The format will be auto-detected and you can provide variables and choose the ru
 
 			if hasError {
 				workflowTrace.Complete("failed")
-				fmt.Printf("\n%s Workflow execution failed. Check the logs above for details.\n", 
-					style.ErrorStyle.Render("💥"))
-				fmt.Print(workflowTrace.GenerateGraph())
+				if !automationMode {
+					fmt.Printf("\n%s Workflow execution failed. Check the logs above for details.\n", 
+						style.ErrorStyle.Render("💥"))
+					fmt.Print(workflowTrace.GenerateGraph())
+				}
 				
 				// Save trace to file if requested
 				if saveTrace {
@@ -836,18 +867,24 @@ The format will be auto-detected and you can provide variables and choose the ru
 
 			// If we reach here, the stream ended without explicit completion
 			// This could mean the workflow completed successfully but didn't send the completion event
-			fmt.Printf("\n%s Stream ended - checking workflow status...\n", 
-				style.InfoStyle.Render("ℹ️"))
+			if !automationMode {
+				fmt.Printf("\n%s Stream ended - checking workflow status...\n", 
+					style.InfoStyle.Render("ℹ️"))
+			}
 			
 			if completedSteps >= stepCount && stepCount > 0 {
 				workflowTrace.Complete("completed")
-				fmt.Printf("%s Workflow appears to have completed successfully (%d/%d steps)\n", 
-					style.SuccessStyle.Render("✅"), completedSteps, stepCount)
+				if !automationMode {
+					fmt.Printf("%s Workflow appears to have completed successfully (%d/%d steps)\n", 
+						style.SuccessStyle.Render("✅"), completedSteps, stepCount)
+				}
 			} else {
 				workflowTrace.Complete("incomplete")
-				fmt.Printf("%s Workflow may be incomplete (%d/%d steps completed)\n", 
-					style.WarningStyle.Render("⚠️"), completedSteps, stepCount)
-				fmt.Print(workflowTrace.GenerateGraph())
+				if !automationMode {
+					fmt.Printf("%s Workflow may be incomplete (%d/%d steps completed)\n", 
+						style.WarningStyle.Render("⚠️"), completedSteps, stepCount)
+					fmt.Print(workflowTrace.GenerateGraph())
+				}
 				
 				// Save trace to file if requested
 				if saveTrace {
@@ -859,8 +896,10 @@ The format will be auto-detected and you can provide variables and choose the ru
 				return fmt.Errorf("workflow stream ended unexpectedly")
 			}
 			
-			// Show final workflow execution graph
-			fmt.Print(workflowTrace.GenerateGraph())
+			if !automationMode {
+				// Show final workflow execution graph
+				fmt.Print(workflowTrace.GenerateGraph())
+			}
 			
 			// Save trace to file if requested
 			if saveTrace {
