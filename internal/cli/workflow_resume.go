@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -40,6 +41,9 @@ is preserved locally and can be resumed at any time.`,
 			client := kubiya.NewClient(cfg)
 			ctx := context.Background()
 
+			// Check for automation mode (either --silent flag or KUBIYA_AUTOMATION env var)
+			automationMode := os.Getenv("KUBIYA_AUTOMATION") != ""
+
 			// Create robust workflow client
 			robustClient, err := kubiya.NewRobustWorkflowClient(client.Workflow(), cfg.Debug)
 			if err != nil {
@@ -62,24 +66,28 @@ is preserved locally and can be resumed at any time.`,
 				return fmt.Errorf("failed to get execution state: %w", err)
 			}
 
-			// Display execution info
-			fmt.Printf("%s Resuming workflow execution\n", style.InfoStyle.Render("🔄"))
-			fmt.Printf("%s Workflow: %s\n", style.DimStyle.Render("📋"), state.WorkflowName)
-			fmt.Printf("%s Execution ID: %s\n", style.DimStyle.Render("🆔"), executionID)
-			fmt.Printf("%s Status: %s\n", style.DimStyle.Render("📊"), state.Status)
-			fmt.Printf("%s Progress: %d/%d steps completed\n", style.DimStyle.Render("📈"), state.CompletedSteps, state.TotalSteps)
-			
-			if state.ConnectionLost {
-				fmt.Printf("%s Connection was lost, will attempt to reconnect\n", style.WarningStyle.Render("⚠️"))
-			}
-			
-			if state.RetryCount > 0 {
-				fmt.Printf("%s Previous retry attempts: %d\n", style.DimStyle.Render("🔄"), state.RetryCount)
+			if !automationMode {
+				// Display execution info
+				fmt.Printf("%s Resuming workflow execution\n", style.InfoStyle.Render("🔄"))
+				fmt.Printf("%s Workflow: %s\n", style.DimStyle.Render("📋"), state.WorkflowName)
+				fmt.Printf("%s Execution ID: %s\n", style.DimStyle.Render("🆔"), executionID)
+				fmt.Printf("%s Status: %s\n", style.DimStyle.Render("📊"), state.Status)
+				fmt.Printf("%s Progress: %d/%d steps completed\n", style.DimStyle.Render("📈"), state.CompletedSteps, state.TotalSteps)
+				
+				if state.ConnectionLost {
+					fmt.Printf("%s Connection was lost, will attempt to reconnect\n", style.WarningStyle.Render("⚠️"))
+				}
+				
+				if state.RetryCount > 0 {
+					fmt.Printf("%s Previous retry attempts: %d\n", style.DimStyle.Render("🔄"), state.RetryCount)
+				}
 			}
 
-			duration := time.Since(state.StartTime)
-			fmt.Printf("%s Running for: %v\n", style.DimStyle.Render("⏱️"), duration.Round(time.Second))
-			fmt.Println()
+			if !automationMode {
+				duration := time.Since(state.StartTime)
+				fmt.Printf("%s Running for: %v\n", style.DimStyle.Render("⏱️"), duration.Round(time.Second))
+				fmt.Println()
+			}
 
 			// Resume execution
 			events, err := robustClient.ResumeExecution(ctx, executionID)
@@ -88,7 +96,7 @@ is preserved locally and can be resumed at any time.`,
 			}
 
 			// Process events (similar to execute command)
-			return processResumedWorkflowEvents(events, watch, cfg.Debug || verbose)
+			return processResumedWorkflowEvents(events, watch, cfg.Debug || verbose, automationMode)
 		},
 	}
 
@@ -189,7 +197,7 @@ func listActiveExecutions(robustClient *kubiya.RobustWorkflowClient) error {
 	return nil
 }
 
-func processResumedWorkflowEvents(events <-chan kubiya.RobustWorkflowEvent, watch bool, verbose bool) error {
+func processResumedWorkflowEvents(events <-chan kubiya.RobustWorkflowEvent, watch bool, verbose bool, automationMode bool) error {
 	var hasError bool
 	var stepStartTimes = make(map[string]time.Time)
 	var isReconnecting bool
@@ -211,7 +219,7 @@ func processResumedWorkflowEvents(events <-chan kubiya.RobustWorkflowEvent, watc
 		switch event.Type {
 		case "state":
 			// State updates
-			if event.State != nil {
+			if event.State != nil && !automationMode {
 				fmt.Printf("%s %s\n", 
 					style.InfoStyle.Render("📊"), 
 					event.Message)
@@ -227,15 +235,17 @@ func processResumedWorkflowEvents(events <-chan kubiya.RobustWorkflowEvent, watc
 			if event.StepStatus == "running" {
 				stepStartTimes[event.StepName] = time.Now()
 				
-				if event.State != nil {
-					progress := fmt.Sprintf("[%d/%d]", event.State.CompletedSteps+1, event.State.TotalSteps)
-					fmt.Printf("%s %s %s\n", 
-						style.BulletStyle.Render("▶️"), 
-						style.DimStyle.Render(progress),
-						style.ToolNameStyle.Render(event.StepName))
+				if !automationMode {
+					if event.State != nil {
+						progress := fmt.Sprintf("[%d/%d]", event.State.CompletedSteps+1, event.State.TotalSteps)
+						fmt.Printf("%s %s %s\n", 
+							style.BulletStyle.Render("▶️"), 
+							style.DimStyle.Render(progress),
+							style.ToolNameStyle.Render(event.StepName))
+					}
+					
+					fmt.Printf("  %s Running...\n", style.DimStyle.Render("⏳"))
 				}
-				
-				fmt.Printf("  %s Running...\n", style.DimStyle.Render("⏳"))
 				
 			} else if event.StepStatus == "completed" || event.StepStatus == "finished" {
 				var duration time.Duration
@@ -244,23 +254,25 @@ func processResumedWorkflowEvents(events <-chan kubiya.RobustWorkflowEvent, watc
 					delete(stepStartTimes, event.StepName)
 				}
 				
-				if event.Data != "" {
-					displayOutput := event.Data
-					if len(event.Data) > 200 {
-						displayOutput = event.Data[:200] + "..."
+				if !automationMode {
+					if event.Data != "" {
+						displayOutput := event.Data
+						if len(event.Data) > 200 {
+							displayOutput = event.Data[:200] + "..."
+						}
+						fmt.Printf("  %s %s\n", 
+							style.DimStyle.Render("📤 Output:"), 
+							style.ToolOutputStyle.Render(displayOutput))
 					}
-					fmt.Printf("  %s %s\n", 
-						style.DimStyle.Render("📤 Output:"), 
-						style.ToolOutputStyle.Render(displayOutput))
-				}
-				
-				if duration > 0 {
-					fmt.Printf("  %s Step completed in %v\n\n", 
-						style.SuccessStyle.Render("✅"), 
-						duration.Round(time.Millisecond))
-				} else {
-					fmt.Printf("  %s Step completed\n\n", 
-						style.SuccessStyle.Render("✅"))
+					
+					if duration > 0 {
+						fmt.Printf("  %s Step completed in %v\n\n", 
+							style.SuccessStyle.Render("✅"), 
+							duration.Round(time.Millisecond))
+					} else {
+						fmt.Printf("  %s Step completed\n\n", 
+							style.SuccessStyle.Render("✅"))
+					}
 				}
 				
 			} else if event.StepStatus == "failed" {
@@ -270,20 +282,22 @@ func processResumedWorkflowEvents(events <-chan kubiya.RobustWorkflowEvent, watc
 					delete(stepStartTimes, event.StepName)
 				}
 				
-				if duration > 0 {
-					fmt.Printf("  %s Step failed after %v\n\n", 
-						style.ErrorStyle.Render("❌"), 
-						duration.Round(time.Millisecond))
-				} else {
-					fmt.Printf("  %s Step failed\n\n", 
-						style.ErrorStyle.Render("❌"))
+				if !automationMode {
+					if duration > 0 {
+						fmt.Printf("  %s Step failed after %v\n\n", 
+							style.ErrorStyle.Render("❌"), 
+							duration.Round(time.Millisecond))
+					} else {
+						fmt.Printf("  %s Step failed\n\n", 
+							style.ErrorStyle.Render("❌"))
+					}
 				}
 				hasError = true
 			}
 
 		case "data":
 			// Raw data output
-			if event.Data != "" {
+			if event.Data != "" && !automationMode {
 				if strings.Contains(event.Data, ":") {
 					fmt.Printf("  %s %s\n", style.DimStyle.Render("📝"), event.Data)
 				} else {
@@ -294,18 +308,22 @@ func processResumedWorkflowEvents(events <-chan kubiya.RobustWorkflowEvent, watc
 		case "reconnect":
 			// Connection recovery
 			if event.Reconnect {
-				if !isReconnecting {
+				if !isReconnecting && !automationMode {
 					fmt.Printf("\n%s Connection lost, attempting to reconnect...\n", 
 						style.WarningStyle.Render("🔄"))
 					isReconnecting = true
 				}
-				fmt.Printf("  %s %s\n", 
-					style.DimStyle.Render("⏳"), 
-					event.Message)
+				if !automationMode {
+					fmt.Printf("  %s %s\n", 
+						style.DimStyle.Render("⏳"), 
+						event.Message)
+				}
 			} else {
-				fmt.Printf("  %s %s\n\n", 
-					style.SuccessStyle.Render("✅"), 
-					event.Message)
+				if !automationMode {
+					fmt.Printf("  %s %s\n\n", 
+						style.SuccessStyle.Render("✅"), 
+						event.Message)
+				}
 				isReconnecting = false
 			}
 
@@ -317,36 +335,43 @@ func processResumedWorkflowEvents(events <-chan kubiya.RobustWorkflowEvent, watc
 					totalDuration = event.State.EndTime.Sub(event.State.StartTime)
 				}
 				
-				if event.State.Status == "completed" {
-					fmt.Printf("%s Workflow completed successfully!\n", 
-						style.SuccessStyle.Render("🎉"))
-				} else {
-					fmt.Printf("%s Workflow execution failed\n", 
-						style.ErrorStyle.Render("💥"))
-					hasError = true
+				if !automationMode {
+					if event.State.Status == "completed" {
+						fmt.Printf("%s Workflow completed successfully!\n", 
+							style.SuccessStyle.Render("🎉"))
+					} else {
+						fmt.Printf("%s Workflow execution failed\n", 
+							style.ErrorStyle.Render("💥"))
+					}
+					
+					fmt.Printf("%s Total duration: %v\n", 
+						style.DimStyle.Render("⏱️"), 
+						totalDuration.Round(time.Millisecond))
+					fmt.Printf("%s Steps completed: %d/%d\n", 
+						style.DimStyle.Render("📊"), 
+						event.State.CompletedSteps, 
+						event.State.TotalSteps)
+					
+					if event.State.RetryCount > 0 {
+						fmt.Printf("%s Connection retries: %d\n", 
+							style.DimStyle.Render("🔄"), 
+							event.State.RetryCount)
+					}
 				}
 				
-				fmt.Printf("%s Total duration: %v\n", 
-					style.DimStyle.Render("⏱️"), 
-					totalDuration.Round(time.Millisecond))
-				fmt.Printf("%s Steps completed: %d/%d\n", 
-					style.DimStyle.Render("📊"), 
-					event.State.CompletedSteps, 
-					event.State.TotalSteps)
-				
-				if event.State.RetryCount > 0 {
-					fmt.Printf("%s Connection retries: %d\n", 
-						style.DimStyle.Render("🔄"), 
-						event.State.RetryCount)
+				if event.State.Status != "completed" {
+					hasError = true
 				}
 			}
 
 		case "error":
 			// Error events
 			if event.Error != "" {
-				fmt.Printf("%s %s\n", 
-					style.ErrorStyle.Render("💀 Error:"), 
-					event.Error)
+				if !automationMode {
+					fmt.Printf("%s %s\n", 
+						style.ErrorStyle.Render("💀 Error:"), 
+						event.Error)
+				}
 				hasError = true
 			}
 		}
