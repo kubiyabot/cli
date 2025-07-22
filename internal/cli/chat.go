@@ -2227,7 +2227,7 @@ For inline agents, use --inline with --tools-file or --tools-json to provide cus
 
 				agents, err := client.GetAgents(cmd.Context())
 				if err != nil {
-					return fmt.Errorf("failed to list agents: %w", err)
+					return err
 				}
 
 				if debug {
