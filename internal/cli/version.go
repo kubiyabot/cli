@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/kubiyabot/cli/internal/config"
 	"github.com/kubiyabot/cli/internal/version"
@@ -15,10 +16,12 @@ func newVersionCommand(cfg *config.Config) *cobra.Command {
 		Run: func(cmd *cobra.Command, args []string) {
 			fmt.Printf("Kubiya CLI %s\n", version.GetVersion())
 
-			// Check for updates
-			if latest, hasUpdate, err := version.CheckForUpdate(); err == nil && hasUpdate {
-				fmt.Printf("\n📢 Update available! Latest version: %s\n", latest)
-				fmt.Println("Run 'kubiya update' to update to the latest version")
+			// Check for updates (skip in automation mode)
+			if os.Getenv("KUBIYA_AUTOMATION") == "" {
+				if latest, hasUpdate, err := version.CheckForUpdate(); err == nil && hasUpdate {
+					fmt.Printf("\n📢 Update available! Latest version: %s\n", latest)
+					fmt.Println("Run 'kubiya update' to update to the latest version")
+				}
 			}
 		},
 	}

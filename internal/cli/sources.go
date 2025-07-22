@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -64,6 +65,7 @@ Sources contain the tools and capabilities that your agents can use.`,
 		newSyncSourceCommand(cfg),
 		newUpdateSourceCommand(cfg),
 		newDebugSourceCommand(cfg),
+		newInlineSourceCommand(cfg),
 	)
 
 	cmd.PersistentFlags().StringVarP(&runnerName, "runner", "r", "", "Runner name")
@@ -1258,6 +1260,9 @@ func newAddSourceCommand(cfg *config.Config) *cobra.Command {
 					return fmt.Errorf("no tools found in the provided source")
 				}
 
+				// Store the tools count for display since server response may not include it
+				toolsCount := len(tools)
+
 				// Configure source options
 				options := []kubiya.SourceOption{
 					kubiya.WithInlineTools(tools),
@@ -1366,7 +1371,7 @@ func newAddSourceCommand(cfg *config.Config) *cobra.Command {
 
 				fmt.Printf("\n%s\n", style.SuccessStyle.Render("✅ Inline source added successfully!"))
 				fmt.Printf("UUID: %s\n", created.UUID)
-				fmt.Printf("Tools: %d\n", len(created.Tools)+len(created.InlineTools))
+				fmt.Printf("Tools: %d\n", toolsCount)
 
 				return nil
 			}
@@ -1731,7 +1736,101 @@ func parseToolsData(data []byte, filename string) ([]kubiya.Tool, error) {
 		return []kubiya.Tool{tool}, nil
 	}
 
-	return tools, nil
+	// Validate and clean tools before returning
+	validatedTools := make([]kubiya.Tool, 0, len(tools))
+	for i, tool := range tools {
+		// Check for required fields
+		if tool.Name == "" {
+			fmt.Printf("Warning: Tool at index %d has no name, skipping\n", i)
+			continue
+		}
+		
+		// Clean null values in WithFiles
+		if tool.WithFiles != nil {
+			switch v := tool.WithFiles.(type) {
+			case []interface{}:
+				cleaned := make([]interface{}, 0)
+				for _, item := range v {
+					if item != nil {
+						cleaned = append(cleaned, item)
+					}
+				}
+				if len(cleaned) > 0 {
+					tool.WithFiles = cleaned
+				} else {
+					tool.WithFiles = nil
+				}
+			case map[string]interface{}:
+				cleaned := make(map[string]interface{})
+				for k, v := range v {
+					if v != nil {
+						cleaned[k] = v
+					}
+				}
+				if len(cleaned) > 0 {
+					tool.WithFiles = cleaned
+				} else {
+					tool.WithFiles = nil
+				}
+			}
+		}
+		
+		// Clean null values in WithVolumes
+		if tool.WithVolumes != nil {
+			switch v := tool.WithVolumes.(type) {
+			case []interface{}:
+				cleaned := make([]interface{}, 0)
+				for _, item := range v {
+					if item != nil {
+						cleaned = append(cleaned, item)
+					}
+				}
+				if len(cleaned) > 0 {
+					tool.WithVolumes = cleaned
+				} else {
+					tool.WithVolumes = nil
+				}
+			case map[string]interface{}:
+				cleaned := make(map[string]interface{})
+				for k, v := range v {
+					if v != nil {
+						cleaned[k] = v
+					}
+				}
+				if len(cleaned) > 0 {
+					tool.WithVolumes = cleaned
+				} else {
+					tool.WithVolumes = nil
+				}
+			}
+		}
+		
+		// Clean null values in Env array
+		if tool.Env != nil {
+			cleaned := make([]string, 0)
+			for _, env := range tool.Env {
+				if env != "" {
+					cleaned = append(cleaned, env)
+				}
+			}
+			tool.Env = cleaned
+		}
+		
+		// Clean null values in Secrets array
+		if tool.Secrets != nil {
+			cleaned := make([]string, 0)
+			for _, secret := range tool.Secrets {
+				if secret != "" {
+					cleaned = append(cleaned, secret)
+				}
+			}
+			tool.Secrets = cleaned
+		}
+		
+		validatedTools = append(validatedTools, tool)
+	}
+	
+	return validatedTools, nil
 }
 
 // Helper function to load dynamic configuration
@@ -2622,6 +2721,686 @@ func newDebugSourceCommand(cfg *config.Config) *cobra.Command {
 	cmd.Flags().BoolVar(&showRawOutput, "raw", false, "Show raw API response")
 	return cmd
 }
+
+// newInlineSourceCommand creates the command for advanced inline source management
+func newInlineSourceCommand(cfg *config.Config) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:     "inline",
+		Short:   "📝 Manage inline source tools",
+		Long:    `Advanced management of inline source tools - add, edit, remove, and manage individual tools.`,
+	}
+
+	cmd.AddCommand(
+		newInlineToolAddCommand(cfg),
+		newInlineToolEditCommand(cfg),
+		newInlineToolDeleteCommand(cfg),
+		newInlineToolUpdateCommand(cfg),
+		newInlineToolListCommand(cfg),
+	)
+
+	return cmd
+}
+
+// newInlineToolAddCommand adds a single tool to an inline source
+func newInlineToolAddCommand(cfg *config.Config) *cobra.Command {
+	var (
+		sourceUUID   string
+		toolFile     string
+		toolURL      string
+		toolName     string
+		toolDesc     string
+		toolType     string
+		toolImage    string
+		toolContent  string
+		toolArgs     []string
+		toolEnv      []string
+		outputFormat string
+		editor       bool
+	)
+
+	cmd := &cobra.Command{
+		Use:   "add [source-uuid]",
+		Short: "➕ Add a tool to an inline source",
+		Long: `Add a single tool to an existing inline source.
+You can add tools from files, URLs, or create them interactively.`,
+		Example: `  # Add tool from file
+  kubiya source inline add abc-123 --file tool.yaml
+
+  # Add tool from URL  
+  kubiya source inline add abc-123 --url https://example.com/tool.yaml
+
+  # Add tool interactively with editor
+  kubiya source inline add abc-123 --editor
+
+  # Add tool from command line parameters
+  kubiya source inline add abc-123 --name "hello" --content "echo Hello World" --type docker --image alpine`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			sourceUUID = args[0]
+			client := kubiya.NewClient(cfg)
+			ctx := cmd.Context()
+
+			// Get existing source
+			source, err := client.GetSourceMetadata(ctx, sourceUUID)
+			if err != nil {
+				return fmt.Errorf("failed to get source: %w", err)
+			}
+
+			var newTool kubiya.Tool
+
+			if editor {
+				// Open editor for tool creation
+				return createToolWithEditor(ctx, client, source, cfg)
+			} else if toolFile != "" {
+				// Load tool from file
+				data, err := os.ReadFile(toolFile)
+				if err != nil {
+					return fmt.Errorf("failed to read tool file: %w", err)
+				}
+				
+				if strings.HasSuffix(toolFile, ".yaml") || strings.HasSuffix(toolFile, ".yml") {
+					if err := yaml.Unmarshal(data, &newTool); err != nil {
+						return fmt.Errorf("failed to parse YAML tool: %w", err)
+					}
+				} else {
+					if err := json.Unmarshal(data, &newTool); err != nil {
+						return fmt.Errorf("failed to parse JSON tool: %w", err)
+					}
+				}
+			} else if toolURL != "" {
+				// Load tool from URL
+				return addToolFromURL(ctx, client, source, toolURL)
+			} else if toolName != "" && toolContent != "" {
+				// Create tool from command line parameters
+				newTool = kubiya.Tool{
+					Name:        toolName,
+					Description: toolDesc,
+					Type:        toolType,
+					Image:       toolImage,
+					Content:     toolContent,
+				}
+
+				// Parse arguments
+				for _, arg := range toolArgs {
+					parts := strings.Split(arg, ":")
+					if len(parts) >= 3 {
+						toolArg := kubiya.ToolArg{
+							Name:        parts[0],
+							Type:        parts[1],
+							Description: parts[2],
+							Required:    len(parts) > 3 && parts[3] == "true",
+						}
+						newTool.Args = append(newTool.Args, toolArg)
+					}
+				}
+
+				// Parse environment variables
+				newTool.Env = toolEnv
+			} else {
+				return fmt.Errorf("must specify --editor, --file, --url, or provide --name and --content")
+			}
+
+			// Add tool to existing inline tools
+			updatedTools := append(source.InlineTools, newTool)
+
+			// Update source with new tool
+			options := []kubiya.SourceOption{
+				kubiya.WithInlineTools(updatedTools),
+			}
+
+			updated, err := client.UpdateSource(ctx, sourceUUID, options...)
+			if err != nil {
+				return fmt.Errorf("failed to update source: %w", err)
+			}
+
+			fmt.Printf("%s Tool '%s' added successfully to source '%s'\n", 
+				style.SuccessStyle.Render("✅"), 
+				style.HighlightStyle.Render(newTool.Name),
+				style.HighlightStyle.Render(updated.Name))
+			
+			fmt.Printf("Source now has %d tools\n", len(updated.InlineTools))
+			return nil
+		},
+	}
+
+	cmd.Flags().StringVar(&toolFile, "file", "", "Path to tool definition file (YAML or JSON)")
+	cmd.Flags().StringVar(&toolURL, "url", "", "URL to tool definition")
+	cmd.Flags().StringVar(&toolName, "name", "", "Tool name")
+	cmd.Flags().StringVar(&toolDesc, "description", "", "Tool description")
+	cmd.Flags().StringVar(&toolType, "type", "docker", "Tool type")
+	cmd.Flags().StringVar(&toolImage, "image", "", "Docker image")
+	cmd.Flags().StringVar(&toolContent, "content", "", "Tool content/script")
+	cmd.Flags().StringSliceVar(&toolArgs, "arg", []string{}, "Tool arguments in format 'name:type:description[:required]'")
+	cmd.Flags().StringSliceVar(&toolEnv, "env", []string{}, "Environment variables")
+	cmd.Flags().BoolVar(&editor, "editor", false, "Open editor to create tool interactively")
+	cmd.Flags().StringVarP(&outputFormat, "output", "o", "text", "Output format (text|json)")
+
+	return cmd
+}
+
+// newInlineToolEditCommand edits an existing tool in an inline source
+func newInlineToolEditCommand(cfg *config.Config) *cobra.Command {
+	var (
+		outputFormat string
+	)
+
+	cmd := &cobra.Command{
+		Use:   "edit [source-uuid] [tool-name]",
+		Short: "✏️ Edit a tool in an inline source",
+		Long:  `Edit an existing tool in an inline source using your default editor.`,
+		Example: `  # Edit a tool
+  kubiya source inline edit abc-123 my-tool`,
+		Args: cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			sourceUUID := args[0]
+			toolName := args[1]
+			client := kubiya.NewClient(cfg)
+			ctx := cmd.Context()
+
+			// Get existing source
+			source, err := client.GetSourceMetadata(ctx, sourceUUID)
+			if err != nil {
+				return fmt.Errorf("failed to get source: %w", err)
+			}
+
+			// Find the tool
+			var targetTool *kubiya.Tool
+			var toolIndex int
+			for i, tool := range source.InlineTools {
+				if tool.Name == toolName {
+					targetTool = &tool
+					toolIndex = i
+					break
+				}
+			}
+
+			if targetTool == nil {
+				return fmt.Errorf("tool '%s' not found in source", toolName)
+			}
+
+			// Open editor with current tool content
+			updatedTool, err := editToolWithEditor(*targetTool)
+			if err != nil {
+				return fmt.Errorf("failed to edit tool: %w", err)
+			}
+
+			// Update the tool in the list
+			updatedTools := make([]kubiya.Tool, len(source.InlineTools))
+			copy(updatedTools, source.InlineTools)
+			updatedTools[toolIndex] = *updatedTool
+
+			// Update source
+			options := []kubiya.SourceOption{
+				kubiya.WithInlineTools(updatedTools),
+			}
+
+			_, err = client.UpdateSource(ctx, sourceUUID, options...)
+			if err != nil {
+				return fmt.Errorf("failed to update source: %w", err)
+			}
+
+			fmt.Printf("%s Tool '%s' updated successfully\n", 
+				style.SuccessStyle.Render("✅"), 
+				style.HighlightStyle.Render(updatedTool.Name))
+
+			return nil
+		},
+	}
+
+	cmd.Flags().StringVarP(&outputFormat, "output", "o", "text", "Output format (text|json)")
+	return cmd
+}
+
+// newInlineToolDeleteCommand deletes a tool from an inline source
+func newInlineToolDeleteCommand(cfg *config.Config) *cobra.Command {
+	var (
+		yes          bool
+		outputFormat string
+	)
+
+	cmd := &cobra.Command{
+		Use:     "delete [source-uuid] [tool-name]",
+		Aliases: []string{"del", "rm", "remove"},
+		Short:   "🗑️ Delete a tool from an inline source",
+		Long:    `Delete a specific tool from an inline source.`,
+		Example: `  # Delete a tool
+  kubiya source inline delete abc-123 my-tool
+
+  # Delete without confirmation
+  kubiya source inline delete abc-123 my-tool --yes`,
+		Args: cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			sourceUUID := args[0]
+			toolName := args[1]
+			client := kubiya.NewClient(cfg)
+			ctx := cmd.Context()
+
+			// Get existing source
+			source, err := client.GetSourceMetadata(ctx, sourceUUID)
+			if err != nil {
+				return fmt.Errorf("failed to get source: %w", err)
+			}
+
+			// Find the tool
+			var toolIndex = -1
+			for i, tool := range source.InlineTools {
+				if tool.Name == toolName {
+					toolIndex = i
+					break
+				}
+			}
+
+			if toolIndex == -1 {
+				return fmt.Errorf("tool '%s' not found in source", toolName)
+			}
+
+			// Confirm deletion
+			if !yes {
+				if !confirmYesNo(fmt.Sprintf("Delete tool '%s' from source '%s'?", toolName, source.Name)) {
+					return fmt.Errorf("deletion cancelled")
+				}
+			}
+
+			// Remove the tool
+			updatedTools := make([]kubiya.Tool, 0, len(source.InlineTools)-1)
+			for i, tool := range source.InlineTools {
+				if i != toolIndex {
+					updatedTools = append(updatedTools, tool)
+				}
+			}
+
+			// Update source
+			options := []kubiya.SourceOption{
+				kubiya.WithInlineTools(updatedTools),
+			}
+
+			updated, err := client.UpdateSource(ctx, sourceUUID, options...)
+			if err != nil {
+				return fmt.Errorf("failed to update source: %w", err)
+			}
+
+			fmt.Printf("%s Tool '%s' deleted successfully from source '%s'\n", 
+				style.SuccessStyle.Render("✅"), 
+				style.HighlightStyle.Render(toolName),
+				style.HighlightStyle.Render(updated.Name))
+			
+			fmt.Printf("Source now has %d tools\n", len(updated.InlineTools))
+			return nil
+		},
+	}
+
+	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "Skip confirmation")
+	cmd.Flags().StringVarP(&outputFormat, "output", "o", "text", "Output format (text|json)")
+	return cmd
+}
+
+// newInlineToolUpdateCommand updates a specific tool in an inline source
+func newInlineToolUpdateCommand(cfg *config.Config) *cobra.Command {
+	var (
+		toolFile     string
+		toolURL      string
+		outputFormat string
+	)
+
+	cmd := &cobra.Command{
+		Use:   "update [source-uuid] [tool-name]",
+		Short: "🔄 Update a specific tool in an inline source",
+		Long:  `Update a specific tool in an inline source from file or URL.`,
+		Example: `  # Update tool from file
+  kubiya source inline update abc-123 my-tool --file updated-tool.yaml
+
+  # Update tool from URL
+  kubiya source inline update abc-123 my-tool --url https://example.com/tool.yaml`,
+		Args: cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			sourceUUID := args[0]
+			toolName := args[1]
+			client := kubiya.NewClient(cfg)
+			ctx := cmd.Context()
+
+			if toolFile == "" && toolURL == "" {
+				return fmt.Errorf("must specify --file or --url")
+			}
+
+			// Get existing source
+			source, err := client.GetSourceMetadata(ctx, sourceUUID)
+			if err != nil {
+				return fmt.Errorf("failed to get source: %w", err)
+			}
+
+			// Find the tool
+			var toolIndex = -1
+			for i, tool := range source.InlineTools {
+				if tool.Name == toolName {
+					toolIndex = i
+					break
+				}
+			}
+
+			if toolIndex == -1 {
+				return fmt.Errorf("tool '%s' not found in source", toolName)
+			}
+
+			var updatedTool kubiya.Tool
+
+			if toolFile != "" {
+				// Load tool from file
+				data, err := os.ReadFile(toolFile)
+				if err != nil {
+					return fmt.Errorf("failed to read tool file: %w", err)
+				}
+				
+				if strings.HasSuffix(toolFile, ".yaml") || strings.HasSuffix(toolFile, ".yml") {
+					if err := yaml.Unmarshal(data, &updatedTool); err != nil {
+						return fmt.Errorf("failed to parse YAML tool: %w", err)
+					}
+				} else {
+					if err := json.Unmarshal(data, &updatedTool); err != nil {
+						return fmt.Errorf("failed to parse JSON tool: %w", err)
+					}
+				}
+			} else if toolURL != "" {
+				// Load tool from URL
+				fmt.Printf("%s Loading tool from URL: %s\n", style.InfoStyle.Render("🌐"), toolURL)
+
+				resp, err := http.Get(toolURL)
+				if err != nil {
+					return fmt.Errorf("failed to fetch tool from URL: %w", err)
+				}
+				defer resp.Body.Close()
+
+				if resp.StatusCode != http.StatusOK {
+					return fmt.Errorf("failed to fetch tool from URL: status %d", resp.StatusCode)
+				}
+
+				data, err := io.ReadAll(resp.Body)
+				if err != nil {
+					return fmt.Errorf("failed to read tool definition: %w", err)
+				}
+
+				contentType := resp.Header.Get("Content-Type")
+				if strings.Contains(contentType, "json") || strings.HasSuffix(toolURL, ".json") {
+					if err := json.Unmarshal(data, &updatedTool); err != nil {
+						return fmt.Errorf("failed to parse JSON tool definition: %w", err)
+					}
+				} else if strings.Contains(contentType, "yaml") || strings.HasSuffix(toolURL, ".yaml") || strings.HasSuffix(toolURL, ".yml") {
+					if err := yaml.Unmarshal(data, &updatedTool); err != nil {
+						return fmt.Errorf("failed to parse YAML tool definition: %w", err)
+					}
+				} else {
+					// Try YAML first, then JSON as fallback
+					if err := yaml.Unmarshal(data, &updatedTool); err != nil {
+						if jsonErr := json.Unmarshal(data, &updatedTool); jsonErr != nil {
+							return fmt.Errorf("failed to parse tool definition as YAML or JSON: YAML error: %v, JSON error: %v", err, jsonErr)
+						}
+					}
+				}
+
+				fmt.Printf("%s Loaded tool: %s\n", style.SuccessStyle.Render("✓"), updatedTool.Name)
+			}
+
+			// Update the tool in the list
+			updatedTools := make([]kubiya.Tool, len(source.InlineTools))
+			copy(updatedTools, source.InlineTools)
+			updatedTools[toolIndex] = updatedTool
+
+			// Update source
+			options := []kubiya.SourceOption{
+				kubiya.WithInlineTools(updatedTools),
+			}
+
+			_, err = client.UpdateSource(ctx, sourceUUID, options...)
+			if err != nil {
+				return fmt.Errorf("failed to update source: %w", err)
+			}
+
+			fmt.Printf("%s Tool '%s' updated successfully\n", 
+				style.SuccessStyle.Render("✅"), 
+				style.HighlightStyle.Render(updatedTool.Name))
+
+			return nil
+		},
+	}
+
+	cmd.Flags().StringVar(&toolFile, "file", "", "Path to tool definition file (YAML or JSON)")
+	cmd.Flags().StringVar(&toolURL, "url", "", "URL to tool definition")
+	cmd.Flags().StringVarP(&outputFormat, "output", "o", "text", "Output format (text|json)")
+	return cmd
+}
+
+// newInlineToolListCommand lists tools in an inline source
+func newInlineToolListCommand(cfg *config.Config) *cobra.Command {
+	var (
+		outputFormat string
+		detailed     bool
+	)
+
+	cmd := &cobra.Command{
+		Use:   "list [source-uuid]",
+		Short: "📋 List tools in an inline source",
+		Long:  `List all tools in a specific inline source with optional detailed view.`,
+		Example: `  # List tools
+  kubiya source inline list abc-123
+
+  # List with detailed info
+  kubiya source inline list abc-123 --detailed`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			sourceUUID := args[0]
+			client := kubiya.NewClient(cfg)
+			ctx := cmd.Context()
+
+			// Get source metadata
+			source, err := client.GetSourceMetadata(ctx, sourceUUID)
+			if err != nil {
+				return fmt.Errorf("failed to get source: %w", err)
+			}
+
+			switch outputFormat {
+			case "json":
+				return json.NewEncoder(os.Stdout).Encode(source.InlineTools)
+			default:
+				fmt.Printf("%s Tools in Source: %s\n\n", 
+					style.TitleStyle.Render("📋"), 
+					style.HighlightStyle.Render(source.Name))
+
+				if len(source.InlineTools) == 0 {
+					fmt.Println("No inline tools found in this source.")
+					return nil
+				}
+
+				w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+				for i, tool := range source.InlineTools {
+					fmt.Fprintf(w, "%d. %s\n", i+1, style.HighlightStyle.Render(tool.Name))
+					if tool.Description != "" {
+						fmt.Fprintf(w, "   %s\n", tool.Description)
+					}
+					fmt.Fprintf(w, "   Type: %s", tool.Type)
+					if tool.Image != "" {
+						fmt.Fprintf(w, ", Image: %s", tool.Image)
+					}
+					fmt.Fprintf(w, "\n")
+
+					if detailed {
+						if len(tool.Args) > 0 {
+							fmt.Fprintf(w, "   Arguments: %d\n", len(tool.Args))
+						}
+						if len(tool.Env) > 0 {
+							fmt.Fprintf(w, "   Environment: %d variables\n", len(tool.Env))
+						}
+					}
+					fmt.Fprintf(w, "\n")
+				}
+				return w.Flush()
+			}
+		},
+	}
+
+	cmd.Flags().StringVarP(&outputFormat, "output", "o", "text", "Output format (text|json)")
+	cmd.Flags().BoolVarP(&detailed, "detailed", "d", false, "Show detailed tool information")
+	return cmd
+}
+
+// Helper functions for editor integration
+func createToolWithEditor(ctx context.Context, client *kubiya.Client, source *kubiya.Source, cfg *config.Config) error {
+	// Create a template tool
+	template := kubiya.Tool{
+		Name:        "new-tool",
+		Description: "Tool description",
+		Type:        "docker",
+		Image:       "alpine:latest",
+		Content:     "echo 'Hello World'",
+		Args: []kubiya.ToolArg{
+			{
+				Name:        "example_arg",
+				Type:        "string",
+				Description: "Example argument",
+				Required:    false,
+			},
+		},
+		Env: []string{"EXAMPLE_VAR=value"},
+	}
+
+	// Open editor with template
+	newTool, err := editToolWithEditor(template)
+	if err != nil {
+		return err
+	}
+
+	// Add to source
+	updatedTools := append(source.InlineTools, *newTool)
+	options := []kubiya.SourceOption{
+		kubiya.WithInlineTools(updatedTools),
+	}
+
+	updated, err := client.UpdateSource(ctx, source.UUID, options...)
+	if err != nil {
+		return fmt.Errorf("failed to update source: %w", err)
+	}
+
+	fmt.Printf("%s Tool '%s' created successfully\n", 
+		style.SuccessStyle.Render("✅"), 
+		style.HighlightStyle.Render(newTool.Name))
+	
+	fmt.Printf("Source now has %d tools\n", len(updated.InlineTools))
+	return nil
+}
+
+func editToolWithEditor(tool kubiya.Tool) (*kubiya.Tool, error) {
+	// Serialize tool to YAML for editing
+	data, err := yaml.Marshal(tool)
+	if err != nil {
+		return nil, fmt.Errorf("failed to serialize tool: %w", err)
+	}
+
+	// Create temp file
+	tmpFile, err := os.CreateTemp("", "kubiya-tool-*.yaml")
+	if err != nil {
+		return nil, fmt.Errorf("failed to create temp file: %w", err)
+	}
+	defer os.Remove(tmpFile.Name())
+
+	// Write current tool content to temp file
+	if _, err := tmpFile.Write(data); err != nil {
+		return nil, fmt.Errorf("failed to write to temp file: %w", err)
+	}
+	tmpFile.Close()
+
+	// Open editor
+	editor := os.Getenv("EDITOR")
+	if editor == "" {
+		editor = "nano" // Default editor
+	}
+
+	cmd := exec.Command(editor, tmpFile.Name())
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("editor failed: %w", err)
+	}
+
+	// Read edited content
+	editedData, err := os.ReadFile(tmpFile.Name())
+	if err != nil {
+		return nil, fmt.Errorf("failed to read edited file: %w", err)
+	}
+
+	// Parse edited tool
+	var editedTool kubiya.Tool
+	if err := yaml.Unmarshal(editedData, &editedTool); err != nil {
+		return nil, fmt.Errorf("failed to parse edited tool: %w", err)
+	}
+
+	return &editedTool, nil
+}
+
+func addToolFromURL(ctx context.Context, client *kubiya.Client, source *kubiya.Source, url string) error {
+	fmt.Printf("%s Loading tool from URL: %s\n", style.InfoStyle.Render("🌐"), url)
+
+	// Fetch the tool definition from URL
+	resp, err := http.Get(url)
+	if err != nil {
+		return fmt.Errorf("failed to fetch tool from URL: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("failed to fetch tool from URL: status %d", resp.StatusCode)
+	}
+
+	// Parse the response based on content type
+	contentType := resp.Header.Get("Content-Type")
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("failed to read tool definition: %w", err)
+	}
+
+	var newTool kubiya.Tool
+
+	// Try to parse as JSON or YAML
+	if strings.Contains(contentType, "json") || strings.HasSuffix(url, ".json") {
+		if err := json.Unmarshal(data, &newTool); err != nil {
+			return fmt.Errorf("failed to parse JSON tool definition: %w", err)
+		}
+	} else if strings.Contains(contentType, "yaml") || strings.HasSuffix(url, ".yaml") || strings.HasSuffix(url, ".yml") {
+		if err := yaml.Unmarshal(data, &newTool); err != nil {
+			return fmt.Errorf("failed to parse YAML tool definition: %w", err)
+		}
+	} else {
+		// Try YAML first, then JSON as fallback
+		if err := yaml.Unmarshal(data, &newTool); err != nil {
+			if jsonErr := json.Unmarshal(data, &newTool); jsonErr != nil {
+				return fmt.Errorf("failed to parse tool definition as YAML or JSON: YAML error: %v, JSON error: %v", err, jsonErr)
+			}
+		}
+	}
+
+	fmt.Printf("%s Loaded tool: %s\n", style.SuccessStyle.Render("✓"), newTool.Name)
+
+	// Add tool to existing inline tools
+	updatedTools := append(source.InlineTools, newTool)
+
+	// Update source with new tool
+	options := []kubiya.SourceOption{
+		kubiya.WithInlineTools(updatedTools),
+	}
+
+	updated, err := client.UpdateSource(ctx, source.UUID, options...)
+	if err != nil {
+		return fmt.Errorf("failed to update source: %w", err)
+	}
+
+	fmt.Printf("%s Tool '%s' added successfully to source '%s'\n", 
+		style.SuccessStyle.Render("✅"), 
+		style.HighlightStyle.Render(newTool.Name),
+		style.HighlightStyle.Render(updated.Name))
+	
+	fmt.Printf("Source now has %d tools\n", len(updated.InlineTools))
+	return nil
+}
+
 
 // Min returns the smaller of two integers
 func Min(a, b int) int {
