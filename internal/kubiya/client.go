@@ -354,14 +354,15 @@ func (c *Client) delete(ctx context.Context, path string) (*http.Response, error
 
 // Example method: retrieving agents
 func (c *Client) GetAgents(ctx context.Context) ([]Agent, error) {
-	resp, err := c.get(ctx, "/v1/agents")
+	resp, err := c.get(ctx, "/agents?mode=all")
 	if err != nil {
 		if c.debug {
 			fmt.Printf("Error getting agents: %v\n", err)
 			fmt.Printf("BaseURL: %s\n", c.baseURL)
-			fmt.Printf("Full URL: %s/agents\n", c.baseURL)
+			fmt.Printf("Full URL: %s/agents?mode=all\n", c.baseURL)
 			fmt.Printf("API Key present: %v\n", c.cfg.APIKey != "")
 		}
+		fmt.Printf("DEBUG: GetAgents error from client.go line 365\n")
 		return nil, fmt.Errorf("failed to get agents: %w", err)
 	}
 	defer resp.Body.Close()
