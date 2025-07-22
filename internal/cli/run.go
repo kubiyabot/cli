@@ -12,14 +12,15 @@ import (
 
 	"github.com/kubiyabot/cli/internal/config"
 	"github.com/kubiyabot/cli/internal/kubiya"
+	"github.com/kubiyabot/cli/internal/sentry"
 	"github.com/kubiyabot/cli/internal/style"
 	"github.com/spf13/cobra"
 )
 
 func newRunCommand(cfg *config.Config) *cobra.Command {
 	var (
-		agentID   string
-		agentName string
+		agentID      string
+		agentName    string
 		argValues    []string
 		clearSession bool
 		sessionID    string
@@ -262,6 +263,17 @@ func newRunCommand(cfg *config.Config) *cobra.Command {
 					if debug {
 						fmt.Printf("\n❌ Debug: Error received: %s\n", msg.Error)
 					}
+
+					// Capture error to Sentry
+					sentry.CaptureError(fmt.Errorf("run command error: %s", msg.Error), map[string]string{
+						"operation": "run_tool",
+						"tool_name": toolName,
+						"agent_id":  agentID,
+					}, map[string]interface{}{
+						"session_id": sessionID,
+						"arguments":  argMap,
+					})
+
 					fmt.Print(style.ErrorStyle.Render("\n❌ Error: " + msg.Error + "\n"))
 					return fmt.Errorf("error from server: %s", msg.Error)
 				}
