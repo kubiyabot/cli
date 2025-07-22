@@ -3,6 +3,7 @@ package cli
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
@@ -23,6 +24,7 @@ import (
 
 	"github.com/kubiyabot/cli/internal/config"
 	"github.com/kubiyabot/cli/internal/kubiya"
+	"github.com/kubiyabot/cli/internal/sentry"
 	"github.com/kubiyabot/cli/internal/style"
 	"github.com/kubiyabot/cli/internal/tui"
 	"github.com/mattn/go-isatty"
@@ -144,14 +146,14 @@ func isAgentErrorMessage(content string) bool {
 	}
 
 	// Also check for generic "sorry" combined with error indicators
-	if strings.Contains(lowerContent, "sorry") && 
-		(strings.Contains(lowerContent, "error") || 
-		 strings.Contains(lowerContent, "problem") || 
-		 strings.Contains(lowerContent, "issue") || 
-		 strings.Contains(lowerContent, "failed") ||
-		 strings.Contains(lowerContent, "unable") ||
-		 strings.Contains(lowerContent, "couldn't") ||
-		 strings.Contains(lowerContent, "can't")) {
+	if strings.Contains(lowerContent, "sorry") &&
+		(strings.Contains(lowerContent, "error") ||
+			strings.Contains(lowerContent, "problem") ||
+			strings.Contains(lowerContent, "issue") ||
+			strings.Contains(lowerContent, "failed") ||
+			strings.Contains(lowerContent, "unable") ||
+			strings.Contains(lowerContent, "couldn't") ||
+			strings.Contains(lowerContent, "can't")) {
 		return true
 	}
 
@@ -192,7 +194,7 @@ func formatToolParameters(toolArgs string) string {
 	}
 
 	var formatted []string
-	
+
 	for k, v := range argMap {
 		valueStr := fmt.Sprintf("%v", v)
 
@@ -252,15 +254,15 @@ func formatLiveJSON(jsonStr string) string {
 	if jsonStr == "" {
 		return ""
 	}
-	
+
 	// Clean up common escape sequences for better display
 	cleaned := strings.ReplaceAll(jsonStr, "\\n", " ")
 	cleaned = strings.ReplaceAll(cleaned, "\\\"", `"`)
 	cleaned = strings.ReplaceAll(cleaned, "\\t", " ")
-	
+
 	// Remove extra whitespace but preserve structure while making it more compact
 	cleaned = strings.TrimSpace(cleaned)
-	
+
 	// For very long content, show a more intelligent truncation
 	if len(cleaned) > 120 {
 		// Try to find a good break point (after comma, before closing brace)
@@ -270,7 +272,7 @@ func formatLiveJSON(jsonStr string) string {
 			cleaned = cleaned[:117] + "..."
 		}
 	}
-	
+
 	return cleaned
 }
 
@@ -285,16 +287,16 @@ func showWorkingAnimation(toolName string) {
 	stopChan := make(chan bool, 1)
 	workingAnimations[toolName] = stopChan
 	workingAnimationsMu.Unlock()
-	
+
 	defer func() {
 		workingAnimationsMu.Lock()
 		delete(workingAnimations, toolName)
 		workingAnimationsMu.Unlock()
 	}()
-	
+
 	workingMessages := []string{
 		"Analyzing request...",
-		"Planning approach...", 
+		"Planning approach...",
 		"Generating parameters...",
 		"Optimizing strategy...",
 		"Building context...",
@@ -303,24 +305,24 @@ func showWorkingAnimation(toolName string) {
 		"Computing...",
 		"Preparing...",
 	}
-	
+
 	spinners := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
 	messageIndex := 0
 	spinnerIndex := 0
-	
+
 	// Show initial state immediately
 	fmt.Printf("\r⚡ %s %s %s",
 		style.ToolExecutingStyle.Render(toolName),
 		style.SpinnerStyle.Render(spinners[spinnerIndex]),
 		style.DimStyle.Render(workingMessages[messageIndex]))
 	os.Stdout.Sync()
-	
-	ticker := time.NewTicker(500 * time.Millisecond) // Change message every 500ms
+
+	ticker := time.NewTicker(500 * time.Millisecond)       // Change message every 500ms
 	spinnerTicker := time.NewTicker(80 * time.Millisecond) // Spin every 80ms (faster for more dynamic feel)
-	
+
 	defer ticker.Stop()
 	defer spinnerTicker.Stop()
-	
+
 	for {
 		select {
 		case <-stopChan:
@@ -333,7 +335,7 @@ func showWorkingAnimation(toolName string) {
 				style.SpinnerStyle.Render(spinners[spinnerIndex]),
 				style.DimStyle.Render(workingMessages[messageIndex]))
 			os.Stdout.Sync()
-			
+
 		case <-spinnerTicker.C:
 			// Rotate spinner
 			spinnerIndex = (spinnerIndex + 1) % len(spinners)
@@ -350,7 +352,7 @@ func showWorkingAnimation(toolName string) {
 func stopWorkingAnimation(toolName string) {
 	workingAnimationsMu.Lock()
 	defer workingAnimationsMu.Unlock()
-	
+
 	if stopChan, exists := workingAnimations[toolName]; exists {
 		select {
 		case stopChan <- true:
@@ -363,7 +365,7 @@ func stopWorkingAnimation(toolName string) {
 func isAnimationRunning(toolName string) bool {
 	workingAnimationsMu.Lock()
 	defer workingAnimationsMu.Unlock()
-	
+
 	_, exists := workingAnimations[toolName]
 	return exists
 }
@@ -1604,1538 +1606,1550 @@ For inline agents, use --inline with --tools-file or --tools-json to provide cus
   kubiya chat --inline --tools-file https://github.com/user/tools/blob/main/devops-tools.json \
     --description "DevOps Assistant" -m "Deploy the application"`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			// Silence usage on errors for clean error messages
-			cmd.SilenceUsage = true
+			// Wrap in Sentry transaction for error tracking and performance monitoring
+			return sentry.WithTransaction(cmd.Context(), "chat_command", func(ctx context.Context) error {
+				// Silence usage on errors for clean error messages
+				cmd.SilenceUsage = true
 
-			cfg.Debug = cfg.Debug || debug
+				cfg.Debug = cfg.Debug || debug
 
-			// Check for automation mode (either --silent flag or KUBIYA_AUTOMATION env var)
-			automationMode := silent || os.Getenv("KUBIYA_AUTOMATION") != ""
+				// Check for automation mode (either --silent flag or KUBIYA_AUTOMATION env var)
+				automationMode := silent || os.Getenv("KUBIYA_AUTOMATION") != ""
 
-			if interactive {
-				chatUI := tui.NewEnhancedChatUI(cfg)
-				return chatUI.Run()
-			}
+				// Add breadcrumb for chat command execution
+				sentry.AddBreadcrumb("chat", "Chat command started", map[string]interface{}{
+					"interactive":     interactive,
+					"inline":          inline,
+					"automation_mode": automationMode,
+					"agent_id":        agentID,
+					"agent_name":      agentName,
+				})
 
-			// Handle inline agent validation
-			if inline {
-				if agentID != "" || agentName != "" {
-					return fmt.Errorf("cannot use --inline with --agent or --name")
+				if interactive {
+					chatUI := tui.NewEnhancedChatUI(cfg)
+					return chatUI.Run()
 				}
 
-				// Validate agent spec vs tools specification
-				if agentSpec != "" {
-					// Agent spec provided - tools may be included or separate
-					if toolsJSON != "" {
-						return fmt.Errorf("cannot use both --agent-spec and --tools-json (tools should be in agent spec or separate --tools-file)")
+				// Handle inline agent validation
+				if inline {
+					if agentID != "" || agentName != "" {
+						return fmt.Errorf("cannot use --inline with --agent or --name")
 					}
-				} else {
-					// No agent spec - must provide tools
-					if toolsFile == "" && toolsJSON == "" {
-						return fmt.Errorf("--inline requires either --agent-spec or tools specification (--tools-file or --tools-json)")
+
+					// Validate agent spec vs tools specification
+					if agentSpec != "" {
+						// Agent spec provided - tools may be included or separate
+						if toolsJSON != "" {
+							return fmt.Errorf("cannot use both --agent-spec and --tools-json (tools should be in agent spec or separate --tools-file)")
+						}
+					} else {
+						// No agent spec - must provide tools
+						if toolsFile == "" && toolsJSON == "" {
+							return fmt.Errorf("--inline requires either --agent-spec or tools specification (--tools-file or --tools-json)")
+						}
+						if toolsFile != "" && toolsJSON != "" {
+							return fmt.Errorf("cannot use both --tools-file and --tools-json")
+						}
 					}
-					if toolsFile != "" && toolsJSON != "" {
-						return fmt.Errorf("cannot use both --tools-file and --tools-json")
+					if description == "" {
+						description = "Inline agent"
 					}
-				}
-				if description == "" {
-					description = "Inline agent"
-				}
-				if len(runners) == 0 {
-					runners = []string{"kubiyamanaged"}
-				}
-				if llmModel == "" {
-					llmModel = "azure/gpt-4-32k"
-				}
-				if len(integrations) == 0 {
-					integrations = []string{}
-				}
-			}
-
-			// Session storage file path
-			sessionFile := filepath.Join(os.TempDir(), "kubiya_last_session")
-
-			// Handle clear session flag
-			if clearSession {
-				if err := os.Remove(sessionFile); err != nil && !os.IsNotExist(err) {
-					return fmt.Errorf("failed to clear session: %w", err)
-				}
-				fmt.Println("Session cleared.")
-				return nil
-			}
-
-			// Load last session ID if autoSession is enabled
-			if sessionID == "" && cfg.AutoSession {
-				if data, err := os.ReadFile(sessionFile); err == nil {
-					sessionID = string(data)
-					if !automationMode {
-						fmt.Printf("Resuming session ID: %s\n", sessionID)
+					if len(runners) == 0 {
+						runners = []string{"kubiyamanaged"}
+					}
+					if llmModel == "" {
+						llmModel = "azure/gpt-4-32k"
+					}
+					if len(integrations) == 0 {
+						integrations = []string{}
 					}
 				}
-			}
 
-			// Handle stdin input
-			if stdinInput {
-				stat, _ := os.Stdin.Stat()
-				if (stat.Mode() & os.ModeCharDevice) != 0 {
-					return fmt.Errorf("no stdin data provided")
-				}
+				// Session storage file path
+				sessionFile := filepath.Join(os.TempDir(), "kubiya_last_session")
 
-				reader := bufio.NewReader(os.Stdin)
-				var sb strings.Builder
-				for {
-					line, err := reader.ReadString('\n')
-					if err != nil && err != io.EOF {
-						return fmt.Errorf("error reading stdin: %w", err)
+				// Handle clear session flag
+				if clearSession {
+					if err := os.Remove(sessionFile); err != nil && !os.IsNotExist(err) {
+						return fmt.Errorf("failed to clear session: %w", err)
 					}
-					sb.WriteString(line)
-					if err == io.EOF {
-						break
+					fmt.Println("Session cleared.")
+					return nil
+				}
+
+				// Load last session ID if autoSession is enabled
+				if sessionID == "" && cfg.AutoSession {
+					if data, err := os.ReadFile(sessionFile); err == nil {
+						sessionID = string(data)
+						if !automationMode {
+							fmt.Printf("Resuming session ID: %s\n", sessionID)
+						}
 					}
 				}
-				message = sb.String()
-			}
 
-			// Handle prompt file input
-			if promptFile != "" {
-				if message != "" {
-					return fmt.Errorf("cannot use both --message and --prompt-file")
-				}
+				// Handle stdin input
 				if stdinInput {
-					return fmt.Errorf("cannot use both --stdin and --prompt-file")
-				}
-
-				promptContent, err := readPromptFile(promptFile, templateVars)
-				if err != nil {
-					return err
-				}
-				message = promptContent
-
-				if debug {
-					fmt.Printf("🔍 Processed prompt from file: %s (%d characters)\n", promptFile, len(message))
-				}
-			}
-
-			// Validate input
-			if message == "" && !stdinInput {
-				return fmt.Errorf("message is required (use -m, --prompt-file, --stdin, or pipe input)")
-			}
-
-			// Validate permission level
-			if permissionLevel != "" && permissionLevel != "read" && permissionLevel != "readwrite" && permissionLevel != "ask" {
-				return fmt.Errorf("invalid permission level: %s (must be 'read', 'readwrite', or 'ask')", permissionLevel)
-			}
-			if permissionLevel == "" {
-				permissionLevel = "read" // Default to read-only
-			}
-
-			// Load context from all sources
-			context, err := expandAndReadFiles(contextFiles)
-			if err != nil {
-				return fmt.Errorf("failed to load context: %w", err)
-			}
-
-			// Enhance message with permission level context
-			enhancedMessage := message
-			if !interactive {
-				permissionMsg := ""
-				switch permissionLevel {
-				case "read":
-					permissionMsg = "\n\n[SYSTEM] You have permission to execute READ-ONLY operations (kubectl get, describe, logs, etc.). You should execute these operations directly without asking for confirmation."
-				case "readwrite":
-					permissionMsg = "\n\n[SYSTEM] You have FULL PERMISSION to execute any operations including read-write operations (kubectl apply, delete, create, etc.). Execute operations directly without asking for confirmation."
-				case "ask":
-					permissionMsg = "\n\n[SYSTEM] You should ASK for confirmation before executing any operations. Present the commands you want to run and wait for user approval."
-				}
-				enhancedMessage = message + permissionMsg
-			}
-
-			// Setup client
-			client := kubiya.NewClient(cfg)
-
-			// Add these variables
-			var (
-				toolExecutions map[string]*toolExecution = make(map[string]*toolExecution)
-				messageBuffer  map[string]*chatBuffer    = make(map[string]*chatBuffer)
-				noColor        bool                      = !isatty.IsTerminal(os.Stdout.Fd())
-				connStatus     *connectionStatus
-				toolStats      = &toolCallStats{
-					toolTypes: make(map[string]int),
-				}
-				rawEventLogging = os.Getenv("KUBIYA_RAW_EVENTS") == "1" || debug
-				msgChan         <-chan kubiya.ChatMessage
-				inlineAgent     map[string]interface{}
-			)
-
-			// Handle inline agent
-			if inline {
-				var tools []kubiya.Tool
-
-				// Load agent specification if provided
-				if agentSpec != "" {
-					if debug {
-						fmt.Printf("🔍 Loading agent specification from: %s\n", agentSpec)
+					stat, _ := os.Stdin.Stat()
+					if (stat.Mode() & os.ModeCharDevice) != 0 {
+						return fmt.Errorf("no stdin data provided")
 					}
 
-					// Load and process agent spec with templating
-					agentSpecData, err := loadAgentSpecFromSource(agentSpec, templateVars)
+					reader := bufio.NewReader(os.Stdin)
+					var sb strings.Builder
+					for {
+						line, err := reader.ReadString('\n')
+						if err != nil && err != io.EOF {
+							return fmt.Errorf("error reading stdin: %w", err)
+						}
+						sb.WriteString(line)
+						if err == io.EOF {
+							break
+						}
+					}
+					message = sb.String()
+				}
+
+				// Handle prompt file input
+				if promptFile != "" {
+					if message != "" {
+						return fmt.Errorf("cannot use both --message and --prompt-file")
+					}
+					if stdinInput {
+						return fmt.Errorf("cannot use both --stdin and --prompt-file")
+					}
+
+					promptContent, err := readPromptFile(promptFile, templateVars)
 					if err != nil {
 						return err
 					}
+					message = promptContent
 
-					// Use the loaded agent specification
-					inlineAgent = agentSpecData
+					if debug {
+						fmt.Printf("🔍 Processed prompt from file: %s (%d characters)\n", promptFile, len(message))
+					}
+				}
 
-					// Check if tools are included in agent spec
-					if toolsData, exists := agentSpecData["tools"]; exists {
+				// Validate input
+				if message == "" && !stdinInput {
+					return fmt.Errorf("message is required (use -m, --prompt-file, --stdin, or pipe input)")
+				}
+
+				// Validate permission level
+				if permissionLevel != "" && permissionLevel != "read" && permissionLevel != "readwrite" && permissionLevel != "ask" {
+					return fmt.Errorf("invalid permission level: %s (must be 'read', 'readwrite', or 'ask')", permissionLevel)
+				}
+				if permissionLevel == "" {
+					permissionLevel = "read" // Default to read-only
+				}
+
+				// Load context from all sources
+				context, err := expandAndReadFiles(contextFiles)
+				if err != nil {
+					return fmt.Errorf("failed to load context: %w", err)
+				}
+
+				// Enhance message with permission level context
+				enhancedMessage := message
+				if !interactive {
+					permissionMsg := ""
+					switch permissionLevel {
+					case "read":
+						permissionMsg = "\n\n[SYSTEM] You have permission to execute READ-ONLY operations (kubectl get, describe, logs, etc.). You should execute these operations directly without asking for confirmation."
+					case "readwrite":
+						permissionMsg = "\n\n[SYSTEM] You have FULL PERMISSION to execute any operations including read-write operations (kubectl apply, delete, create, etc.). Execute operations directly without asking for confirmation."
+					case "ask":
+						permissionMsg = "\n\n[SYSTEM] You should ASK for confirmation before executing any operations. Present the commands you want to run and wait for user approval."
+					}
+					enhancedMessage = message + permissionMsg
+				}
+
+				// Setup client
+				client := kubiya.NewClient(cfg)
+
+				// Add these variables
+				var (
+					toolExecutions map[string]*toolExecution = make(map[string]*toolExecution)
+					messageBuffer  map[string]*chatBuffer    = make(map[string]*chatBuffer)
+					noColor        bool                      = !isatty.IsTerminal(os.Stdout.Fd())
+					connStatus     *connectionStatus
+					toolStats      = &toolCallStats{
+						toolTypes: make(map[string]int),
+					}
+					rawEventLogging = os.Getenv("KUBIYA_RAW_EVENTS") == "1" || debug
+					msgChan         <-chan kubiya.ChatMessage
+					inlineAgent     map[string]interface{}
+				)
+
+				// Handle inline agent
+				if inline {
+					var tools []kubiya.Tool
+
+					// Load agent specification if provided
+					if agentSpec != "" {
 						if debug {
-							fmt.Printf("🔍 Found tools in agent specification\n")
+							fmt.Printf("🔍 Loading agent specification from: %s\n", agentSpec)
 						}
 
-						// Convert tools data to proper format
-						switch toolsArray := toolsData.(type) {
-						case []interface{}:
-							// Tools are already in the spec - convert to kubiya.Tool format for validation
-							toolsJSON, err := json.Marshal(toolsArray)
-							if err != nil {
-								return fmt.Errorf("failed to marshal tools from agent spec: %w", err)
+						// Load and process agent spec with templating
+						agentSpecData, err := loadAgentSpecFromSource(agentSpec, templateVars)
+						if err != nil {
+							return err
+						}
+
+						// Use the loaded agent specification
+						inlineAgent = agentSpecData
+
+						// Check if tools are included in agent spec
+						if toolsData, exists := agentSpecData["tools"]; exists {
+							if debug {
+								fmt.Printf("🔍 Found tools in agent specification\n")
 							}
 
-							if err := json.Unmarshal(toolsJSON, &tools); err != nil {
-								return fmt.Errorf("failed to parse tools from agent spec: %w", err)
-							}
+							// Convert tools data to proper format
+							switch toolsArray := toolsData.(type) {
+							case []interface{}:
+								// Tools are already in the spec - convert to kubiya.Tool format for validation
+								toolsJSON, err := json.Marshal(toolsArray)
+								if err != nil {
+									return fmt.Errorf("failed to marshal tools from agent spec: %w", err)
+								}
 
-							// Validate tools
-							for i, tool := range tools {
-								if err := validateTool(tool); err != nil {
-									return fmt.Errorf("tool validation failed for tool %d (%s) from agent spec: %w", i, tool.Name, err)
+								if err := json.Unmarshal(toolsJSON, &tools); err != nil {
+									return fmt.Errorf("failed to parse tools from agent spec: %w", err)
+								}
+
+								// Validate tools
+								for i, tool := range tools {
+									if err := validateTool(tool); err != nil {
+										return fmt.Errorf("tool validation failed for tool %d (%s) from agent spec: %w", i, tool.Name, err)
+									}
+								}
+
+							default:
+								return fmt.Errorf("tools in agent specification must be an array")
+							}
+						} else {
+							// No tools in agent spec, check for separate tools file
+							if toolsFile != "" {
+								tools, err = loadToolsFromSourceWithTemplating(toolsFile, templateVars)
+								if err != nil {
+									return err
+								}
+							} else {
+								// Try to discover tools.json in same directory
+								discoveredToolsPath, err := discoverToolsFile(agentSpec)
+								if err != nil {
+									return fmt.Errorf("failed to discover tools file: %w", err)
+								}
+
+								if discoveredToolsPath != "" {
+									if debug {
+										fmt.Printf("🔍 Auto-discovered tools file: %s\n", discoveredToolsPath)
+									}
+									tools, err = loadToolsFromSourceWithTemplating(discoveredToolsPath, templateVars)
+									if err != nil {
+										return err
+									}
+								} else if debug {
+									fmt.Printf("⚠️ No tools found in agent spec and no tools.json discovered\n")
 								}
 							}
-
-						default:
-							return fmt.Errorf("tools in agent specification must be an array")
 						}
+
 					} else {
-						// No tools in agent spec, check for separate tools file
+						// Traditional inline agent mode - load tools separately
 						if toolsFile != "" {
 							tools, err = loadToolsFromSourceWithTemplating(toolsFile, templateVars)
 							if err != nil {
 								return err
 							}
-						} else {
-							// Try to discover tools.json in same directory
-							discoveredToolsPath, err := discoverToolsFile(agentSpec)
-							if err != nil {
-								return fmt.Errorf("failed to discover tools file: %w", err)
+						} else if toolsJSON != "" {
+							if debug {
+								fmt.Printf("🔍 Parsing tools from JSON string\n")
 							}
 
-							if discoveredToolsPath != "" {
-								if debug {
-									fmt.Printf("🔍 Auto-discovered tools file: %s\n", discoveredToolsPath)
+							// Process templating on tools JSON string
+							processedToolsJSON, err := processTemplateContent(toolsJSON, templateVars, "tools JSON string")
+							if err != nil {
+								return fmt.Errorf("failed to process tools JSON templating: %w", err)
+							}
+
+							tools, err = parseTools(processedToolsJSON)
+							if err != nil {
+								return fmt.Errorf("failed to parse tools from JSON: %w", err)
+							}
+
+							// Validate tools from JSON string
+							for i, tool := range tools {
+								if err := validateTool(tool); err != nil {
+									return fmt.Errorf("tool validation failed for tool %d (%s): %w", i, tool.Name, err)
 								}
-								tools, err = loadToolsFromSourceWithTemplating(discoveredToolsPath, templateVars)
-								if err != nil {
-									return err
-								}
-							} else if debug {
-								fmt.Printf("⚠️ No tools found in agent spec and no tools.json discovered\n")
 							}
 						}
 					}
 
-				} else {
-					// Traditional inline agent mode - load tools separately
-					if toolsFile != "" {
-						tools, err = loadToolsFromSourceWithTemplating(toolsFile, templateVars)
+					// Parse environment variables
+					envVarsMap, err := parseEnvVars(envVars)
+					if err != nil {
+						return fmt.Errorf("failed to parse environment variables: %w", err)
+					}
+
+					// Add KUBIYA_RUNNER if runners are specified
+					if len(runners) > 0 {
+						envVarsMap["KUBIYA_RUNNER"] = runners[0]
+					}
+
+					// Encode context files to base64 if provided
+					var contextFiles []map[string]interface{}
+					if len(context) > 0 {
+						contextFiles, err = encodeFilesToBase64(context)
 						if err != nil {
+							return fmt.Errorf("failed to encode context files: %w", err)
+						}
+						if debug && len(contextFiles) > 0 {
+							fmt.Printf("📁 Encoded %d context files for inline agent\n", len(contextFiles))
+						}
+					}
+
+					if debug {
+						fmt.Printf("🤖 Creating inline agent with %d tools\n", len(tools))
+						fmt.Printf("📋 Tools: %v\n", func() []string {
+							names := make([]string, len(tools))
+							for i, t := range tools {
+								names[i] = t.Name
+							}
+							return names
+						}())
+					}
+
+					// Convert tools to the correct format for inline agent
+					inlineTools := make([]map[string]interface{}, len(tools))
+					for i, tool := range tools {
+						// Ensure args is an empty slice if nil
+						args := tool.Args
+						if args == nil {
+							args = []kubiya.ToolArg{}
+						}
+
+						// Ensure env is an empty slice if nil
+						env := tool.Env
+						if env == nil {
+							env = []string{}
+						}
+
+						// Start with existing with_files from the tool
+						withFiles := []interface{}{}
+						if tool.WithFiles != nil {
+							switch v := tool.WithFiles.(type) {
+							case []interface{}:
+								withFiles = v
+							case []string:
+								for _, f := range v {
+									withFiles = append(withFiles, f)
+								}
+							case map[string]interface{}:
+								withFiles = append(withFiles, v)
+							default:
+								withFiles = []interface{}{v}
+							}
+						}
+
+						// Add context files to with_files for each tool
+						for _, contextFile := range contextFiles {
+							withFiles = append(withFiles, contextFile)
+						}
+
+						// Start with existing with_volumes from the tool
+						withVolumes := []interface{}{}
+						if tool.WithVolumes != nil {
+							switch v := tool.WithVolumes.(type) {
+							case []interface{}:
+								withVolumes = v
+							case []string:
+								for _, vol := range v {
+									withVolumes = append(withVolumes, vol)
+								}
+							case map[string]interface{}:
+								withVolumes = append(withVolumes, v)
+							default:
+								withVolumes = []interface{}{v}
+							}
+						}
+
+						// Add shared volume by default for inline agents
+						sharedVolume := map[string]interface{}{
+							"path": "/shared",
+							"name": "shared-data",
+						}
+						withVolumes = append(withVolumes, sharedVolume)
+
+						inlineTools[i] = map[string]interface{}{
+							"name":         tool.Name,
+							"alias":        tool.Alias,
+							"description":  tool.Description,
+							"type":         tool.Type,
+							"content":      tool.Content,
+							"args":         args,
+							"env":          env,
+							"image":        tool.Image,
+							"with_files":   withFiles,
+							"with_volumes": withVolumes,
+						}
+					}
+
+					// Create or update inline agent request
+					if inlineAgent == nil {
+						// Traditional inline agent mode - create from flags
+						inlineAgent = map[string]interface{}{
+							"uuid":                  nil,
+							"name":                  "inline",
+							"description":           description,
+							"ai_instructions":       aiInstructions,
+							"tools":                 inlineTools,
+							"runners":               runners,
+							"integrations":          integrations,
+							"secrets":               secrets,
+							"environment_variables": envVarsMap,
+							"llm_model":             llmModel,
+							"is_debug_mode":         true, // Always true for inline agents to capture tool output
+							"owners":                []string{},
+							"allowed_users":         []string{},
+							"allowed_groups":        []string{},
+							"starters":              []interface{}{},
+							"tasks":                 []string{},
+							"sources":               []string{},
+							"links":                 []string{},
+							"image":                 "",
+							"additional_data":       map[string]interface{}{},
+						}
+					} else {
+						// Agent spec mode - merge with flag overrides and set tools
+						// Always use inlineTools format which includes proper volumes and structure
+						inlineAgent["tools"] = inlineTools
+
+						// Override with command line flags if provided
+						if description != "" && description != "Inline agent" {
+							inlineAgent["description"] = description
+						}
+						if aiInstructions != "" {
+							inlineAgent["ai_instructions"] = aiInstructions
+						}
+						if len(runners) > 0 {
+							inlineAgent["runners"] = runners
+						}
+						if len(integrations) > 0 {
+							inlineAgent["integrations"] = integrations
+						}
+						if len(secrets) > 0 {
+							inlineAgent["secrets"] = secrets
+						}
+						if len(envVarsMap) > 0 {
+							// Merge with existing environment variables
+							if existingEnv, ok := inlineAgent["environment_variables"].(map[string]interface{}); ok {
+								for k, v := range envVarsMap {
+									existingEnv[k] = v
+								}
+							} else {
+								inlineAgent["environment_variables"] = envVarsMap
+							}
+						}
+						if llmModel != "" {
+							inlineAgent["llm_model"] = llmModel
+						}
+
+						// Ensure debug mode is enabled
+						inlineAgent["is_debug_mode"] = true
+
+						// Set defaults for missing fields to match traditional inline agent structure
+						if inlineAgent["name"] == nil {
+							inlineAgent["name"] = "inline"
+						}
+						if inlineAgent["owners"] == nil {
+							inlineAgent["owners"] = []string{}
+						}
+						if inlineAgent["allowed_users"] == nil {
+							inlineAgent["allowed_users"] = []string{}
+						}
+						if inlineAgent["allowed_groups"] == nil {
+							inlineAgent["allowed_groups"] = []string{}
+						}
+						if inlineAgent["starters"] == nil {
+							inlineAgent["starters"] = []interface{}{}
+						}
+						if inlineAgent["tasks"] == nil {
+							inlineAgent["tasks"] = []string{}
+						}
+						if inlineAgent["sources"] == nil {
+							inlineAgent["sources"] = []string{}
+						}
+						if inlineAgent["links"] == nil {
+							inlineAgent["links"] = []string{}
+						}
+						if inlineAgent["image"] == nil {
+							inlineAgent["image"] = ""
+						}
+						if inlineAgent["additional_data"] == nil {
+							inlineAgent["additional_data"] = map[string]interface{}{}
+						}
+					}
+
+					if debug {
+						fmt.Printf("🔍 CLI: Creating inline agent with payload:\n")
+						if jsonPayload, err := json.MarshalIndent(inlineAgent, "", "  "); err == nil {
+							fmt.Printf("Agent Definition: %s\n", string(jsonPayload))
+						}
+						fmt.Printf("Message: %s\n", message)
+						fmt.Printf("SessionID: %s\n", sessionID)
+						fmt.Printf("Context files: %d\n", len(context))
+						fmt.Printf("User Email: %s\n", os.Getenv("KUBIYA_USER_EMAIL"))
+						fmt.Printf("Organization: %s\n", os.Getenv("KUBIYA_ORG"))
+						apiKey := os.Getenv("KUBIYA_API_KEY")
+						if len(apiKey) > 20 {
+							fmt.Printf("API Key: %s\n", apiKey[:20]+"...")
+						} else {
+							fmt.Printf("API Key: %s\n", apiKey)
+						}
+						fmt.Printf("Base URL: %s\n", cfg.BaseURL)
+						fmt.Printf("Debug mode: %v\n", debug)
+					}
+
+					msgChan, err = client.SendInlineAgentMessage(cmd.Context(), message, sessionID, context, inlineAgent)
+					if err != nil {
+						// If inline agent connection fails, retry for retryable errors
+						if isRetryableError(err) {
+							if !automationMode {
+								fmt.Printf("\r%s\n", style.WarningStyle.Render("⚠️  Inline agent connection failed, retrying..."))
+							}
+							// For inline agents, we retry by sending the message again with exponential backoff
+							for retryAttempt := 1; retryAttempt <= retries; retryAttempt++ {
+								backoffDelay := calculateBackoffDelay(retryAttempt - 1)
+								if !automationMode {
+									fmt.Printf("%s\n", style.SpinnerStyle.Render(
+										fmt.Sprintf("🔄 Retrying inline agent connection (attempt %d/%d) in %.1fs...",
+											retryAttempt, retries, backoffDelay.Seconds())))
+								}
+								time.Sleep(backoffDelay)
+
+								msgChan, err = client.SendInlineAgentMessage(cmd.Context(), message, sessionID, context, inlineAgent)
+								if err == nil {
+									break // Success!
+								}
+								if !isRetryableError(err) {
+									break // Non-retryable error
+								}
+							}
+							if err != nil {
+								return fmt.Errorf("failed to connect to inline agent after %d retries: %w", retries, err)
+							}
+						} else {
 							return err
 						}
-					} else if toolsJSON != "" {
-						if debug {
-							fmt.Printf("🔍 Parsing tools from JSON string\n")
-						}
-
-						// Process templating on tools JSON string
-						processedToolsJSON, err := processTemplateContent(toolsJSON, templateVars, "tools JSON string")
-						if err != nil {
-							return fmt.Errorf("failed to process tools JSON templating: %w", err)
-						}
-
-						tools, err = parseTools(processedToolsJSON)
-						if err != nil {
-							return fmt.Errorf("failed to parse tools from JSON: %w", err)
-						}
-
-						// Validate tools from JSON string
-						for i, tool := range tools {
-							if err := validateTool(tool); err != nil {
-								return fmt.Errorf("tool validation failed for tool %d (%s): %w", i, tool.Name, err)
-							}
-						}
 					}
+
+					// Set agentID for inline agent to use the same processing logic
+					agentID = "inline"
 				}
 
-				// Parse environment variables
-				envVarsMap, err := parseEnvVars(envVars)
-				if err != nil {
-					return fmt.Errorf("failed to parse environment variables: %w", err)
-				}
+				// Auto-classify by default unless agent is explicitly specified or --no-classify is set
+				shouldClassify := agentID == "" && agentName == "" && !noClassify && !inline
 
-				// Add KUBIYA_RUNNER if runners are specified
-				if len(runners) > 0 {
-					envVarsMap["KUBIYA_RUNNER"] = runners[0]
-				}
+				// If auto-classify is enabled (default), use the classification endpoint
+				if shouldClassify {
+					if debug {
+						fmt.Printf("🔍 Classification prompt: %s\n", message)
+					}
 
-				// Encode context files to base64 if provided
-				var contextFiles []map[string]interface{}
-				if len(context) > 0 {
-					contextFiles, err = encodeFilesToBase64(context)
+					// Create classification request
+					reqBody := map[string]string{
+						"message": message,
+					}
+					reqJSON, err := json.Marshal(reqBody)
 					if err != nil {
-						return fmt.Errorf("failed to encode context files: %w", err)
-					}
-					if debug && len(contextFiles) > 0 {
-						fmt.Printf("📁 Encoded %d context files for inline agent\n", len(contextFiles))
-					}
-				}
-
-				if debug {
-					fmt.Printf("🤖 Creating inline agent with %d tools\n", len(tools))
-					fmt.Printf("📋 Tools: %v\n", func() []string {
-						names := make([]string, len(tools))
-						for i, t := range tools {
-							names[i] = t.Name
-						}
-						return names
-					}())
-				}
-
-				// Convert tools to the correct format for inline agent
-				inlineTools := make([]map[string]interface{}, len(tools))
-				for i, tool := range tools {
-					// Ensure args is an empty slice if nil
-					args := tool.Args
-					if args == nil {
-						args = []kubiya.ToolArg{}
+						return fmt.Errorf("failed to marshal classification request: %w", err)
 					}
 
-					// Ensure env is an empty slice if nil
-					env := tool.Env
-					if env == nil {
-						env = []string{}
+					// Create HTTP request
+					baseURL := strings.TrimSuffix(cfg.BaseURL, "/")
+					baseURL = strings.TrimSuffix(baseURL, "/api/v1")
+
+					classifyURL := fmt.Sprintf("%s/http-bridge/v1/classify/agent", baseURL)
+					req, err := http.NewRequestWithContext(cmd.Context(), http.MethodPost, classifyURL, bytes.NewBuffer(reqJSON))
+					if err != nil {
+						return fmt.Errorf("failed to create classification request: %w", err)
 					}
 
-					// Start with existing with_files from the tool
-					withFiles := []interface{}{}
-					if tool.WithFiles != nil {
-						switch v := tool.WithFiles.(type) {
-						case []interface{}:
-							withFiles = v
-						case []string:
-							for _, f := range v {
-								withFiles = append(withFiles, f)
-							}
-						case map[string]interface{}:
-							withFiles = append(withFiles, v)
-						default:
-							withFiles = []interface{}{v}
-						}
-					}
+					// Set headers
+					req.Header.Set("Content-Type", "application/json")
+					req.Header.Set("Authorization", "UserKey "+cfg.APIKey)
 
-					// Add context files to with_files for each tool
-					for _, contextFile := range contextFiles {
-						withFiles = append(withFiles, contextFile)
-					}
-
-					// Start with existing with_volumes from the tool
-					withVolumes := []interface{}{}
-					if tool.WithVolumes != nil {
-						switch v := tool.WithVolumes.(type) {
-						case []interface{}:
-							withVolumes = v
-						case []string:
-							for _, vol := range v {
-								withVolumes = append(withVolumes, vol)
-							}
-						case map[string]interface{}:
-							withVolumes = append(withVolumes, v)
-						default:
-							withVolumes = []interface{}{v}
-						}
-					}
-
-					// Add shared volume by default for inline agents
-					sharedVolume := map[string]interface{}{
-						"path": "/shared",
-						"name": "shared-data",
-					}
-					withVolumes = append(withVolumes, sharedVolume)
-
-					inlineTools[i] = map[string]interface{}{
-						"name":         tool.Name,
-						"alias":        tool.Alias,
-						"description":  tool.Description,
-						"type":         tool.Type,
-						"content":      tool.Content,
-						"args":         args,
-						"env":          env,
-						"image":        tool.Image,
-						"with_files":   withFiles,
-						"with_volumes": withVolumes,
-					}
-				}
-
-				// Create or update inline agent request
-				if inlineAgent == nil {
-					// Traditional inline agent mode - create from flags
-					inlineAgent = map[string]interface{}{
-						"uuid":                  nil,
-						"name":                  "inline",
-						"description":           description,
-						"ai_instructions":       aiInstructions,
-						"tools":                 inlineTools,
-						"runners":               runners,
-						"integrations":          integrations,
-						"secrets":               secrets,
-						"environment_variables": envVarsMap,
-						"llm_model":             llmModel,
-						"is_debug_mode":         true, // Always true for inline agents to capture tool output
-						"owners":                []string{},
-						"allowed_users":         []string{},
-						"allowed_groups":        []string{},
-						"starters":              []interface{}{},
-						"tasks":                 []string{},
-						"sources":               []string{},
-						"links":                 []string{},
-						"image":                 "",
-						"additional_data":       map[string]interface{}{},
-					}
-				} else {
-					// Agent spec mode - merge with flag overrides and set tools
-					// Always use inlineTools format which includes proper volumes and structure
-					inlineAgent["tools"] = inlineTools
-
-					// Override with command line flags if provided
-					if description != "" && description != "Inline agent" {
-						inlineAgent["description"] = description
-					}
-					if aiInstructions != "" {
-						inlineAgent["ai_instructions"] = aiInstructions
-					}
-					if len(runners) > 0 {
-						inlineAgent["runners"] = runners
-					}
-					if len(integrations) > 0 {
-						inlineAgent["integrations"] = integrations
-					}
-					if len(secrets) > 0 {
-						inlineAgent["secrets"] = secrets
-					}
-					if len(envVarsMap) > 0 {
-						// Merge with existing environment variables
-						if existingEnv, ok := inlineAgent["environment_variables"].(map[string]interface{}); ok {
-							for k, v := range envVarsMap {
-								existingEnv[k] = v
-							}
-						} else {
-							inlineAgent["environment_variables"] = envVarsMap
-						}
-					}
-					if llmModel != "" {
-						inlineAgent["llm_model"] = llmModel
-					}
-
-					// Ensure debug mode is enabled
-					inlineAgent["is_debug_mode"] = true
-
-					// Set defaults for missing fields to match traditional inline agent structure
-					if inlineAgent["name"] == nil {
-						inlineAgent["name"] = "inline"
-					}
-					if inlineAgent["owners"] == nil {
-						inlineAgent["owners"] = []string{}
-					}
-					if inlineAgent["allowed_users"] == nil {
-						inlineAgent["allowed_users"] = []string{}
-					}
-					if inlineAgent["allowed_groups"] == nil {
-						inlineAgent["allowed_groups"] = []string{}
-					}
-					if inlineAgent["starters"] == nil {
-						inlineAgent["starters"] = []interface{}{}
-					}
-					if inlineAgent["tasks"] == nil {
-						inlineAgent["tasks"] = []string{}
-					}
-					if inlineAgent["sources"] == nil {
-						inlineAgent["sources"] = []string{}
-					}
-					if inlineAgent["links"] == nil {
-						inlineAgent["links"] = []string{}
-					}
-					if inlineAgent["image"] == nil {
-						inlineAgent["image"] = ""
-					}
-					if inlineAgent["additional_data"] == nil {
-						inlineAgent["additional_data"] = map[string]interface{}{}
-					}
-				}
-
-				if debug {
-					fmt.Printf("🔍 CLI: Creating inline agent with payload:\n")
-					if jsonPayload, err := json.MarshalIndent(inlineAgent, "", "  "); err == nil {
-						fmt.Printf("Agent Definition: %s\n", string(jsonPayload))
-					}
-					fmt.Printf("Message: %s\n", message)
-					fmt.Printf("SessionID: %s\n", sessionID)
-					fmt.Printf("Context files: %d\n", len(context))
-					fmt.Printf("User Email: %s\n", os.Getenv("KUBIYA_USER_EMAIL"))
-					fmt.Printf("Organization: %s\n", os.Getenv("KUBIYA_ORG"))
-					apiKey := os.Getenv("KUBIYA_API_KEY")
-					if len(apiKey) > 20 {
-						fmt.Printf("API Key: %s\n", apiKey[:20]+"...")
-					} else {
-						fmt.Printf("API Key: %s\n", apiKey)
-					}
-					fmt.Printf("Base URL: %s\n", cfg.BaseURL)
-					fmt.Printf("Debug mode: %v\n", debug)
-				}
-
-				msgChan, err = client.SendInlineAgentMessage(cmd.Context(), message, sessionID, context, inlineAgent)
-				if err != nil {
-					// If inline agent connection fails, retry for retryable errors
-					if isRetryableError(err) {
-						if !automationMode {
-							fmt.Printf("\r%s\n", style.WarningStyle.Render("⚠️  Inline agent connection failed, retrying..."))
-						}
-						// For inline agents, we retry by sending the message again with exponential backoff
-						for retryAttempt := 1; retryAttempt <= retries; retryAttempt++ {
-							backoffDelay := calculateBackoffDelay(retryAttempt - 1)
-							if !automationMode {
-								fmt.Printf("%s\n", style.SpinnerStyle.Render(
-									fmt.Sprintf("🔄 Retrying inline agent connection (attempt %d/%d) in %.1fs...", 
-										retryAttempt, retries, backoffDelay.Seconds())))
-							}
-							time.Sleep(backoffDelay)
-							
-							msgChan, err = client.SendInlineAgentMessage(cmd.Context(), message, sessionID, context, inlineAgent)
-							if err == nil {
-								break // Success!
-							}
-							if !isRetryableError(err) {
-								break // Non-retryable error
-							}
-						}
-						if err != nil {
-							return fmt.Errorf("failed to connect to inline agent after %d retries: %w", retries, err)
-						}
-					} else {
-						return err
-					}
-				}
-
-				// Set agentID for inline agent to use the same processing logic
-				agentID = "inline"
-			}
-
-			// Auto-classify by default unless agent is explicitly specified or --no-classify is set
-			shouldClassify := agentID == "" && agentName == "" && !noClassify && !inline
-
-			// If auto-classify is enabled (default), use the classification endpoint
-			if shouldClassify {
-				if debug {
-					fmt.Printf("🔍 Classification prompt: %s\n", message)
-				}
-
-				// Create classification request
-				reqBody := map[string]string{
-					"message": message,
-				}
-				reqJSON, err := json.Marshal(reqBody)
-				if err != nil {
-					return fmt.Errorf("failed to marshal classification request: %w", err)
-				}
-
-				// Create HTTP request
-				baseURL := strings.TrimSuffix(cfg.BaseURL, "/")
-				baseURL = strings.TrimSuffix(baseURL, "/api/v1")
-
-				classifyURL := fmt.Sprintf("%s/http-bridge/v1/classify/agent", baseURL)
-				req, err := http.NewRequestWithContext(cmd.Context(), http.MethodPost, classifyURL, bytes.NewBuffer(reqJSON))
-				if err != nil {
-					return fmt.Errorf("failed to create classification request: %w", err)
-				}
-
-				// Set headers
-				req.Header.Set("Content-Type", "application/json")
-				req.Header.Set("Authorization", "UserKey "+cfg.APIKey)
-
-				if debug {
-					fmt.Printf("🌐 Sending classification request to: %s\n", classifyURL)
-				}
-
-				// Send request
-				resp, err := http.DefaultClient.Do(req)
-				if err != nil {
-					return fmt.Errorf("failed to send classification request: %w", err)
-				}
-				defer resp.Body.Close()
-
-				// Read response body
-				body, err := io.ReadAll(resp.Body)
-				if err != nil {
-					return fmt.Errorf("failed to read classification response: %w", err)
-				}
-
-				if debug {
-					fmt.Printf("📥 Classification response status: %d\n", resp.StatusCode)
-					fmt.Printf("📄 Classification response body: %s\n", string(body))
-				}
-
-				if resp.StatusCode != http.StatusOK {
-					return fmt.Errorf("classification failed with status %d: %s", resp.StatusCode, string(body))
-				}
-
-				// Parse response
-				var agents []struct {
-					UUID        string `json:"uuid"`
-					Name        string `json:"name"`
-					Description string `json:"description"`
-				}
-				if err := json.Unmarshal(body, &agents); err != nil {
-					return fmt.Errorf("failed to parse classification response: %w", err)
-				}
-
-				if len(agents) == 0 {
 					if debug {
-						fmt.Println("❌ No suitable agent found in the classification response")
+						fmt.Printf("🌐 Sending classification request to: %s\n", classifyURL)
 					}
-					return fmt.Errorf("no suitable agent found for the task")
-				}
 
-				// Use the first (best) agent
-				agentID = agents[0].UUID
-				if !automationMode {
-					fmt.Printf("🤖 Auto-selected agent: %s (%s)\n", agents[0].Name, agents[0].Description)
-				}
-			}
+					// Send request
+					resp, err := http.DefaultClient.Do(req)
+					if err != nil {
+						return fmt.Errorf("failed to send classification request: %w", err)
+					}
+					defer resp.Body.Close()
 
-			// If agent name is provided, look up the ID
-			if agentName != "" && agentID == "" {
-				if debug {
-					fmt.Printf("🔍 Looking up agent by name: %s\n", agentName)
-				}
+					// Read response body
+					body, err := io.ReadAll(resp.Body)
+					if err != nil {
+						return fmt.Errorf("failed to read classification response: %w", err)
+					}
 
-				agents, err := client.GetAgents(cmd.Context())
-				if err != nil {
-					return fmt.Errorf("failed to list agents: %w", err)
-				}
+					if debug {
+						fmt.Printf("📥 Classification response status: %d\n", resp.StatusCode)
+						fmt.Printf("📄 Classification response body: %s\n", string(body))
+					}
 
-				if debug {
-					fmt.Printf("📋 Found %d agents\n", len(agents))
-				}
+					if resp.StatusCode != http.StatusOK {
+						return fmt.Errorf("classification failed with status %d: %s", resp.StatusCode, string(body))
+					}
 
-				found := false
-				for _, t := range agents {
-					if strings.EqualFold(t.Name, agentName) {
-						agentID = t.UUID
-						found = true
+					// Parse response
+					var agents []struct {
+						UUID        string `json:"uuid"`
+						Name        string `json:"name"`
+						Description string `json:"description"`
+					}
+					if err := json.Unmarshal(body, &agents); err != nil {
+						return fmt.Errorf("failed to parse classification response: %w", err)
+					}
+
+					if len(agents) == 0 {
 						if debug {
-							fmt.Printf("✅ Found matching agent: %s (UUID: %s)\n", t.Name, t.UUID)
+							fmt.Println("❌ No suitable agent found in the classification response")
 						}
-						break
+						return fmt.Errorf("no suitable agent found for the task")
 					}
-				}
 
-				if !found {
-					if debug {
-						fmt.Printf("❌ No agent found with name: %s\n", agentName)
-					}
-					return fmt.Errorf("agent with name '%s' not found", agentName)
-				}
-			}
-
-			// Ensure we have a agent ID by this point
-			if agentID == "" {
-				return fmt.Errorf("no agent selected - please specify a agent or allow auto-classification")
-			}
-
-			// Before the message handling loop, add style configuration for non-TTY:
-			if noColor {
-				// Disable all styling for non-TTY environments
-				style.DisableColors()
-			}
-
-			// Initialize connection status - fetch actual runner from agent
-			var agentRunner string
-			var agentInfo *kubiya.Agent
-
-			// Fetch agent information to get the actual runner (skip for inline agents)
-			if !inline {
-				if agentInfo, err = client.GetAgent(cmd.Context(), agentID); err != nil {
-					if debug {
-						fmt.Printf("⚠️ Failed to get agent info: %v, using default runner\n", err)
-					}
-					agentRunner = "kubiyamanaged"
-				} else if len(agentInfo.Runners) > 0 {
-					agentRunner = agentInfo.Runners[0] // Use first runner
-				} else {
-					agentRunner = "kubiyamanaged" // fallback
-				}
-			} else {
-				// For inline agents, use the provided runners or default
-				if len(runners) > 0 {
-					agentRunner = runners[0]
-				} else {
-					agentRunner = "kubiyamanaged"
-				}
-			}
-
-			// Override with environment variable if set
-			if os.Getenv("KUBIYA_RUNNER") != "" {
-				agentRunner = os.Getenv("KUBIYA_RUNNER")
-			}
-
-			connStatus = &connectionStatus{
-				runner:      agentRunner,
-				runnerType:  "k8s",
-				connected:   false,
-				connectTime: time.Now(),
-			}
-
-			// Show connection flow (only if not in automation mode)
-			if !automationMode {
-				fmt.Printf("🔗 Connecting to agent server...\n")
-				fmt.Printf("⏳ Initializing %s runner...\n", connStatus.runner)
-				os.Stdout.Sync() // Force immediate display
-			}
-
-			// Send message with context, with retry mechanism for robustness (skip for inline agents)
-			if !inline {
-				msgChan, err = client.SendMessageWithContext(cmd.Context(), agentID, enhancedMessage, sessionID, context)
-				if err != nil {
-					// If context method fails, try with retry mechanism for retryable errors
-					if isRetryableError(err) {
-						if !automationMode {
-							fmt.Printf("\r%s\n", style.WarningStyle.Render("⚠️  Initial connection failed, retrying with enhanced resilience..."))
-						}
-						msgChan, err = client.SendMessageWithRetry(cmd.Context(), agentID, enhancedMessage, sessionID, retries)
-						if err != nil {
-							return fmt.Errorf("failed to send message after %d retries: %w", retries, err)
-						}
-					} else {
-						return err
-					}
-				}
-			}
-
-			// Connection established
-			connStatus.connected = true
-			connStatus.lastPing = time.Now()
-			connStatus.latency = time.Since(connStatus.connectTime)
-
-			// Show compact connection status
-			if !automationMode {
-				fmt.Printf("\r\033[K")      // Clear current line
-				fmt.Printf("\033[2A\033[K") // Clear both lines
-				fmt.Printf("✅ Connected \u2022 🚀 Processing...\n")
-				os.Stdout.Sync() // Force immediate display
-			}
-
-			// Read messages and handle session ID with session recovery support
-			var finalResponse strings.Builder
-			var completionReason string
-			var hasError bool
-			var actualSessionID string
-			var toolsExecuted bool
-			var streamRetryCount int
-			var anyOutputTruncated bool
-			var sessionRetryCount int
-
-			// Add these message type constants
-			const (
-				systemMsg  = "system"
-				chatMsg    = "chat"
-				toolMsg    = "tool"
-				toolOutput = "tool_output"
-			)
-
-			// Main session retry loop for agent error recovery
-			for sessionRetryCount <= retries {
-				// Reset per-session variables
-				finalResponse.Reset()
-				completionReason = ""
-				hasError = false
-				toolsExecuted = false
-				anyOutputTruncated = false
-				
-				// Update the message handling loop with stream error handling:
-				sessionRecoveryNeeded := false
-				for msg := range msgChan {
-				if msg.Error != "" {
-					// Smart retry logic with proper error classification
-					errorObj := fmt.Errorf(msg.Error)
-
-					if isRetryableError(errorObj) && streamRetryCount < retries {
-						streamRetryCount++
-
-						// Calculate proper exponential backoff with jitter
-						backoffDelay := calculateBackoffDelay(streamRetryCount - 1)
-
-						if !automationMode {
-							fmt.Printf("\r%s\n", style.WarningStyle.Render(
-								fmt.Sprintf("⚠️  Stream error (attempt %d/%d): %s",
-									streamRetryCount, retries, msg.Error)))
-							fmt.Printf("%s\n", style.SpinnerStyle.Render(
-								fmt.Sprintf("🔄 Retrying in %.1fs...", backoffDelay.Seconds())))
-						}
-
-						// Wait with proper backoff
-						select {
-						case <-cmd.Context().Done():
-							return cmd.Context().Err()
-						case <-time.After(backoffDelay):
-							// Continue with retry
-						}
-
-						// Attempt to reconnect with remaining retries
-						if !inline {
-							remainingRetries := retries - streamRetryCount
-							if remainingRetries < 1 {
-								remainingRetries = 1
-							}
-
-							msgChan, err = client.SendMessageWithRetry(cmd.Context(), agentID, enhancedMessage, actualSessionID, remainingRetries)
-							if err != nil {
-								if !automationMode {
-									fmt.Printf("%s\n", style.ErrorStyle.Render(fmt.Sprintf("❌ Reconnection failed: %v", err)))
-								}
-								// Don't continue here - let it fall through to retry logic
-								continue
-							}
-							if !automationMode {
-								fmt.Printf("%s\n", style.SuccessStyle.Render("✅ Reconnected successfully, continuing..."))
-							}
-							// Reset retry count on successful reconnection
-							streamRetryCount = 0
-							continue
-						}
-					} else {
-						// Either non-retryable error or exhausted retries
-						if streamRetryCount >= retries {
-							fmt.Fprintf(os.Stderr, "%s\n", style.ErrorStyle.Render(
-								fmt.Sprintf("❌ Stream failed after %d retries: %s", retries, msg.Error)))
-						} else {
-							fmt.Fprintf(os.Stderr, "%s\n", style.ErrorStyle.Render(
-								fmt.Sprintf("❌ Non-retryable error: %s", msg.Error)))
-						}
-						hasError = true
-						return fmt.Errorf("stream error: %s", msg.Error)
-					}
-				}
-
-				// Raw event logging for debugging
-				if rawEventLogging {
-					fmt.Printf("[RAW EVENT] Type: %s, Content: %s, MessageID: %s, Final: %v, SessionID: %s\n",
-						msg.Type, msg.Content, msg.MessageID, msg.Final, msg.SessionID)
-				}
-
-				// Capture completion reason and session ID from final messages
-				if msg.Final && msg.FinishReason != "" {
-					completionReason = msg.FinishReason
-				}
-				if msg.SessionID != "" {
-					actualSessionID = msg.SessionID
-				}
-
-				// Handle system messages (only show if not in automation mode)
-				if msg.Type == systemMsg {
+					// Use the first (best) agent
+					agentID = agents[0].UUID
 					if !automationMode {
-						fmt.Fprintf(os.Stderr, "%s\n", style.SystemStyle.Render("🔄 "+msg.Content))
+						fmt.Printf("🤖 Auto-selected agent: %s (%s)\n", agents[0].Name, agents[0].Description)
 					}
-					continue
 				}
 
-				switch msg.Type {
-				case toolMsg:
-					toolInfo := strings.TrimSpace(msg.Content)
-					if strings.HasPrefix(toolInfo, "Tool:") {
-						parts := strings.SplitN(toolInfo, "Arguments:", 2)
-						toolName := strings.TrimSpace(strings.TrimPrefix(parts[0], "Tool:"))
-						toolArgs := ""
-						if len(parts) > 1 {
-							toolArgs = strings.TrimSpace(parts[1])
-						}
+				// If agent name is provided, look up the ID
+				if agentName != "" && agentID == "" {
+					if debug {
+						fmt.Printf("🔍 Looking up agent by name: %s\n", agentName)
+					}
 
-						// LIVE streaming of tool calls and arguments
-						if showToolCalls && !automationMode {
-							// Check if this is a new tool call (first time we see this tool)
-							isNewTool := true
-							for _, te := range toolExecutions {
-								if te.name == toolName && !te.isComplete {
-									isNewTool = false
-									break
-								}
+					agents, err := client.GetAgents(cmd.Context())
+					if err != nil {
+						return fmt.Errorf("failed to list agents: %w", err)
+					}
+
+					if debug {
+						fmt.Printf("📋 Found %d agents\n", len(agents))
+					}
+
+					found := false
+					for _, t := range agents {
+						if strings.EqualFold(t.Name, agentName) {
+							agentID = t.UUID
+							found = true
+							if debug {
+								fmt.Printf("✅ Found matching agent: %s (UUID: %s)\n", t.Name, t.UUID)
 							}
-
-							if isNewTool {
-								// Compact tool header - start the live streaming line
-								// No sync here - we'll update this line as args build
-							}
-
-							// LIVE streaming - keep working animation until tool execution starts
-							if toolArgs == "" {
-								// Initial tool detection - start dynamic working animation
-								if !isAnimationRunning(toolName) {
-									go showWorkingAnimation(toolName)
-								}
-							} else if !strings.HasSuffix(toolArgs, "}") {
-								// Parameters are building but not complete - ensure animation is running
-								if !isAnimationRunning(toolName) {
-									go showWorkingAnimation(toolName)
-								}
-								// This gives users continuous feedback that the AI is actively working
-							} else {
-								// Parameters are complete - show final result and prepare for execution
-								stopWorkingAnimation(toolName)
-								
-								// Parameters complete - show formatted final args and move to next line
-								displayArgs := formatLiveJSON(toolArgs)
-								fmt.Printf("\r⚡ %s %s %s\n",
-									style.ToolExecutingStyle.Render(toolName),
-									style.ValueStyle.Render(displayArgs),
-									style.DimStyle.Render("✓"))
-								os.Stdout.Sync()
-							}
-						}
-
-						// Only process final tool execution if we have complete arguments
-						if strings.HasSuffix(toolArgs, "}") {
-							// Check for duplicate tool execution
-							isDuplicate := false
-							for _, te := range toolExecutions {
-								if te.name == toolName && te.args == toolArgs && !te.isComplete {
-									isDuplicate = true
-									break
-								}
-							}
-
-							if !isDuplicate {
-								// Update tool statistics
-								toolStats.mu.Lock()
-								toolStats.totalCalls++
-								toolStats.activeCalls++
-								toolStats.toolTypes[toolName]++
-								toolStats.mu.Unlock()
-
-								// Create new tool execution
-								te := &toolExecution{
-									name:       toolName,
-									args:       toolArgs,
-									msgID:      msg.MessageID,
-									status:     "waiting",
-									startTime:  time.Now(),
-									runner:     connStatus.runner,
-									toolCallId: msg.MessageID,
-								}
-								toolExecutions[msg.MessageID] = te
-								toolsExecuted = true
-
-								// Show smart parameter summary if available
-								if showToolCalls && !automationMode {
-									paramSummary := formatToolParameters(toolArgs)
-									if paramSummary != "" {
-										fmt.Printf("   %s\n", style.DimStyle.Render(paramSummary))
-									}
-									os.Stdout.Sync()
-								}
-							}
+							break
 						}
 					}
 
-				case toolOutput:
-					te := toolExecutions[msg.MessageID]
-					if te != nil && !te.isComplete {
-						// Mark that we received output
-						te.hasOutput = true
-
-						// Update status to running when we start receiving output
-						if te.status == "waiting" {
-							te.status = "running"
-							// Clear the previous line and show running state
-							if showToolCalls && !automationMode {
-								fmt.Printf("\r⚡ %s %s\n",
-									style.ToolExecutingStyle.Render(te.name),
-									style.SpinnerStyle.Render("🔄 executing..."))
-								os.Stdout.Sync()
-							}
-							// Show clean animation only during execution
-							if showToolCalls && !automationMode && !te.animationStarted {
-								te.animationStarted = true
-								go startToolAnimation(te)
-							}
+					if !found {
+						if debug {
+							fmt.Printf("❌ No agent found with name: %s\n", agentName)
 						}
-
-						// Also check if we need to mark as complete based on content
-						lowerContent := strings.ToLower(msg.Content)
-						if strings.Contains(lowerContent, "completed") ||
-							strings.Contains(lowerContent, "finished") ||
-							strings.Contains(lowerContent, "done") ||
-							strings.Contains(lowerContent, "success") ||
-							strings.Contains(lowerContent, "created") ||
-							strings.Contains(lowerContent, "saved") {
-							te.isComplete = true
-							// Ensure it's not marked as failed if we detect success
-							if !te.failed {
-								te.status = "completed"
-							}
-						}
-
-						// Store the full content
-						te.output.WriteString(msg.Content)
-
-						// Get the current content buffer for this message
-						storedContent := messageBuffer[msg.MessageID]
-						if storedContent == nil {
-							storedContent = &chatBuffer{}
-							messageBuffer[msg.MessageID] = storedContent
-						}
-
-						// Only process new content since last update
-						newContent := msg.Content
-						if len(storedContent.content) > 0 && len(msg.Content) > len(storedContent.content) {
-							newContent = msg.Content[len(storedContent.content):]
-						} else if len(storedContent.content) > 0 {
-							newContent = ""
-						}
-
-						// Process new content if any
-						trimmedContent := strings.TrimSpace(newContent)
-
-						// Check for empty output scenarios that should show "output truncated"
-						if trimmedContent == "" || trimmedContent == "\"\"" || trimmedContent == "{}" {
-							te.outputTruncated = true
-							anyOutputTruncated = true
-							if showToolCalls && !automationMode {
-								// Just track that output was truncated, don't spam the user
-								// We'll show a single message at the end
-							}
-						} else if trimmedContent != "" {
-							// Try to parse as JSON first for structured output
-							var outputData struct {
-								State   string `json:"state,omitempty"`
-								Status  string `json:"status,omitempty"`
-								Output  string `json:"output,omitempty"`
-								Error   string `json:"error,omitempty"`
-								Message string `json:"message,omitempty"`
-							}
-
-							if err := json.Unmarshal([]byte(trimmedContent), &outputData); err == nil {
-								// Handle structured output
-								if outputData.State != "" {
-									te.status = outputData.State
-								}
-								if outputData.Error != "" {
-									te.failed = true
-									te.errorMsg = outputData.Error // Store the actual error message
-									te.status = "failed"
-									hasError = true
-									
-									// Stop working animation if it's still running
-									stopWorkingAnimation(te.name)
-									
-									if showToolCalls && !automationMode {
-										// Show clear "Tool call failed" message
-										errorMsg := outputData.Error
-										if len(errorMsg) > 100 {
-											errorMsg = errorMsg[:97] + "..."
-										}
-										fmt.Printf("\r⚡ %s %s\n",
-											style.ToolExecutingStyle.Render(te.name),
-											style.ErrorStyle.Render(fmt.Sprintf("Tool call failed: %s", errorMsg)))
-									}
-								}
-								if outputData.Output != "" || outputData.Message != "" {
-									output := outputData.Output
-									if output == "" {
-										output = outputData.Message
-									}
-									// Don't show every line - just track that we got output
-									// This prevents spam during streaming
-									if showToolCalls && !automationMode && !te.hasShownOutput {
-										fmt.Printf("   %s\n", style.LiveStatusStyle.Render("Receiving output..."))
-										te.hasShownOutput = true
-										os.Stdout.Sync()
-									}
-								}
-							} else {
-								// Handle plain text output - analyze for key messages only
-								if showToolCalls && !automationMode {
-									// Only show important messages, not every line
-									lowerContent := strings.ToLower(trimmedContent)
-									
-									// More sophisticated error detection - only flag actual failures, not mentions of errors
-									isActualError := false
-									// Look for actual error patterns, excluding common success patterns
-									if (strings.Contains(lowerContent, "error:") || strings.Contains(lowerContent, "failed:") ||
-										strings.Contains(lowerContent, "error occurred") || strings.Contains(lowerContent, "execution failed") ||
-										strings.Contains(lowerContent, "command failed") || strings.Contains(lowerContent, "operation failed") ||
-										(strings.Contains(lowerContent, "exit code") && (strings.Contains(lowerContent, " 1") || strings.Contains(lowerContent, " 2")))) &&
-										// Exclude success patterns that might contain "error" in context
-										!strings.Contains(lowerContent, "successfully") &&
-										!strings.Contains(lowerContent, "completed") &&
-										!strings.Contains(lowerContent, "created") &&
-										!strings.Contains(lowerContent, "saved") &&
-										!strings.Contains(lowerContent, "finished") {
-										isActualError = true
-									}
-									
-									if isActualError {
-										// Show friendly warning only for actual errors
-										if !te.hasShownError {
-											// Try to extract meaningful error info
-											errorMsg := "encountered an issue"
-											if strings.Contains(lowerContent, "not found") {
-												errorMsg = "resource not found"
-											} else if strings.Contains(lowerContent, "permission") || strings.Contains(lowerContent, "credentials") {
-												errorMsg = "permission issue"
-											} else if strings.Contains(lowerContent, "timeout") {
-												errorMsg = "timed out"
-											} else if strings.Contains(lowerContent, "connection") {
-												errorMsg = "connection issue"
-											}
-											
-											// Stop working animation
-											stopWorkingAnimation(te.name)
-											
-											fmt.Printf("\r⚡ %s %s\n",
-												style.ToolExecutingStyle.Render(te.name),
-												style.ErrorStyle.Render(fmt.Sprintf("Tool call failed: %s", errorMsg)))
-											te.hasShownError = true
-											te.failed = true
-											te.status = "failed"
-											te.errorMsg = errorMsg // Store the inferred error message
-											hasError = true
-											os.Stdout.Sync()
-										}
-									} else if strings.Contains(lowerContent, "success") || strings.Contains(lowerContent, "completed") || 
-										strings.Contains(lowerContent, "created") || strings.Contains(lowerContent, "saved") ||
-										strings.Contains(lowerContent, "finished") || strings.Contains(lowerContent, "done") {
-										// Stop working animation on success
-										stopWorkingAnimation(te.name)
-										
-										fmt.Printf("\r⚡ %s %s\n",
-											style.ToolExecutingStyle.Render(te.name),
-											style.SuccessStyle.Render("✅ completed successfully"))
-										os.Stdout.Sync()
-									} else if !te.hasShownOutput {
-										fmt.Printf("   %s\n", style.LiveStatusStyle.Render("Processing..."))
-										te.hasShownOutput = true
-										os.Stdout.Sync()
-									}
-								}
-							}
-						}
-
-						// Update stored content
-						storedContent.content = msg.Content
+						return fmt.Errorf("agent with name '%s' not found", agentName)
 					}
+				}
 
-				default:
-					// Handle tool completion - check on any non-tool message type if we have pending tool executions
-					for msgID, te := range toolExecutions {
-						if te.hasOutput && !te.isComplete {
-							// Mark as complete if we receive a final message or if enough time has passed
-							if msg.Final || time.Since(te.startTime) > 2*time.Minute {
-								te.isComplete = true
-							} else if te.status == "running" && time.Since(te.startTime) > 30*time.Second {
-								// If running for more than 30 seconds without completion, mark as complete
-								te.isComplete = true
+				// Ensure we have a agent ID by this point
+				if agentID == "" {
+					return fmt.Errorf("no agent selected - please specify a agent or allow auto-classification")
+				}
+
+				// Before the message handling loop, add style configuration for non-TTY:
+				if noColor {
+					// Disable all styling for non-TTY environments
+					style.DisableColors()
+				}
+
+				// Initialize connection status - fetch actual runner from agent
+				var agentRunner string
+				var agentInfo *kubiya.Agent
+
+				// Fetch agent information to get the actual runner (skip for inline agents)
+				if !inline {
+					if agentInfo, err = client.GetAgent(cmd.Context(), agentID); err != nil {
+						if debug {
+							fmt.Printf("⚠️ Failed to get agent info: %v, using default runner\n", err)
+						}
+						agentRunner = "kubiyamanaged"
+					} else if len(agentInfo.Runners) > 0 {
+						agentRunner = agentInfo.Runners[0] // Use first runner
+					} else {
+						agentRunner = "kubiyamanaged" // fallback
+					}
+				} else {
+					// For inline agents, use the provided runners or default
+					if len(runners) > 0 {
+						agentRunner = runners[0]
+					} else {
+						agentRunner = "kubiyamanaged"
+					}
+				}
+
+				// Override with environment variable if set
+				if os.Getenv("KUBIYA_RUNNER") != "" {
+					agentRunner = os.Getenv("KUBIYA_RUNNER")
+				}
+
+				connStatus = &connectionStatus{
+					runner:      agentRunner,
+					runnerType:  "k8s",
+					connected:   false,
+					connectTime: time.Now(),
+				}
+
+				// Show connection flow (only if not in automation mode)
+				if !automationMode {
+					fmt.Printf("🔗 Connecting to agent server...\n")
+					fmt.Printf("⏳ Initializing %s runner...\n", connStatus.runner)
+					os.Stdout.Sync() // Force immediate display
+				}
+
+				// Send message with context, with retry mechanism for robustness (skip for inline agents)
+				if !inline {
+					msgChan, err = client.SendMessageWithContext(cmd.Context(), agentID, enhancedMessage, sessionID, context)
+					if err != nil {
+						// If context method fails, try with retry mechanism for retryable errors
+						if isRetryableError(err) {
+							if !automationMode {
+								fmt.Printf("\r%s\n", style.WarningStyle.Render("⚠️  Initial connection failed, retrying with enhanced resilience..."))
 							}
-
-							if te.isComplete {
-								// Stop any running animation cleanly
-								te.status = "complete"
-
-								// Update tool statistics
-								toolStats.mu.Lock()
-								toolStats.activeCalls--
-								if te.failed {
-									toolStats.failedCalls++
-								} else {
-									toolStats.completedCalls++
-								}
-								toolStats.mu.Unlock()
-
-								duration := time.Since(te.startTime).Seconds()
-
-								// Show clean completion status with actual error messages
-								if showToolCalls && !automationMode {
-									if te.failed {
-										// Show compact error message
-										errorDisplay := "error"
-										if te.errorMsg != "" {
-											errorDisplay = strings.TrimSpace(te.errorMsg)
-											if len(errorDisplay) > 50 {
-												errorDisplay = errorDisplay[:50] + "..."
-											}
-											// Clean for single line display
-											errorDisplay = strings.ReplaceAll(errorDisplay, "\n", " ")
-											errorDisplay = strings.ReplaceAll(errorDisplay, "\r", " ")
-										}
-										fmt.Printf("   ⚠️  %s: %s (%.1fs)\n",
-											style.WarningStyle.Render(te.name),
-											style.DimStyle.Render(errorDisplay),
-											duration)
-									} else {
-										fmt.Printf("   ✓ %s (%.1fs)\n",
-											style.SuccessStyle.Render("Completed"),
-											duration)
-									}
-									os.Stdout.Sync()
-									continue // Skip the old completion display
-								}
-
-								// Legacy variables for any remaining code
-								var statusEmoji string
-								var completionStatus string
-								if te.failed {
-									statusEmoji = statusFailed
-									completionStatus = "failed"
-								} else {
-									statusEmoji = statusDone
-									completionStatus = "completed"
-								}
-
-								// Show updated statistics only if tool calls are enabled and not in automation mode
-								if showToolCalls && !automationMode {
-									toolStats.mu.RLock()
-									updatedStatsStr := fmt.Sprintf("[%d active, %d completed, %d failed]",
-										toolStats.activeCalls, toolStats.completedCalls, toolStats.failedCalls)
-									toolStats.mu.RUnlock()
-
-									// Print completion status with enhanced summary
-									fmt.Printf("\n%s\n",
-										style.InfoBoxStyle.Render(fmt.Sprintf("%s %s %s (%0.1fs) %s",
-											statusEmoji,
-											style.ToolNameStyle.Render(te.name),
-											style.ToolCompleteStyle.Render(strings.ToUpper(completionStatus)),
-											duration,
-											style.ToolStatsStyle.Render(updatedStatsStr))))
-
-									// Print error summary if failed
-									if te.failed {
-										fmt.Printf("%s %s\n",
-											style.ToolOutputPrefixStyle.Render("⚠️"),
-											style.ErrorStyle.Render("Tool encountered errors during execution"))
-									}
-
-									// Print output summary with better formatting
-									if te.output.Len() > 0 {
-										outputSize := te.output.Len()
-										var sizeStr string
-										if outputSize < 1024 {
-											sizeStr = fmt.Sprintf("%d bytes", outputSize)
-										} else if outputSize < 1024*1024 {
-											sizeStr = fmt.Sprintf("%.1f KB", float64(outputSize)/1024)
-										} else {
-											sizeStr = fmt.Sprintf("%.1f MB", float64(outputSize)/(1024*1024))
-										}
-
-										outputSummary := fmt.Sprintf("Output: %s on runner://%s", sizeStr, te.runner)
-										if te.outputTruncated {
-											outputSummary += " (output was truncated)"
-										}
-
-										fmt.Printf("%s %s\n",
-											style.ToolOutputPrefixStyle.Render("📊"),
-											style.ToolSummaryStyle.Render(outputSummary))
-									} else if te.outputTruncated {
-										fmt.Printf("%s\n", style.DimStyle.Render(
-											"💡 Set KUBIYA_DEBUG=1 to see full output"))
-									}
-
-									// Remove redundant divider line for cleaner output
-								}
-								delete(toolExecutions, msgID)
+							msgChan, err = client.SendMessageWithRetry(cmd.Context(), agentID, enhancedMessage, sessionID, retries)
+							if err != nil {
+								return fmt.Errorf("failed to send message after %d retries: %w", retries, err)
 							}
+						} else {
+							return err
 						}
 					}
+				}
 
-					// Regular chat message
-					if msg.SenderName != "You" {
-						buf, exists := messageBuffer[msg.MessageID]
-						if !exists {
-							buf = &chatBuffer{}
-							messageBuffer[msg.MessageID] = buf
-						}
+				// Connection established
+				connStatus.connected = true
+				connStatus.lastPing = time.Now()
+				connStatus.latency = time.Since(connStatus.connectTime)
 
-						if len(msg.Content) > len(buf.content) {
-							newContent := msg.Content[len(buf.content):]
+				// Show compact connection status
+				if !automationMode {
+					fmt.Printf("\r\033[K")      // Clear current line
+					fmt.Printf("\033[2A\033[K") // Clear both lines
+					fmt.Printf("✅ Connected \u2022 🚀 Processing...\n")
+					os.Stdout.Sync() // Force immediate display
+				}
 
-							// Accumulate content and handle code blocks
-							for _, char := range newContent {
-								if char == '`' {
-									buf.inCodeBlock = !buf.inCodeBlock
-									if buf.inCodeBlock {
-										// Print accumulated sentence before code block
-										if buf.sentence.Len() > 0 {
-											sentence := strings.TrimSpace(buf.sentence.String())
-											if sentence != "" {
-												// Print without [Bot] prefix
-												fmt.Printf("%s\n",
-													style.AgentStyle.Render(sentence))
-												buf.sentence.Reset()
-											}
-										}
-									} else {
-										// Print accumulated code block
-										if buf.codeBlock.Len() > 0 {
-											fmt.Printf("%s\n%s\n%s\n",
-												style.CodeBlockStyle.Render("```"),
-												style.CodeBlockStyle.Render(buf.codeBlock.String()),
-												style.CodeBlockStyle.Render("```"))
-											buf.codeBlock.Reset()
-										}
+				// Read messages and handle session ID with session recovery support
+				var finalResponse strings.Builder
+				var completionReason string
+				var hasError bool
+				var actualSessionID string
+				var toolsExecuted bool
+				var streamRetryCount int
+				var anyOutputTruncated bool
+				var sessionRetryCount int
+
+				// Add these message type constants
+				const (
+					systemMsg  = "system"
+					chatMsg    = "chat"
+					toolMsg    = "tool"
+					toolOutput = "tool_output"
+				)
+
+				// Main session retry loop for agent error recovery
+				for sessionRetryCount <= retries {
+					// Reset per-session variables
+					finalResponse.Reset()
+					completionReason = ""
+					hasError = false
+					toolsExecuted = false
+					anyOutputTruncated = false
+
+					// Update the message handling loop with stream error handling:
+					sessionRecoveryNeeded := false
+					for msg := range msgChan {
+						if msg.Error != "" {
+							// Smart retry logic with proper error classification
+							errorObj := fmt.Errorf(msg.Error)
+
+							if isRetryableError(errorObj) && streamRetryCount < retries {
+								streamRetryCount++
+
+								// Calculate proper exponential backoff with jitter
+								backoffDelay := calculateBackoffDelay(streamRetryCount - 1)
+
+								if !automationMode {
+									fmt.Printf("\r%s\n", style.WarningStyle.Render(
+										fmt.Sprintf("⚠️  Stream error (attempt %d/%d): %s",
+											streamRetryCount, retries, msg.Error)))
+									fmt.Printf("%s\n", style.SpinnerStyle.Render(
+										fmt.Sprintf("🔄 Retrying in %.1fs...", backoffDelay.Seconds())))
+								}
+
+								// Wait with proper backoff
+								select {
+								case <-cmd.Context().Done():
+									return cmd.Context().Err()
+								case <-time.After(backoffDelay):
+									// Continue with retry
+								}
+
+								// Attempt to reconnect with remaining retries
+								if !inline {
+									remainingRetries := retries - streamRetryCount
+									if remainingRetries < 1 {
+										remainingRetries = 1
 									}
+
+									msgChan, err = client.SendMessageWithRetry(cmd.Context(), agentID, enhancedMessage, actualSessionID, remainingRetries)
+									if err != nil {
+										if !automationMode {
+											fmt.Printf("%s\n", style.ErrorStyle.Render(fmt.Sprintf("❌ Reconnection failed: %v", err)))
+										}
+										// Don't continue here - let it fall through to retry logic
+										continue
+									}
+									if !automationMode {
+										fmt.Printf("%s\n", style.SuccessStyle.Render("✅ Reconnected successfully, continuing..."))
+									}
+									// Reset retry count on successful reconnection
+									streamRetryCount = 0
 									continue
 								}
-
-								if buf.inCodeBlock {
-									buf.codeBlock.WriteRune(char)
+							} else {
+								// Either non-retryable error or exhausted retries
+								if streamRetryCount >= retries {
+									fmt.Fprintf(os.Stderr, "%s\n", style.ErrorStyle.Render(
+										fmt.Sprintf("❌ Stream failed after %d retries: %s", retries, msg.Error)))
 								} else {
-									buf.sentence.WriteRune(char)
-									if char == '.' || char == '!' || char == '?' || char == '\n' {
-										sentence := strings.TrimSpace(buf.sentence.String())
-										if sentence != "" {
-											// Print without [Bot] prefix
-											fmt.Printf("%s\n",
-												style.AgentStyle.Render(sentence))
-											buf.sentence.Reset()
+									fmt.Fprintf(os.Stderr, "%s\n", style.ErrorStyle.Render(
+										fmt.Sprintf("❌ Non-retryable error: %s", msg.Error)))
+								}
+								hasError = true
+								return fmt.Errorf("stream error: %s", msg.Error)
+							}
+						}
+
+						// Raw event logging for debugging
+						if rawEventLogging {
+							fmt.Printf("[RAW EVENT] Type: %s, Content: %s, MessageID: %s, Final: %v, SessionID: %s\n",
+								msg.Type, msg.Content, msg.MessageID, msg.Final, msg.SessionID)
+						}
+
+						// Capture completion reason and session ID from final messages
+						if msg.Final && msg.FinishReason != "" {
+							completionReason = msg.FinishReason
+						}
+						if msg.SessionID != "" {
+							actualSessionID = msg.SessionID
+						}
+
+						// Handle system messages (only show if not in automation mode)
+						if msg.Type == systemMsg {
+							if !automationMode {
+								fmt.Fprintf(os.Stderr, "%s\n", style.SystemStyle.Render("🔄 "+msg.Content))
+							}
+							continue
+						}
+
+						switch msg.Type {
+						case toolMsg:
+							toolInfo := strings.TrimSpace(msg.Content)
+							if strings.HasPrefix(toolInfo, "Tool:") {
+								parts := strings.SplitN(toolInfo, "Arguments:", 2)
+								toolName := strings.TrimSpace(strings.TrimPrefix(parts[0], "Tool:"))
+								toolArgs := ""
+								if len(parts) > 1 {
+									toolArgs = strings.TrimSpace(parts[1])
+								}
+
+								// LIVE streaming of tool calls and arguments
+								if showToolCalls && !automationMode {
+									// Check if this is a new tool call (first time we see this tool)
+									isNewTool := true
+									for _, te := range toolExecutions {
+										if te.name == toolName && !te.isComplete {
+											isNewTool = false
+											break
+										}
+									}
+
+									if isNewTool {
+										// Compact tool header - start the live streaming line
+										// No sync here - we'll update this line as args build
+									}
+
+									// LIVE streaming - keep working animation until tool execution starts
+									if toolArgs == "" {
+										// Initial tool detection - start dynamic working animation
+										if !isAnimationRunning(toolName) {
+											go showWorkingAnimation(toolName)
+										}
+									} else if !strings.HasSuffix(toolArgs, "}") {
+										// Parameters are building but not complete - ensure animation is running
+										if !isAnimationRunning(toolName) {
+											go showWorkingAnimation(toolName)
+										}
+										// This gives users continuous feedback that the AI is actively working
+									} else {
+										// Parameters are complete - show final result and prepare for execution
+										stopWorkingAnimation(toolName)
+
+										// Parameters complete - show formatted final args and move to next line
+										displayArgs := formatLiveJSON(toolArgs)
+										fmt.Printf("\r⚡ %s %s %s\n",
+											style.ToolExecutingStyle.Render(toolName),
+											style.ValueStyle.Render(displayArgs),
+											style.DimStyle.Render("✓"))
+										os.Stdout.Sync()
+									}
+								}
+
+								// Only process final tool execution if we have complete arguments
+								if strings.HasSuffix(toolArgs, "}") {
+									// Check for duplicate tool execution
+									isDuplicate := false
+									for _, te := range toolExecutions {
+										if te.name == toolName && te.args == toolArgs && !te.isComplete {
+											isDuplicate = true
+											break
+										}
+									}
+
+									if !isDuplicate {
+										// Update tool statistics
+										toolStats.mu.Lock()
+										toolStats.totalCalls++
+										toolStats.activeCalls++
+										toolStats.toolTypes[toolName]++
+										toolStats.mu.Unlock()
+
+										// Create new tool execution
+										te := &toolExecution{
+											name:       toolName,
+											args:       toolArgs,
+											msgID:      msg.MessageID,
+											status:     "waiting",
+											startTime:  time.Now(),
+											runner:     connStatus.runner,
+											toolCallId: msg.MessageID,
+										}
+										toolExecutions[msg.MessageID] = te
+										toolsExecuted = true
+
+										// Show smart parameter summary if available
+										if showToolCalls && !automationMode {
+											paramSummary := formatToolParameters(toolArgs)
+											if paramSummary != "" {
+												fmt.Printf("   %s\n", style.DimStyle.Render(paramSummary))
+											}
+											os.Stdout.Sync()
 										}
 									}
 								}
 							}
 
-							buf.content = msg.Content
-						}
-					}
+						case toolOutput:
+							te := toolExecutions[msg.MessageID]
+							if te != nil && !te.isComplete {
+								// Mark that we received output
+								te.hasOutput = true
 
-					if msg.Final {
-						// Print any remaining content in the sentence buffer
-						if buf, exists := messageBuffer[msg.MessageID]; exists {
-							remaining := strings.TrimSpace(buf.sentence.String())
-							if remaining != "" {
-								fmt.Printf("%s\n",
-									style.AgentStyle.Render(remaining))
-							}
-							// Also handle any remaining code block
-							if buf.codeBlock.Len() > 0 {
-								fmt.Printf("%s\n%s\n%s\n",
-									style.CodeBlockStyle.Render("```"),
-									style.CodeBlockStyle.Render(buf.codeBlock.String()),
-									style.CodeBlockStyle.Render("```"))
-							}
+								// Update status to running when we start receiving output
+								if te.status == "waiting" {
+									te.status = "running"
+									// Clear the previous line and show running state
+									if showToolCalls && !automationMode {
+										fmt.Printf("\r⚡ %s %s\n",
+											style.ToolExecutingStyle.Render(te.name),
+											style.SpinnerStyle.Render("🔄 executing..."))
+										os.Stdout.Sync()
+									}
+									// Show clean animation only during execution
+									if showToolCalls && !automationMode && !te.animationStarted {
+										te.animationStarted = true
+										go startToolAnimation(te)
+									}
+								}
 
-							// Check for agent error messages and trigger session recovery if needed
-							fullContent := buf.content
-							if isAgentErrorMessage(fullContent) {
-								// Agent indicated an internal error - trigger session recovery
-								if streamRetryCount < retries {
-									streamRetryCount++
-									backoffDelay := calculateBackoffDelay(streamRetryCount - 1)
-									
-									if !automationMode {
-										fmt.Printf("\n%s\n", style.WarningStyle.Render(
-											fmt.Sprintf("⚠️  Agent error detected (attempt %d/%d): %s",
-												streamRetryCount, retries, "Agent indicated internal issue")))
-										fmt.Printf("%s\n", style.SpinnerStyle.Render(
-											fmt.Sprintf("🔄 Starting new session in %.1fs...", backoffDelay.Seconds())))
+								// Also check if we need to mark as complete based on content
+								lowerContent := strings.ToLower(msg.Content)
+								if strings.Contains(lowerContent, "completed") ||
+									strings.Contains(lowerContent, "finished") ||
+									strings.Contains(lowerContent, "done") ||
+									strings.Contains(lowerContent, "success") ||
+									strings.Contains(lowerContent, "created") ||
+									strings.Contains(lowerContent, "saved") {
+									te.isComplete = true
+									// Ensure it's not marked as failed if we detect success
+									if !te.failed {
+										te.status = "completed"
+									}
+								}
+
+								// Store the full content
+								te.output.WriteString(msg.Content)
+
+								// Get the current content buffer for this message
+								storedContent := messageBuffer[msg.MessageID]
+								if storedContent == nil {
+									storedContent = &chatBuffer{}
+									messageBuffer[msg.MessageID] = storedContent
+								}
+
+								// Only process new content since last update
+								newContent := msg.Content
+								if len(storedContent.content) > 0 && len(msg.Content) > len(storedContent.content) {
+									newContent = msg.Content[len(storedContent.content):]
+								} else if len(storedContent.content) > 0 {
+									newContent = ""
+								}
+
+								// Process new content if any
+								trimmedContent := strings.TrimSpace(newContent)
+
+								// Check for empty output scenarios that should show "output truncated"
+								if trimmedContent == "" || trimmedContent == "\"\"" || trimmedContent == "{}" {
+									te.outputTruncated = true
+									anyOutputTruncated = true
+									if showToolCalls && !automationMode {
+										// Just track that output was truncated, don't spam the user
+										// We'll show a single message at the end
+									}
+								} else if trimmedContent != "" {
+									// Try to parse as JSON first for structured output
+									var outputData struct {
+										State   string `json:"state,omitempty"`
+										Status  string `json:"status,omitempty"`
+										Output  string `json:"output,omitempty"`
+										Error   string `json:"error,omitempty"`
+										Message string `json:"message,omitempty"`
 									}
 
-									// Wait before retry
-									time.Sleep(backoffDelay)
+									if err := json.Unmarshal([]byte(trimmedContent), &outputData); err == nil {
+										// Handle structured output
+										if outputData.State != "" {
+											te.status = outputData.State
+										}
+										if outputData.Error != "" {
+											te.failed = true
+											te.errorMsg = outputData.Error // Store the actual error message
+											te.status = "failed"
+											hasError = true
 
-									// Start new session with original prompt by triggering session recovery
-									sessionRecoveryNeeded = true
-									hasError = true
-									break // Break out of message loop to trigger session recovery
-								} else {
-									// Exhausted retries for agent errors
-									fmt.Fprintf(os.Stderr, "%s\n", style.ErrorStyle.Render(
-										fmt.Sprintf("❌ Agent failed after %d session recoveries", retries)))
-									hasError = true
-									return fmt.Errorf("agent error after %d recoveries: %s", retries, strings.TrimSpace(fullContent[:min(100, len(fullContent))]))
+											// Stop working animation if it's still running
+											stopWorkingAnimation(te.name)
+
+											if showToolCalls && !automationMode {
+												// Show clear "Tool call failed" message
+												errorMsg := outputData.Error
+												if len(errorMsg) > 100 {
+													errorMsg = errorMsg[:97] + "..."
+												}
+												fmt.Printf("\r⚡ %s %s\n",
+													style.ToolExecutingStyle.Render(te.name),
+													style.ErrorStyle.Render(fmt.Sprintf("Tool call failed: %s", errorMsg)))
+											}
+										}
+										if outputData.Output != "" || outputData.Message != "" {
+											output := outputData.Output
+											if output == "" {
+												output = outputData.Message
+											}
+											// Don't show every line - just track that we got output
+											// This prevents spam during streaming
+											if showToolCalls && !automationMode && !te.hasShownOutput {
+												fmt.Printf("   %s\n", style.LiveStatusStyle.Render("Receiving output..."))
+												te.hasShownOutput = true
+												os.Stdout.Sync()
+											}
+										}
+									} else {
+										// Handle plain text output - analyze for key messages only
+										if showToolCalls && !automationMode {
+											// Only show important messages, not every line
+											lowerContent := strings.ToLower(trimmedContent)
+
+											// More sophisticated error detection - only flag actual failures, not mentions of errors
+											isActualError := false
+											// Look for actual error patterns, excluding common success patterns
+											if (strings.Contains(lowerContent, "error:") || strings.Contains(lowerContent, "failed:") ||
+												strings.Contains(lowerContent, "error occurred") || strings.Contains(lowerContent, "execution failed") ||
+												strings.Contains(lowerContent, "command failed") || strings.Contains(lowerContent, "operation failed") ||
+												(strings.Contains(lowerContent, "exit code") && (strings.Contains(lowerContent, " 1") || strings.Contains(lowerContent, " 2")))) &&
+												// Exclude success patterns that might contain "error" in context
+												!strings.Contains(lowerContent, "successfully") &&
+												!strings.Contains(lowerContent, "completed") &&
+												!strings.Contains(lowerContent, "created") &&
+												!strings.Contains(lowerContent, "saved") &&
+												!strings.Contains(lowerContent, "finished") {
+												isActualError = true
+											}
+
+											if isActualError {
+												// Show friendly warning only for actual errors
+												if !te.hasShownError {
+													// Try to extract meaningful error info
+													errorMsg := "encountered an issue"
+													if strings.Contains(lowerContent, "not found") {
+														errorMsg = "resource not found"
+													} else if strings.Contains(lowerContent, "permission") || strings.Contains(lowerContent, "credentials") {
+														errorMsg = "permission issue"
+													} else if strings.Contains(lowerContent, "timeout") {
+														errorMsg = "timed out"
+													} else if strings.Contains(lowerContent, "connection") {
+														errorMsg = "connection issue"
+													}
+
+													// Stop working animation
+													stopWorkingAnimation(te.name)
+
+													fmt.Printf("\r⚡ %s %s\n",
+														style.ToolExecutingStyle.Render(te.name),
+														style.ErrorStyle.Render(fmt.Sprintf("Tool call failed: %s", errorMsg)))
+													te.hasShownError = true
+													te.failed = true
+													te.status = "failed"
+													te.errorMsg = errorMsg // Store the inferred error message
+													hasError = true
+													os.Stdout.Sync()
+												}
+											} else if strings.Contains(lowerContent, "success") || strings.Contains(lowerContent, "completed") ||
+												strings.Contains(lowerContent, "created") || strings.Contains(lowerContent, "saved") ||
+												strings.Contains(lowerContent, "finished") || strings.Contains(lowerContent, "done") {
+												// Stop working animation on success
+												stopWorkingAnimation(te.name)
+
+												fmt.Printf("\r⚡ %s %s\n",
+													style.ToolExecutingStyle.Render(te.name),
+													style.SuccessStyle.Render("✅ completed successfully"))
+												os.Stdout.Sync()
+											} else if !te.hasShownOutput {
+												fmt.Printf("   %s\n", style.LiveStatusStyle.Render("Processing..."))
+												te.hasShownOutput = true
+												os.Stdout.Sync()
+											}
+										}
+									}
+								}
+
+								// Update stored content
+								storedContent.content = msg.Content
+							}
+
+						default:
+							// Handle tool completion - check on any non-tool message type if we have pending tool executions
+							for msgID, te := range toolExecutions {
+								if te.hasOutput && !te.isComplete {
+									// Mark as complete if we receive a final message or if enough time has passed
+									if msg.Final || time.Since(te.startTime) > 2*time.Minute {
+										te.isComplete = true
+									} else if te.status == "running" && time.Since(te.startTime) > 30*time.Second {
+										// If running for more than 30 seconds without completion, mark as complete
+										te.isComplete = true
+									}
+
+									if te.isComplete {
+										// Stop any running animation cleanly
+										te.status = "complete"
+
+										// Update tool statistics
+										toolStats.mu.Lock()
+										toolStats.activeCalls--
+										if te.failed {
+											toolStats.failedCalls++
+										} else {
+											toolStats.completedCalls++
+										}
+										toolStats.mu.Unlock()
+
+										duration := time.Since(te.startTime).Seconds()
+
+										// Show clean completion status with actual error messages
+										if showToolCalls && !automationMode {
+											if te.failed {
+												// Show compact error message
+												errorDisplay := "error"
+												if te.errorMsg != "" {
+													errorDisplay = strings.TrimSpace(te.errorMsg)
+													if len(errorDisplay) > 50 {
+														errorDisplay = errorDisplay[:50] + "..."
+													}
+													// Clean for single line display
+													errorDisplay = strings.ReplaceAll(errorDisplay, "\n", " ")
+													errorDisplay = strings.ReplaceAll(errorDisplay, "\r", " ")
+												}
+												fmt.Printf("   ⚠️  %s: %s (%.1fs)\n",
+													style.WarningStyle.Render(te.name),
+													style.DimStyle.Render(errorDisplay),
+													duration)
+											} else {
+												fmt.Printf("   ✓ %s (%.1fs)\n",
+													style.SuccessStyle.Render("Completed"),
+													duration)
+											}
+											os.Stdout.Sync()
+											continue // Skip the old completion display
+										}
+
+										// Legacy variables for any remaining code
+										var statusEmoji string
+										var completionStatus string
+										if te.failed {
+											statusEmoji = statusFailed
+											completionStatus = "failed"
+										} else {
+											statusEmoji = statusDone
+											completionStatus = "completed"
+										}
+
+										// Show updated statistics only if tool calls are enabled and not in automation mode
+										if showToolCalls && !automationMode {
+											toolStats.mu.RLock()
+											updatedStatsStr := fmt.Sprintf("[%d active, %d completed, %d failed]",
+												toolStats.activeCalls, toolStats.completedCalls, toolStats.failedCalls)
+											toolStats.mu.RUnlock()
+
+											// Print completion status with enhanced summary
+											fmt.Printf("\n%s\n",
+												style.InfoBoxStyle.Render(fmt.Sprintf("%s %s %s (%0.1fs) %s",
+													statusEmoji,
+													style.ToolNameStyle.Render(te.name),
+													style.ToolCompleteStyle.Render(strings.ToUpper(completionStatus)),
+													duration,
+													style.ToolStatsStyle.Render(updatedStatsStr))))
+
+											// Print error summary if failed
+											if te.failed {
+												fmt.Printf("%s %s\n",
+													style.ToolOutputPrefixStyle.Render("⚠️"),
+													style.ErrorStyle.Render("Tool encountered errors during execution"))
+											}
+
+											// Print output summary with better formatting
+											if te.output.Len() > 0 {
+												outputSize := te.output.Len()
+												var sizeStr string
+												if outputSize < 1024 {
+													sizeStr = fmt.Sprintf("%d bytes", outputSize)
+												} else if outputSize < 1024*1024 {
+													sizeStr = fmt.Sprintf("%.1f KB", float64(outputSize)/1024)
+												} else {
+													sizeStr = fmt.Sprintf("%.1f MB", float64(outputSize)/(1024*1024))
+												}
+
+												outputSummary := fmt.Sprintf("Output: %s on runner://%s", sizeStr, te.runner)
+												if te.outputTruncated {
+													outputSummary += " (output was truncated)"
+												}
+
+												fmt.Printf("%s %s\n",
+													style.ToolOutputPrefixStyle.Render("📊"),
+													style.ToolSummaryStyle.Render(outputSummary))
+											} else if te.outputTruncated {
+												fmt.Printf("%s\n", style.DimStyle.Render(
+													"💡 Set KUBIYA_DEBUG=1 to see full output"))
+											}
+
+											// Remove redundant divider line for cleaner output
+										}
+										delete(toolExecutions, msgID)
+									}
 								}
 							}
-						}
-						// Add final completion message to ensure stream end is visible
-						if msg.Type == "completion" && msg.FinishReason != "" {
-							if debug {
-								fmt.Printf("\n[STREAM COMPLETE] Reason: %s\n", msg.FinishReason)
+
+							// Regular chat message
+							if msg.SenderName != "You" {
+								buf, exists := messageBuffer[msg.MessageID]
+								if !exists {
+									buf = &chatBuffer{}
+									messageBuffer[msg.MessageID] = buf
+								}
+
+								if len(msg.Content) > len(buf.content) {
+									newContent := msg.Content[len(buf.content):]
+
+									// Accumulate content and handle code blocks
+									for _, char := range newContent {
+										if char == '`' {
+											buf.inCodeBlock = !buf.inCodeBlock
+											if buf.inCodeBlock {
+												// Print accumulated sentence before code block
+												if buf.sentence.Len() > 0 {
+													sentence := strings.TrimSpace(buf.sentence.String())
+													if sentence != "" {
+														// Print without [Bot] prefix
+														fmt.Printf("%s\n",
+															style.AgentStyle.Render(sentence))
+														buf.sentence.Reset()
+													}
+												}
+											} else {
+												// Print accumulated code block
+												if buf.codeBlock.Len() > 0 {
+													fmt.Printf("%s\n%s\n%s\n",
+														style.CodeBlockStyle.Render("```"),
+														style.CodeBlockStyle.Render(buf.codeBlock.String()),
+														style.CodeBlockStyle.Render("```"))
+													buf.codeBlock.Reset()
+												}
+											}
+											continue
+										}
+
+										if buf.inCodeBlock {
+											buf.codeBlock.WriteRune(char)
+										} else {
+											buf.sentence.WriteRune(char)
+											if char == '.' || char == '!' || char == '?' || char == '\n' {
+												sentence := strings.TrimSpace(buf.sentence.String())
+												if sentence != "" {
+													// Print without [Bot] prefix
+													fmt.Printf("%s\n",
+														style.AgentStyle.Render(sentence))
+													buf.sentence.Reset()
+												}
+											}
+										}
+									}
+
+									buf.content = msg.Content
+								}
+							}
+
+							if msg.Final {
+								// Print any remaining content in the sentence buffer
+								if buf, exists := messageBuffer[msg.MessageID]; exists {
+									remaining := strings.TrimSpace(buf.sentence.String())
+									if remaining != "" {
+										fmt.Printf("%s\n",
+											style.AgentStyle.Render(remaining))
+									}
+									// Also handle any remaining code block
+									if buf.codeBlock.Len() > 0 {
+										fmt.Printf("%s\n%s\n%s\n",
+											style.CodeBlockStyle.Render("```"),
+											style.CodeBlockStyle.Render(buf.codeBlock.String()),
+											style.CodeBlockStyle.Render("```"))
+									}
+
+									// Check for agent error messages and trigger session recovery if needed
+									fullContent := buf.content
+									if isAgentErrorMessage(fullContent) {
+										// Agent indicated an internal error - trigger session recovery
+										if streamRetryCount < retries {
+											streamRetryCount++
+											backoffDelay := calculateBackoffDelay(streamRetryCount - 1)
+
+											if !automationMode {
+												fmt.Printf("\n%s\n", style.WarningStyle.Render(
+													fmt.Sprintf("⚠️  Agent error detected (attempt %d/%d): %s",
+														streamRetryCount, retries, "Agent indicated internal issue")))
+												fmt.Printf("%s\n", style.SpinnerStyle.Render(
+													fmt.Sprintf("🔄 Starting new session in %.1fs...", backoffDelay.Seconds())))
+											}
+
+											// Wait before retry
+											time.Sleep(backoffDelay)
+
+											// Start new session with original prompt by triggering session recovery
+											sessionRecoveryNeeded = true
+											hasError = true
+											break // Break out of message loop to trigger session recovery
+										} else {
+											// Exhausted retries for agent errors
+											fmt.Fprintf(os.Stderr, "%s\n", style.ErrorStyle.Render(
+												fmt.Sprintf("❌ Agent failed after %d session recoveries", retries)))
+											hasError = true
+											return fmt.Errorf("agent error after %d recoveries: %s", retries, strings.TrimSpace(fullContent[:min(100, len(fullContent))]))
+										}
+									}
+								}
+								// Add final completion message to ensure stream end is visible
+								if msg.Type == "completion" && msg.FinishReason != "" {
+									if debug {
+										fmt.Printf("\n[STREAM COMPLETE] Reason: %s\n", msg.FinishReason)
+									}
+								}
+								fmt.Println()
 							}
 						}
-						fmt.Println()
 					}
-				}
-			}
 
-			// Check if session recovery is needed
-			if sessionRecoveryNeeded {
-				sessionRetryCount++
-				if sessionRetryCount <= retries {
-					backoffDelay := calculateBackoffDelay(sessionRetryCount - 1)
-					
-					if !automationMode {
-						fmt.Printf("\n%s\n", style.WarningStyle.Render(
-							fmt.Sprintf("🔄 Starting new session (attempt %d/%d) in %.1fs...", 
-								sessionRetryCount+1, retries+1, backoffDelay.Seconds())))
+					// Check if session recovery is needed
+					if sessionRecoveryNeeded {
+						sessionRetryCount++
+						if sessionRetryCount <= retries {
+							backoffDelay := calculateBackoffDelay(sessionRetryCount - 1)
+
+							if !automationMode {
+								fmt.Printf("\n%s\n", style.WarningStyle.Render(
+									fmt.Sprintf("🔄 Starting new session (attempt %d/%d) in %.1fs...",
+										sessionRetryCount+1, retries+1, backoffDelay.Seconds())))
+							}
+
+							// Wait before retry
+							time.Sleep(backoffDelay)
+
+							// Start new session with original message
+							if !inline {
+								msgChan, err = client.SendMessageWithRetry(cmd.Context(), agentID, enhancedMessage, "", retries)
+								if err != nil {
+									return fmt.Errorf("failed to start new session after agent error: %w", err)
+								}
+							} else {
+								msgChan, err = client.SendInlineAgentMessage(cmd.Context(), message, "", context, inlineAgent)
+								if err != nil {
+									return fmt.Errorf("failed to start new inline session after agent error: %w", err)
+								}
+							}
+
+							// Reset session ID to start fresh
+							actualSessionID = ""
+
+							// Continue to next session retry iteration
+							continue
+						} else {
+							// Exhausted all session retries
+							return fmt.Errorf("agent failed after %d session recoveries", retries)
+						}
 					}
-					
-					// Wait before retry
-					time.Sleep(backoffDelay)
-					
-					// Start new session with original message
-					if !inline {
-						msgChan, err = client.SendMessageWithRetry(cmd.Context(), agentID, enhancedMessage, "", retries)
-						if err != nil {
-							return fmt.Errorf("failed to start new session after agent error: %w", err)
+
+					// If we reach here, the session completed successfully, break out of retry loop
+					break
+				}
+
+				if !stream {
+					fmt.Println(finalResponse.String())
+				}
+
+				// Handle follow-up for non-interactive sessions without tool execution (skip for inline agents)
+				if !interactive && !toolsExecuted && !hasError && completionReason != "error" && !inline {
+					if debug {
+						fmt.Printf("🔄 No tools executed, sending follow-up prompt\n")
+					}
+
+					followUpMsg := "You didn't seem to execute anything. You're running in a non-interactive session and the user confirms to execute read-only operations. EXECUTE RIGHT AWAY!"
+
+					// Send follow-up message
+					followUpChan, err := client.SendMessageWithContext(cmd.Context(), agentID, followUpMsg, actualSessionID, map[string]string{})
+					if err != nil {
+						if debug {
+							fmt.Printf("⚠️ Failed to send follow-up message: %v\n", err)
 						}
 					} else {
-						msgChan, err = client.SendInlineAgentMessage(cmd.Context(), message, "", context, inlineAgent)
-						if err != nil {
-							return fmt.Errorf("failed to start new inline session after agent error: %w", err)
+						if !automationMode {
+							fmt.Printf("\n%s\n", style.InfoBoxStyle.Render("🔄 Following up to ensure execution..."))
+						}
+
+						// Process follow-up response
+						for msg := range followUpChan {
+							if msg.Error != "" {
+								fmt.Fprintf(os.Stderr, "%s\n", style.ErrorStyle.Render("❌ Error: "+msg.Error))
+								hasError = true
+								break
+							}
+							if msg.SessionID != "" {
+								actualSessionID = msg.SessionID
+							}
+							// Handle follow-up messages similar to main processing
+							if msg.Type == "tool" {
+								toolsExecuted = true
+							}
 						}
 					}
-					
-					// Reset session ID to start fresh
-					actualSessionID = ""
-					
-					// Continue to next session retry iteration
-					continue
-				} else {
-					// Exhausted all session retries
-					return fmt.Errorf("agent failed after %d session recoveries", retries)
 				}
-			}
 
-			// If we reach here, the session completed successfully, break out of retry loop
-			break
-		}
+				// Show session continuation message (only if not in automation mode)
+				if !interactive && actualSessionID != "" && !automationMode {
+					fmt.Printf("\n%s\n", style.InfoBoxStyle.Render("💬 To continue this conversation, run:"))
 
-		if !stream {
-			fmt.Println(finalResponse.String())
-		}
+					// Include agent name in the continuation command if available
+					var continuationCmd string
+					if agentName != "" {
+						continuationCmd = fmt.Sprintf("kubiya chat -n %s --session %s -m \"your message here\"", agentName, actualSessionID)
+					} else if agentID != "" {
+						continuationCmd = fmt.Sprintf("kubiya chat -t %s --session %s -m \"your message here\"", agentID, actualSessionID)
+					} else {
+						continuationCmd = fmt.Sprintf("kubiya chat --session %s -m \"your message here\"", actualSessionID)
+					}
 
-		// Handle follow-up for non-interactive sessions without tool execution (skip for inline agents)
-		if !interactive && !toolsExecuted && !hasError && completionReason != "error" && !inline {
-			if debug {
-				fmt.Printf("🔄 No tools executed, sending follow-up prompt\n")
-			}
+					fmt.Printf("%s\n", style.HighlightStyle.Render(continuationCmd))
+					fmt.Println()
+				}
 
-			followUpMsg := "You didn't seem to execute anything. You're running in a non-interactive session and the user confirms to execute read-only operations. EXECUTE RIGHT AWAY!"
+				// Show simple debug tip if any output was truncated
+				if anyOutputTruncated && !interactive && !automationMode {
+					fmt.Printf("\n%s\n", style.DimStyle.Render("💡 Use KUBIYA_DEBUG=1 to see full tool outputs"))
+				}
 
-			// Send follow-up message
-			followUpChan, err := client.SendMessageWithContext(cmd.Context(), agentID, followUpMsg, actualSessionID, map[string]string{})
-			if err != nil {
+				// Handle completion status and exit codes
 				if debug {
-					fmt.Printf("⚠️ Failed to send follow-up message: %v\n", err)
-				}
-			} else {
-				if !automationMode {
-					fmt.Printf("\n%s\n", style.InfoBoxStyle.Render("🔄 Following up to ensure execution..."))
+					fmt.Printf("🔍 Completion reason: %s, hasError: %v, toolsExecuted: %v\n", completionReason, hasError, toolsExecuted)
+					// Debug tool execution states
+					for msgID, te := range toolExecutions {
+						fmt.Printf("🔍 Tool %s (ID: %s): failed=%v, isComplete=%v, status=%s, errorMsg='%s'\n",
+							te.name, msgID[:8], te.failed, te.isComplete, te.status, te.errorMsg)
+					}
 				}
 
-				// Process follow-up response
-				for msg := range followUpChan {
-					if msg.Error != "" {
-						fmt.Fprintf(os.Stderr, "%s\n", style.ErrorStyle.Render("❌ Error: "+msg.Error))
-						hasError = true
+				// Return proper exit code based on completion status
+				// Check if we actually have any failed tools before exiting with error
+				actuallyHasFailures := false
+				for _, te := range toolExecutions {
+					if te.failed && te.isComplete {
+						actuallyHasFailures = true
 						break
 					}
-					if msg.SessionID != "" {
-						actualSessionID = msg.SessionID
-					}
-					// Handle follow-up messages similar to main processing
-					if msg.Type == "tool" {
-						toolsExecuted = true
-					}
 				}
-			}
-		}
 
-		// Show session continuation message (only if not in automation mode)
-		if !interactive && actualSessionID != "" && !automationMode {
-			fmt.Printf("\n%s\n", style.InfoBoxStyle.Render("💬 To continue this conversation, run:"))
+				if actuallyHasFailures {
+					if debug {
+						fmt.Printf("🚨 Exiting with error code 1 due to actual tool failures\n")
+					}
+					return fmt.Errorf("Some errors occurred during execution")
+				} else if hasError && debug {
+					// Debug: hasError was set but no actual failures
+					fmt.Printf("⚠️  Warning: hasError=true but no actual tool failures detected - ignoring\n")
+				}
 
-			// Include agent name in the continuation command if available
-			var continuationCmd string
-			if agentName != "" {
-				continuationCmd = fmt.Sprintf("kubiya chat -n %s --session %s -m \"your message here\"", agentName, actualSessionID)
-			} else if agentID != "" {
-				continuationCmd = fmt.Sprintf("kubiya chat -t %s --session %s -m \"your message here\"", agentID, actualSessionID)
-			} else {
-				continuationCmd = fmt.Sprintf("kubiya chat --session %s -m \"your message here\"", actualSessionID)
-			}
-
-			fmt.Printf("%s\n", style.HighlightStyle.Render(continuationCmd))
-			fmt.Println()
-		}
-
-		// Show simple debug tip if any output was truncated
-		if anyOutputTruncated && !interactive && !automationMode {
-			fmt.Printf("\n%s\n", style.DimStyle.Render("💡 Use KUBIYA_DEBUG=1 to see full tool outputs"))
-		}
-
-		// Handle completion status and exit codes
-		if debug {
-			fmt.Printf("🔍 Completion reason: %s, hasError: %v, toolsExecuted: %v\n", completionReason, hasError, toolsExecuted)
-			// Debug tool execution states
-			for msgID, te := range toolExecutions {
-				fmt.Printf("🔍 Tool %s (ID: %s): failed=%v, isComplete=%v, status=%s, errorMsg='%s'\n",
-					te.name, msgID[:8], te.failed, te.isComplete, te.status, te.errorMsg)
-			}
-		}
-
-		// Return proper exit code based on completion status
-		// Check if we actually have any failed tools before exiting with error
-		actuallyHasFailures := false
-		for _, te := range toolExecutions {
-			if te.failed && te.isComplete {
-				actuallyHasFailures = true
-				break
-			}
-		}
-
-		if actuallyHasFailures {
-			if debug {
-				fmt.Printf("🚨 Exiting with error code 1 due to actual tool failures\n")
-			}
-			return fmt.Errorf("Some errors occurred during execution")
-		} else if hasError && debug {
-			// Debug: hasError was set but no actual failures
-			fmt.Printf("⚠️  Warning: hasError=true but no actual tool failures detected - ignoring\n")
-		}
-
-		// Check for non-successful completion reasons
-		switch completionReason {
-		case "error":
-			if debug {
-				fmt.Printf("🚨 Exiting with error code 1 due to completion reason: %s\n", completionReason)
-			}
-			return fmt.Errorf("agent execution failed with reason: %s", completionReason)
-		case "stop", "length", "":
-			// Normal successful completion
-			if debug {
-				fmt.Printf("✅ Exiting with success code 0\n")
-			}
-			return nil
-		default:
-			// Unknown completion reason - log but don't fail
-			if debug {
-				fmt.Printf("⚠️ Unknown completion reason: %s, treating as success\n", completionReason)
-			}
-			return nil
-		}
+				// Check for non-successful completion reasons
+				switch completionReason {
+				case "error":
+					if debug {
+						fmt.Printf("🚨 Exiting with error code 1 due to completion reason: %s\n", completionReason)
+					}
+					return fmt.Errorf("agent execution failed with reason: %s", completionReason)
+				case "stop", "length", "":
+					// Normal successful completion
+					if debug {
+						fmt.Printf("✅ Exiting with success code 0\n")
+					}
+					return nil
+				default:
+					// Unknown completion reason - log but don't fail
+					if debug {
+						fmt.Printf("⚠️ Unknown completion reason: %s, treating as success\n", completionReason)
+					}
+					return nil
+				}
+			})
 		},
 	}
 

@@ -16,6 +16,7 @@ import (
 
 	"github.com/kubiyabot/cli/internal/config"
 	"github.com/kubiyabot/cli/internal/kubiya"
+	"github.com/kubiyabot/cli/internal/sentry"
 	"github.com/kubiyabot/cli/internal/style"
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
@@ -702,131 +703,123 @@ Environment Variables:
   kubiya tool exec --source-uuid abc123 --name "parameterized-tool" \
     --args '{"region":"us-east-1","instance_count":3}'`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx := cmd.Context()
-			client := kubiya.NewClient(cfg)
+			return sentry.WithTransaction(cmd.Context(), "tool_execute", func(ctx context.Context) error {
+				client := kubiya.NewClient(cfg)
 
-			// Apply environment variable defaults if flags were not set
-			if cmd.Flags().Changed("timeout") == false {
-				if envTimeout := os.Getenv("KUBIYA_TOOL_TIMEOUT"); envTimeout != "" {
-					if t, err := strconv.Atoi(envTimeout); err == nil {
-						timeout = t
-						fmt.Printf("%s Using timeout from KUBIYA_TOOL_TIMEOUT: %d seconds\n",
-							style.DimStyle.Render("🔧"), timeout)
-					}
-				}
-			}
+				// Add breadcrumb for tool execution
+				sentry.AddBreadcrumb("tool", "Tool execution started", map[string]interface{}{
+					"tool_name":     toolName,
+					"source_uuid":   sourceUUID,
+					"runner":        runner,
+					"timeout":       timeout,
+					"output_format": outputFormat,
+				})
 
-			if cmd.Flags().Changed("runner") == false && runner == "" {
-				if envRunner := os.Getenv("KUBIYA_TOOL_RUNNER"); envRunner != "" {
-					runner = envRunner
-					fmt.Printf("%s Using runner from KUBIYA_TOOL_RUNNER: %s\n",
-						style.DimStyle.Render("🔧"), runner)
-				}
-			}
-
-			if cmd.Flags().Changed("output") == false {
-				if envOutput := os.Getenv("KUBIYA_TOOL_OUTPUT_FORMAT"); envOutput != "" {
-					outputFormat = envOutput
-					fmt.Printf("%s Using output format from KUBIYA_TOOL_OUTPUT_FORMAT: %s\n",
-						style.DimStyle.Render("🔧"), outputFormat)
-				}
-			}
-
-			if cmd.Flags().Changed("type") == false && toolType == "" {
-				if envType := os.Getenv("KUBIYA_TOOL_TYPE"); envType != "" {
-					toolType = envType
-					fmt.Printf("%s Using tool type from KUBIYA_TOOL_TYPE: %s\n",
-						style.DimStyle.Render("🔧"), toolType)
-				}
-			}
-
-			if cmd.Flags().Changed("skip-health-check") == false {
-				if envSkip := os.Getenv("KUBIYA_SKIP_HEALTH_CHECK"); envSkip != "" {
-					skipHealthCheck = strings.ToLower(envSkip) == "true" || envSkip == "1"
-					if skipHealthCheck {
-						fmt.Printf("%s Health check disabled by KUBIYA_SKIP_HEALTH_CHECK\n",
-							style.DimStyle.Render("🔧"))
-					}
-				}
-			}
-
-			// Build tool definition
-			var toolDef map[string]interface{}
-
-			// Load from URL if specified
-			if toolURL != "" {
-				fmt.Printf("%s Loading tool from URL: %s\n", style.InfoStyle.Render("🌐"), toolURL)
-
-				// Fetch the tool definition from URL
-				resp, err := http.Get(toolURL)
-				if err != nil {
-					return fmt.Errorf("failed to fetch tool from URL: %w", err)
-				}
-				defer resp.Body.Close()
-
-				if resp.StatusCode != http.StatusOK {
-					return fmt.Errorf("failed to fetch tool from URL: status %d", resp.StatusCode)
-				}
-
-				// Parse the response based on content type
-				contentType := resp.Header.Get("Content-Type")
-				data, err := io.ReadAll(resp.Body)
-				if err != nil {
-					return fmt.Errorf("failed to read tool definition: %w", err)
-				}
-
-				// Try to parse as JSON or YAML
-				if strings.Contains(contentType, "json") || strings.HasSuffix(toolURL, ".json") {
-					if err := json.Unmarshal(data, &toolDef); err != nil {
-						return fmt.Errorf("failed to parse JSON tool definition: %w", err)
-					}
-				} else {
-					// For YAML, we'd need to parse it - for now assume JSON
-					if err := json.Unmarshal(data, &toolDef); err != nil {
-						return fmt.Errorf("failed to parse tool definition: %w", err)
-					}
-				}
-
-				// Extract tool name
-				if name, ok := toolDef["name"].(string); ok && name != "" {
-					toolName = name
-				}
-				fmt.Printf("%s Loaded tool: %s\n", style.SuccessStyle.Render("✓"), toolName)
-			} else if sourceUUID != "" {
-				// Load from source UUID
-				if toolName == "" {
-					return fmt.Errorf("tool name is required when using --source-uuid")
-				}
-
-				fmt.Printf("%s Loading tool '%s' from source: %s\n",
-					style.InfoStyle.Render("📦"), toolName, sourceUUID)
-
-				// Get source metadata
-				source, err := client.GetSourceMetadata(ctx, sourceUUID)
-				if err != nil {
-					return fmt.Errorf("failed to get source metadata: %w", err)
-				}
-
-				// Find the tool
-				var found bool
-				for _, tool := range source.Tools {
-					if tool.Name == toolName {
-						// Convert tool to map
-						toolJSON, err := json.Marshal(tool)
-						if err != nil {
-							return fmt.Errorf("failed to marshal tool: %w", err)
+				// Apply environment variable defaults if flags were not set
+				if cmd.Flags().Changed("timeout") == false {
+					if envTimeout := os.Getenv("KUBIYA_TOOL_TIMEOUT"); envTimeout != "" {
+						if t, err := strconv.Atoi(envTimeout); err == nil {
+							timeout = t
+							fmt.Printf("%s Using timeout from KUBIYA_TOOL_TIMEOUT: %d seconds\n",
+								style.DimStyle.Render("🔧"), timeout)
 						}
-						if err := json.Unmarshal(toolJSON, &toolDef); err != nil {
-							return fmt.Errorf("failed to unmarshal tool: %w", err)
-						}
-						found = true
-						break
 					}
 				}
 
-				// Also check inline tools
-				if !found {
-					for _, tool := range source.InlineTools {
+				if cmd.Flags().Changed("runner") == false && runner == "" {
+					if envRunner := os.Getenv("KUBIYA_TOOL_RUNNER"); envRunner != "" {
+						runner = envRunner
+						fmt.Printf("%s Using runner from KUBIYA_TOOL_RUNNER: %s\n",
+							style.DimStyle.Render("🔧"), runner)
+					}
+				}
+
+				if cmd.Flags().Changed("output") == false {
+					if envOutput := os.Getenv("KUBIYA_TOOL_OUTPUT_FORMAT"); envOutput != "" {
+						outputFormat = envOutput
+						fmt.Printf("%s Using output format from KUBIYA_TOOL_OUTPUT_FORMAT: %s\n",
+							style.DimStyle.Render("🔧"), outputFormat)
+					}
+				}
+
+				if cmd.Flags().Changed("type") == false && toolType == "" {
+					if envType := os.Getenv("KUBIYA_TOOL_TYPE"); envType != "" {
+						toolType = envType
+						fmt.Printf("%s Using tool type from KUBIYA_TOOL_TYPE: %s\n",
+							style.DimStyle.Render("🔧"), toolType)
+					}
+				}
+
+				if cmd.Flags().Changed("skip-health-check") == false {
+					if envSkip := os.Getenv("KUBIYA_SKIP_HEALTH_CHECK"); envSkip != "" {
+						skipHealthCheck = strings.ToLower(envSkip) == "true" || envSkip == "1"
+						if skipHealthCheck {
+							fmt.Printf("%s Health check disabled by KUBIYA_SKIP_HEALTH_CHECK\n",
+								style.DimStyle.Render("🔧"))
+						}
+					}
+				}
+
+				// Build tool definition
+				var toolDef map[string]interface{}
+
+				// Load from URL if specified
+				if toolURL != "" {
+					fmt.Printf("%s Loading tool from URL: %s\n", style.InfoStyle.Render("🌐"), toolURL)
+
+					// Fetch the tool definition from URL
+					resp, err := http.Get(toolURL)
+					if err != nil {
+						return fmt.Errorf("failed to fetch tool from URL: %w", err)
+					}
+					defer resp.Body.Close()
+
+					if resp.StatusCode != http.StatusOK {
+						return fmt.Errorf("failed to fetch tool from URL: status %d", resp.StatusCode)
+					}
+
+					// Parse the response based on content type
+					contentType := resp.Header.Get("Content-Type")
+					data, err := io.ReadAll(resp.Body)
+					if err != nil {
+						return fmt.Errorf("failed to read tool definition: %w", err)
+					}
+
+					// Try to parse as JSON or YAML
+					if strings.Contains(contentType, "json") || strings.HasSuffix(toolURL, ".json") {
+						if err := json.Unmarshal(data, &toolDef); err != nil {
+							return fmt.Errorf("failed to parse JSON tool definition: %w", err)
+						}
+					} else {
+						// For YAML, we'd need to parse it - for now assume JSON
+						if err := json.Unmarshal(data, &toolDef); err != nil {
+							return fmt.Errorf("failed to parse tool definition: %w", err)
+						}
+					}
+
+					// Extract tool name
+					if name, ok := toolDef["name"].(string); ok && name != "" {
+						toolName = name
+					}
+					fmt.Printf("%s Loaded tool: %s\n", style.SuccessStyle.Render("✓"), toolName)
+				} else if sourceUUID != "" {
+					// Load from source UUID
+					if toolName == "" {
+						return fmt.Errorf("tool name is required when using --source-uuid")
+					}
+
+					fmt.Printf("%s Loading tool '%s' from source: %s\n",
+						style.InfoStyle.Render("📦"), toolName, sourceUUID)
+
+					// Get source metadata
+					source, err := client.GetSourceMetadata(ctx, sourceUUID)
+					if err != nil {
+						return fmt.Errorf("failed to get source metadata: %w", err)
+					}
+
+					// Find the tool
+					var found bool
+					for _, tool := range source.Tools {
 						if tool.Name == toolName {
 							// Convert tool to map
 							toolJSON, err := json.Marshal(tool)
@@ -840,363 +833,381 @@ Environment Variables:
 							break
 						}
 					}
-				}
 
-				if !found {
-					return fmt.Errorf("tool '%s' not found in source %s", toolName, sourceUUID)
-				}
-
-				fmt.Printf("%s Loaded tool: %s\n", style.SuccessStyle.Render("✓"), toolName)
-			} else if jsonInput != "" {
-				// Parse direct JSON input
-				if err := json.Unmarshal([]byte(jsonInput), &toolDef); err != nil {
-					return fmt.Errorf("failed to parse JSON input: %w", err)
-				}
-				// Extract tool name if not provided
-				if toolName == "" {
-					if name, ok := toolDef["name"].(string); ok {
-						toolName = name
-					}
-				}
-			} else if jsonFile != "" {
-				// Read tool definition from file
-				data, err := os.ReadFile(jsonFile)
-				if err != nil {
-					return fmt.Errorf("failed to read JSON file: %w", err)
-				}
-				if err := json.Unmarshal(data, &toolDef); err != nil {
-					return fmt.Errorf("failed to parse JSON file: %w", err)
-				}
-				// Extract tool name if not provided
-				if toolName == "" {
-					if name, ok := toolDef["name"].(string); ok {
-						toolName = name
-					}
-				}
-			} else {
-				// Build tool definition from flags
-				if toolName == "" {
-					return fmt.Errorf("tool name is required")
-				}
-				if content == "" {
-					return fmt.Errorf("tool content is required")
-				}
-
-				toolDef = map[string]interface{}{
-					"name":        toolName,
-					"description": toolDesc,
-					"content":     content,
-				}
-
-				if toolType != "" {
-					toolDef["type"] = toolType
-				} else {
-					toolDef["type"] = "docker" // Default type
-				}
-				if image != "" {
-					toolDef["image"] = image
-				}
-			}
-
-			// Apply integration templates
-			if len(integrations) > 0 {
-				fmt.Printf("%s Applying integration templates...\n", style.InfoStyle.Render("🔌"))
-				fs := afero.NewOsFs()
-				allIntegrations, err := GetAllToolIntegrations(fs)
-				if err != nil {
-					return fmt.Errorf("failed to load integrations: %w", err)
-				}
-
-				for _, integrationName := range integrations {
-					integration, ok := allIntegrations[integrationName]
-					if !ok {
-						return fmt.Errorf("integration '%s' not found", integrationName)
+					// Also check inline tools
+					if !found {
+						for _, tool := range source.InlineTools {
+							if tool.Name == toolName {
+								// Convert tool to map
+								toolJSON, err := json.Marshal(tool)
+								if err != nil {
+									return fmt.Errorf("failed to marshal tool: %w", err)
+								}
+								if err := json.Unmarshal(toolJSON, &toolDef); err != nil {
+									return fmt.Errorf("failed to unmarshal tool: %w", err)
+								}
+								found = true
+								break
+							}
+						}
 					}
 
-					fmt.Printf("%s Applying %s integration (%s)\n",
-						style.SuccessStyle.Render("✓"),
-						style.HighlightStyle.Render(integrationName),
-						integration.Description)
-
-					if err := ApplyIntegrationToTool(toolDef, integration); err != nil {
-						return fmt.Errorf("failed to apply integration '%s': %w", integrationName, err)
+					if !found {
+						return fmt.Errorf("tool '%s' not found in source %s", toolName, sourceUUID)
 					}
-				}
-			}
 
-			// Apply additional tool properties from flags
-			if err := applyToolPropertiesFromFlags(toolDef, withFiles, withVolumes, withServices, envVars, args, iconURL); err != nil {
-				return fmt.Errorf("failed to apply tool properties: %w", err)
-			}
-
-			// Default runner if not specified
-			if runner == "" {
-				// Check for default runner env var
-				if defaultRunner := os.Getenv("KUBIYA_DEFAULT_RUNNER"); defaultRunner != "" {
-					runner = defaultRunner
-					fmt.Printf("%s Using default runner from KUBIYA_DEFAULT_RUNNER: %s\n",
-						style.DimStyle.Render("🔧"), runner)
-				} else {
-					runner = "auto"
-				}
-			}
-
-			// Handle "default" runner value
-			if runner == "default" {
-				defaultRunner := os.Getenv("KUBIYA_DEFAULT_RUNNER")
-				if defaultRunner != "" {
-					runner = defaultRunner
-					fmt.Printf("%s Using default runner from KUBIYA_DEFAULT_RUNNER: %s\n",
-						style.DimStyle.Render("🔧"), runner)
-				} else {
-					runner = "auto"
-					fmt.Printf("%s No KUBIYA_DEFAULT_RUNNER set, using auto selection\n",
-						style.DimStyle.Render("🔧"))
-				}
-			}
-
-			// Handle auto runner selection
-			selectedRunner := runner
-			if runner == "auto" {
-				fmt.Printf("%s Auto-selecting runner...\n", style.InfoStyle.Render("🔍"))
-
-				// Try kubiya-hosted first
-				runnerInfo, err := client.GetRunner(ctx, "kubiya-hosted")
-				if err == nil && isRunnerHealthy(runnerInfo) {
-					selectedRunner = "kubiya-hosted"
-					fmt.Printf("%s Selected primary runner: %s (healthy)\n",
-						style.SuccessStyle.Render("✓"), style.HighlightStyle.Render(selectedRunner))
-				} else {
-					// kubiya-hosted is not healthy, find an alternative
+					fmt.Printf("%s Loaded tool: %s\n", style.SuccessStyle.Render("✓"), toolName)
+				} else if jsonInput != "" {
+					// Parse direct JSON input
+					if err := json.Unmarshal([]byte(jsonInput), &toolDef); err != nil {
+						return fmt.Errorf("failed to parse JSON input: %w", err)
+					}
+					// Extract tool name if not provided
+					if toolName == "" {
+						if name, ok := toolDef["name"].(string); ok {
+							toolName = name
+						}
+					}
+				} else if jsonFile != "" {
+					// Read tool definition from file
+					data, err := os.ReadFile(jsonFile)
 					if err != nil {
-						fmt.Printf("%s Primary runner 'kubiya-hosted' not accessible: %v\n",
+						return fmt.Errorf("failed to read JSON file: %w", err)
+					}
+					if err := json.Unmarshal(data, &toolDef); err != nil {
+						return fmt.Errorf("failed to parse JSON file: %w", err)
+					}
+					// Extract tool name if not provided
+					if toolName == "" {
+						if name, ok := toolDef["name"].(string); ok {
+							toolName = name
+						}
+					}
+				} else {
+					// Build tool definition from flags
+					if toolName == "" {
+						return fmt.Errorf("tool name is required")
+					}
+					if content == "" {
+						return fmt.Errorf("tool content is required")
+					}
+
+					toolDef = map[string]interface{}{
+						"name":        toolName,
+						"description": toolDesc,
+						"content":     content,
+					}
+
+					if toolType != "" {
+						toolDef["type"] = toolType
+					} else {
+						toolDef["type"] = "docker" // Default type
+					}
+					if image != "" {
+						toolDef["image"] = image
+					}
+				}
+
+				// Apply integration templates
+				if len(integrations) > 0 {
+					fmt.Printf("%s Applying integration templates...\n", style.InfoStyle.Render("🔌"))
+					fs := afero.NewOsFs()
+					allIntegrations, err := GetAllToolIntegrations(fs)
+					if err != nil {
+						return fmt.Errorf("failed to load integrations: %w", err)
+					}
+
+					for _, integrationName := range integrations {
+						integration, ok := allIntegrations[integrationName]
+						if !ok {
+							return fmt.Errorf("integration '%s' not found", integrationName)
+						}
+
+						fmt.Printf("%s Applying %s integration (%s)\n",
+							style.SuccessStyle.Render("✓"),
+							style.HighlightStyle.Render(integrationName),
+							integration.Description)
+
+						if err := ApplyIntegrationToTool(toolDef, integration); err != nil {
+							return fmt.Errorf("failed to apply integration '%s': %w", integrationName, err)
+						}
+					}
+				}
+
+				// Apply additional tool properties from flags
+				if err := applyToolPropertiesFromFlags(toolDef, withFiles, withVolumes, withServices, envVars, args, iconURL); err != nil {
+					return fmt.Errorf("failed to apply tool properties: %w", err)
+				}
+
+				// Default runner if not specified
+				if runner == "" {
+					// Check for default runner env var
+					if defaultRunner := os.Getenv("KUBIYA_DEFAULT_RUNNER"); defaultRunner != "" {
+						runner = defaultRunner
+						fmt.Printf("%s Using default runner from KUBIYA_DEFAULT_RUNNER: %s\n",
+							style.DimStyle.Render("🔧"), runner)
+					} else {
+						runner = "auto"
+					}
+				}
+
+				// Handle "default" runner value
+				if runner == "default" {
+					defaultRunner := os.Getenv("KUBIYA_DEFAULT_RUNNER")
+					if defaultRunner != "" {
+						runner = defaultRunner
+						fmt.Printf("%s Using default runner from KUBIYA_DEFAULT_RUNNER: %s\n",
+							style.DimStyle.Render("🔧"), runner)
+					} else {
+						runner = "auto"
+						fmt.Printf("%s No KUBIYA_DEFAULT_RUNNER set, using auto selection\n",
+							style.DimStyle.Render("🔧"))
+					}
+				}
+
+				// Handle auto runner selection
+				selectedRunner := runner
+				if runner == "auto" {
+					fmt.Printf("%s Auto-selecting runner...\n", style.InfoStyle.Render("🔍"))
+
+					// Try kubiya-hosted first
+					runnerInfo, err := client.GetRunner(ctx, "kubiya-hosted")
+					if err == nil && isRunnerHealthy(runnerInfo) {
+						selectedRunner = "kubiya-hosted"
+						fmt.Printf("%s Selected primary runner: %s (healthy)\n",
+							style.SuccessStyle.Render("✓"), style.HighlightStyle.Render(selectedRunner))
+					} else {
+						// kubiya-hosted is not healthy, find an alternative
+						if err != nil {
+							fmt.Printf("%s Primary runner 'kubiya-hosted' not accessible: %v\n",
+								style.WarningStyle.Render("⚠️"), err)
+						} else {
+							fmt.Printf("%s Primary runner 'kubiya-hosted' is not healthy (status: %s)\n",
+								style.WarningStyle.Render("⚠️"), runnerInfo.RunnerHealth.Status)
+						}
+
+						// List all runners and find a healthy one
+						fmt.Printf("%s Searching for alternative runners...\n", style.DimStyle.Render("›"))
+						runners, err := client.ListRunners(ctx)
+						if err != nil {
+							return fmt.Errorf("failed to list runners: %w", err)
+						}
+
+						// Find the first healthy runner
+						for _, r := range runners {
+							if r.Name != "kubiya-hosted" && isRunnerHealthy(r) {
+								selectedRunner = r.Name
+								fmt.Printf("%s Selected fallback runner: %s (healthy, %s)\n",
+									style.SuccessStyle.Render("✓"),
+									style.HighlightStyle.Render(selectedRunner),
+									r.RunnerType)
+								break
+							}
+						}
+
+						// If no healthy runner found
+						if selectedRunner == "auto" {
+							return fmt.Errorf("no healthy runners available")
+						}
+					}
+				} else if !skipHealthCheck {
+					// For explicitly specified runners, check health
+					runnerInfo, err := client.GetRunner(ctx, selectedRunner)
+					if err != nil {
+						fmt.Printf("%s Warning: Could not check runner health: %v\n",
 							style.WarningStyle.Render("⚠️"), err)
 					} else {
-						fmt.Printf("%s Primary runner 'kubiya-hosted' is not healthy (status: %s)\n",
-							style.WarningStyle.Render("⚠️"), runnerInfo.RunnerHealth.Status)
-					}
-
-					// List all runners and find a healthy one
-					fmt.Printf("%s Searching for alternative runners...\n", style.DimStyle.Render("›"))
-					runners, err := client.ListRunners(ctx)
-					if err != nil {
-						return fmt.Errorf("failed to list runners: %w", err)
-					}
-
-					// Find the first healthy runner
-					for _, r := range runners {
-						if r.Name != "kubiya-hosted" && isRunnerHealthy(r) {
-							selectedRunner = r.Name
-							fmt.Printf("%s Selected fallback runner: %s (healthy, %s)\n",
-								style.SuccessStyle.Render("✓"),
-								style.HighlightStyle.Render(selectedRunner),
-								r.RunnerType)
-							break
-						}
-					}
-
-					// If no healthy runner found
-					if selectedRunner == "auto" {
-						return fmt.Errorf("no healthy runners available")
-					}
-				}
-			} else if !skipHealthCheck {
-				// For explicitly specified runners, check health
-				runnerInfo, err := client.GetRunner(ctx, selectedRunner)
-				if err != nil {
-					fmt.Printf("%s Warning: Could not check runner health: %v\n",
-						style.WarningStyle.Render("⚠️"), err)
-				} else {
-					// Check runner health status
-					if !isRunnerHealthy(runnerInfo) {
-						if runnerInfo.RunnerHealth.Error != "" {
-							return fmt.Errorf("runner '%s' is not healthy: %s (error: %s)",
-								selectedRunner, runnerInfo.RunnerHealth.Status, runnerInfo.RunnerHealth.Error)
-						}
-						return fmt.Errorf("runner '%s' is not healthy: %s",
-							selectedRunner, runnerInfo.RunnerHealth.Status)
-					}
-					fmt.Printf("%s Runner '%s' is healthy (v%s)\n",
-						style.SuccessStyle.Render("✓"), selectedRunner, runnerInfo.Version)
-				}
-			}
-
-			// Policy validation (if enabled)
-			if !skipPolicyCheck {
-				// Check if OPA enforcement is enabled
-				opaEnforce := os.Getenv("KUBIYA_OPA_ENFORCE")
-				if opaEnforce == "true" || opaEnforce == "1" {
-					fmt.Printf("%s Validating tool execution permissions...\n", style.InfoStyle.Render("🛡️"))
-
-					// Extract args from toolDef for validation
-					toolArgs := make(map[string]interface{})
-					if args, ok := toolDef["args"].(map[string]interface{}); ok {
-						toolArgs = args
-					}
-
-					allowed, message, err := client.ValidateToolExecution(ctx, toolName, toolArgs, selectedRunner)
-					if err != nil {
-						fmt.Printf("%s Policy validation failed: %v\n", style.WarningStyle.Render("⚠️"), err)
-						fmt.Printf("%s Proceeding without policy validation...\n", style.DimStyle.Render("›"))
-					} else if !allowed {
-						fmt.Printf("%s Tool execution denied by policy\n", style.ErrorStyle.Render("❌"))
-						if message != "" {
-							fmt.Printf("%s Reason: %s\n", style.DimStyle.Render("›"), message)
-						}
-						return fmt.Errorf("tool execution denied by policy")
-					} else {
-						fmt.Printf("%s Tool execution authorized\n", style.SuccessStyle.Render("✅"))
-						if message != "" {
-							fmt.Printf("%s %s\n", style.DimStyle.Render("›"), message)
-						}
-					}
-				} else {
-					fmt.Printf("%s Policy enforcement disabled (KUBIYA_OPA_ENFORCE not set)\n", style.DimStyle.Render("🔧"))
-				}
-			}
-
-			// Show execution info
-			fmt.Printf("\n%s Executing tool: %s\n", style.StatusStyle.Render("🚀"), style.HighlightStyle.Render(toolName))
-			fmt.Printf("%s Runner: %s", style.DimStyle.Render("📍"), style.HighlightStyle.Render(selectedRunner))
-			if runner == "auto" && selectedRunner != "kubiya-hosted" {
-				fmt.Printf(" %s", style.DimStyle.Render("(auto-selected fallback)"))
-			}
-			fmt.Printf("\n%s Timeout: ", style.DimStyle.Render("⏱️"))
-			if timeout == 0 {
-				fmt.Printf("%s\n", style.DimStyle.Render("none"))
-			} else {
-				fmt.Printf("%s\n", style.DimStyle.Render(fmt.Sprintf("%d seconds", timeout)))
-			}
-			fmt.Println()
-
-			argVals := make(map[string]any)
-			
-			// Parse arguments from --args JSON or --arg flags
-			if err := parseToolArguments(toolDef, args, argsJSON, argVals); err != nil {
-				return fmt.Errorf("failed to parse tool arguments: %w", err)
-			}
-			// Execute tool with streaming
-			events, err := client.ExecuteToolWithTimeout(ctx, toolName, toolDef, selectedRunner, time.Duration(timeout)*time.Second, argVals)
-			if err != nil {
-				return fmt.Errorf("failed to execute tool: %w", err)
-			}
-
-			// Process streaming events based on output format
-			if outputFormat == "stream-json" {
-				// Raw JSON stream output
-				for event := range events {
-					if event.Type == "data" {
-						fmt.Println(event.Data)
-					} else if event.Type == "error" {
-						fmt.Fprintf(os.Stderr, `{"type":"error","message":"%s"}`+"\n", event.Data)
-						return fmt.Errorf("tool execution failed")
-					}
-				}
-				return nil
-			}
-
-			// Text output format (default)
-			var hasError bool
-			startTime := time.Now()
-			var outputLines []string
-
-			for event := range events {
-				switch event.Type {
-				case "data":
-					if watch {
-						// Try to parse as JSON for structured output
-						var jsonData map[string]interface{}
-						if err := json.Unmarshal([]byte(event.Data), &jsonData); err == nil {
-							// Handle different event types from the API
-							if eventType, ok := jsonData["type"].(string); ok {
-								switch eventType {
-								case "log":
-									// Display log messages
-									if content, ok := jsonData["content"].(string); ok {
-										// Skip connection logs for cleaner output
-										if strings.Contains(content, "Connected to cloud") ||
-											strings.Contains(content, "starting session") ||
-											strings.Contains(content, "connect") {
-											fmt.Printf("%s %s\n", style.DimStyle.Render("›"), style.DimStyle.Render(content))
-										} else if strings.Contains(content, "Creating new Engine session") {
-											fmt.Printf("%s %s\n", style.InfoStyle.Render("🔧"), content)
-										} else {
-											fmt.Printf("%s %s\n", style.DimStyle.Render("📝"), content)
-										}
-									}
-								case "tool-output":
-									// Display tool output
-									if content, ok := jsonData["content"].(string); ok {
-										// Remove trailing newline for cleaner output
-										content = strings.TrimRight(content, "\n")
-										lines := strings.Split(content, "\n")
-										for _, line := range lines {
-											if line != "" {
-												fmt.Printf("%s %s\n", style.OutputStyle.Render("│"), line)
-												outputLines = append(outputLines, line)
-											}
-										}
-									}
-								case "status":
-									// Handle completion status
-									if status, ok := jsonData["status"].(string); ok {
-										if endVal, ok := jsonData["end"].(bool); ok && endVal {
-											duration := time.Since(startTime)
-											fmt.Println() // Add spacing
-											if status == "success" {
-												fmt.Printf("%s Tool executed successfully in %0.2fs\n",
-													style.SuccessStyle.Render("✅"), duration.Seconds())
-												if len(outputLines) > 0 {
-													fmt.Printf("%s %d lines of output generated\n",
-														style.DimStyle.Render("📊"), len(outputLines))
-												}
-											} else {
-												hasError = true
-												fmt.Printf("%s Tool execution failed after %0.2fs\n",
-													style.ErrorStyle.Render("❌"), duration.Seconds())
-											}
-											return nil
-										}
-									}
-								default:
-									// For other event types, show content if available
-									if content, ok := jsonData["content"].(string); ok && content != "" {
-										fmt.Printf("%s [%s] %s\n", style.DimStyle.Render("›"), eventType, content)
-									}
-								}
+						// Check runner health status
+						if !isRunnerHealthy(runnerInfo) {
+							if runnerInfo.RunnerHealth.Error != "" {
+								return fmt.Errorf("runner '%s' is not healthy: %s (error: %s)",
+									selectedRunner, runnerInfo.RunnerHealth.Status, runnerInfo.RunnerHealth.Error)
 							}
-						} else {
-							// If not JSON, display as plain text
-							fmt.Printf("%s %s\n", style.OutputStyle.Render("│"), event.Data)
+							return fmt.Errorf("runner '%s' is not healthy: %s",
+								selectedRunner, runnerInfo.RunnerHealth.Status)
 						}
+						fmt.Printf("%s Runner '%s' is healthy (v%s)\n",
+							style.SuccessStyle.Render("✓"), selectedRunner, runnerInfo.Version)
 					}
-				case "error":
-					hasError = true
-					fmt.Printf("\n%s Error: %s\n", style.ErrorStyle.Render("✗"), event.Data)
-				case "complete", "done":
-					duration := time.Since(startTime)
-					fmt.Println() // Add spacing
-					if !hasError {
-						fmt.Printf("%s Tool executed successfully in %0.2fs\n",
-							style.SuccessStyle.Render("✅"), duration.Seconds())
+				}
+
+				// Policy validation (if enabled)
+				if !skipPolicyCheck {
+					// Check if OPA enforcement is enabled
+					opaEnforce := os.Getenv("KUBIYA_OPA_ENFORCE")
+					if opaEnforce == "true" || opaEnforce == "1" {
+						fmt.Printf("%s Validating tool execution permissions...\n", style.InfoStyle.Render("🛡️"))
+
+						// Extract args from toolDef for validation
+						toolArgs := make(map[string]interface{})
+						if args, ok := toolDef["args"].(map[string]interface{}); ok {
+							toolArgs = args
+						}
+
+						allowed, message, err := client.ValidateToolExecution(ctx, toolName, toolArgs, selectedRunner)
+						if err != nil {
+							fmt.Printf("%s Policy validation failed: %v\n", style.WarningStyle.Render("⚠️"), err)
+							fmt.Printf("%s Proceeding without policy validation...\n", style.DimStyle.Render("›"))
+						} else if !allowed {
+							fmt.Printf("%s Tool execution denied by policy\n", style.ErrorStyle.Render("❌"))
+							if message != "" {
+								fmt.Printf("%s Reason: %s\n", style.DimStyle.Render("›"), message)
+							}
+							return fmt.Errorf("tool execution denied by policy")
+						} else {
+							fmt.Printf("%s Tool execution authorized\n", style.SuccessStyle.Render("✅"))
+							if message != "" {
+								fmt.Printf("%s %s\n", style.DimStyle.Render("›"), message)
+							}
+						}
 					} else {
-						fmt.Printf("%s Tool execution failed after %0.2fs\n",
-							style.ErrorStyle.Render("❌"), duration.Seconds())
+						fmt.Printf("%s Policy enforcement disabled (KUBIYA_OPA_ENFORCE not set)\n", style.DimStyle.Render("🔧"))
+					}
+				}
+
+				// Show execution info
+				fmt.Printf("\n%s Executing tool: %s\n", style.StatusStyle.Render("🚀"), style.HighlightStyle.Render(toolName))
+				fmt.Printf("%s Runner: %s", style.DimStyle.Render("📍"), style.HighlightStyle.Render(selectedRunner))
+				if runner == "auto" && selectedRunner != "kubiya-hosted" {
+					fmt.Printf(" %s", style.DimStyle.Render("(auto-selected fallback)"))
+				}
+				fmt.Printf("\n%s Timeout: ", style.DimStyle.Render("⏱️"))
+				if timeout == 0 {
+					fmt.Printf("%s\n", style.DimStyle.Render("none"))
+				} else {
+					fmt.Printf("%s\n", style.DimStyle.Render(fmt.Sprintf("%d seconds", timeout)))
+				}
+				fmt.Println()
+
+				argVals := make(map[string]any)
+
+				// Parse arguments from --args JSON or --arg flags
+				if err := parseToolArguments(toolDef, args, argsJSON, argVals); err != nil {
+					return fmt.Errorf("failed to parse tool arguments: %w", err)
+				}
+				// Execute tool with streaming
+				events, err := client.ExecuteToolWithTimeout(ctx, toolName, toolDef, selectedRunner, time.Duration(timeout)*time.Second, argVals)
+				if err != nil {
+					return fmt.Errorf("failed to execute tool: %w", err)
+				}
+
+				// Process streaming events based on output format
+				if outputFormat == "stream-json" {
+					// Raw JSON stream output
+					for event := range events {
+						if event.Type == "data" {
+							fmt.Println(event.Data)
+						} else if event.Type == "error" {
+							fmt.Fprintf(os.Stderr, `{"type":"error","message":"%s"}`+"\n", event.Data)
+							return fmt.Errorf("tool execution failed")
+						}
 					}
 					return nil
-				default:
-					// Handle other event types if needed
-					if watch && event.Data != "" {
-						fmt.Printf("%s [%s] %s\n", style.DimStyle.Render("›"), event.Type, event.Data)
+				}
+
+				// Text output format (default)
+				var hasError bool
+				startTime := time.Now()
+				var outputLines []string
+
+				for event := range events {
+					switch event.Type {
+					case "data":
+						if watch {
+							// Try to parse as JSON for structured output
+							var jsonData map[string]interface{}
+							if err := json.Unmarshal([]byte(event.Data), &jsonData); err == nil {
+								// Handle different event types from the API
+								if eventType, ok := jsonData["type"].(string); ok {
+									switch eventType {
+									case "log":
+										// Display log messages
+										if content, ok := jsonData["content"].(string); ok {
+											// Skip connection logs for cleaner output
+											if strings.Contains(content, "Connected to cloud") ||
+												strings.Contains(content, "starting session") ||
+												strings.Contains(content, "connect") {
+												fmt.Printf("%s %s\n", style.DimStyle.Render("›"), style.DimStyle.Render(content))
+											} else if strings.Contains(content, "Creating new Engine session") {
+												fmt.Printf("%s %s\n", style.InfoStyle.Render("🔧"), content)
+											} else {
+												fmt.Printf("%s %s\n", style.DimStyle.Render("📝"), content)
+											}
+										}
+									case "tool-output":
+										// Display tool output
+										if content, ok := jsonData["content"].(string); ok {
+											// Remove trailing newline for cleaner output
+											content = strings.TrimRight(content, "\n")
+											lines := strings.Split(content, "\n")
+											for _, line := range lines {
+												if line != "" {
+													fmt.Printf("%s %s\n", style.OutputStyle.Render("│"), line)
+													outputLines = append(outputLines, line)
+												}
+											}
+										}
+									case "status":
+										// Handle completion status
+										if status, ok := jsonData["status"].(string); ok {
+											if endVal, ok := jsonData["end"].(bool); ok && endVal {
+												duration := time.Since(startTime)
+												fmt.Println() // Add spacing
+												if status == "success" {
+													fmt.Printf("%s Tool executed successfully in %0.2fs\n",
+														style.SuccessStyle.Render("✅"), duration.Seconds())
+													if len(outputLines) > 0 {
+														fmt.Printf("%s %d lines of output generated\n",
+															style.DimStyle.Render("📊"), len(outputLines))
+													}
+												} else {
+													hasError = true
+													fmt.Printf("%s Tool execution failed after %0.2fs\n",
+														style.ErrorStyle.Render("❌"), duration.Seconds())
+												}
+												return nil
+											}
+										}
+									default:
+										// For other event types, show content if available
+										if content, ok := jsonData["content"].(string); ok && content != "" {
+											fmt.Printf("%s [%s] %s\n", style.DimStyle.Render("›"), eventType, content)
+										}
+									}
+								}
+							} else {
+								// If not JSON, display as plain text
+								fmt.Printf("%s %s\n", style.OutputStyle.Render("│"), event.Data)
+							}
+						}
+					case "error":
+						hasError = true
+						fmt.Printf("\n%s Error: %s\n", style.ErrorStyle.Render("✗"), event.Data)
+					case "complete", "done":
+						duration := time.Since(startTime)
+						fmt.Println() // Add spacing
+						if !hasError {
+							fmt.Printf("%s Tool executed successfully in %0.2fs\n",
+								style.SuccessStyle.Render("✅"), duration.Seconds())
+						} else {
+							fmt.Printf("%s Tool execution failed after %0.2fs\n",
+								style.ErrorStyle.Render("❌"), duration.Seconds())
+						}
+						return nil
+					default:
+						// Handle other event types if needed
+						if watch && event.Data != "" {
+							fmt.Printf("%s [%s] %s\n", style.DimStyle.Render("›"), event.Type, event.Data)
+						}
 					}
 				}
-			}
 
-			if hasError {
-				return fmt.Errorf("tool execution failed")
-			}
+				if hasError {
+					return fmt.Errorf("tool execution failed")
+				}
 
-			return nil
+				return nil
+			})
 		},
 	}
 
@@ -1414,13 +1425,13 @@ func parseToolArguments(toolDef map[string]interface{}, argFlags []string, argsJ
 		if err := json.Unmarshal([]byte(argsJSON), &jsonArgs); err != nil {
 			return fmt.Errorf("failed to parse --args JSON: %w", err)
 		}
-		
+
 		// Copy parsed JSON args to argVals
 		for key, value := range jsonArgs {
 			argVals[key] = value
 		}
-		
-		fmt.Printf("%s Parsed %d arguments from JSON\n", 
+
+		fmt.Printf("%s Parsed %d arguments from JSON\n",
 			style.InfoStyle.Render("ℹ"), len(jsonArgs))
 		return nil
 	}
@@ -1462,7 +1473,7 @@ func parseToolArguments(toolDef map[string]interface{}, argFlags []string, argsJ
 	// For CLI tool exec, we need to prompt for required arguments or set defaults
 	// Since we don't have a way to pass actual values via flags, we'll use defaults
 	// or prompt the user if arguments are required
-	
+
 	for name, argDef := range argDefs {
 		// Check if required
 		required := false
@@ -1502,7 +1513,7 @@ func parseToolArguments(toolDef map[string]interface{}, argFlags []string, argsJ
 			default:
 				argVals[name] = ""
 			}
-			
+
 			fmt.Printf("%s Required argument '%s' set to default value for type '%s'\n",
 				style.InfoStyle.Render("ℹ"), name, argType)
 		}

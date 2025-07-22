@@ -1007,6 +1007,54 @@ echo 'source <(kubiya completion zsh)' >> ~/.zshrc
 kubiya completion fish | source
 ```
 
+## 🔍 Monitoring and Error Tracking
+
+Kubiya CLI includes built-in Sentry integration for error tracking and performance monitoring. This helps us identify and fix issues quickly to improve your experience.
+
+### Sentry Configuration
+
+Sentry monitoring is configured via environment variables and is **optional**. If no Sentry DSN is provided, the CLI will work normally without monitoring.
+
+#### Environment Variables
+
+| Variable | Description | Required | Default |
+|----------|-------------|----------|---------|
+| `SENTRY_DSN` | Sentry Data Source Name (DSN) for error reporting | No | - |
+| `SENTRY_ENVIRONMENT` | Environment name (e.g., production, development) | No | `production` |
+| `SENTRY_TRACES_SAMPLE_RATE` | Sampling rate for performance traces (0.0 to 1.0) | No | `1.0` |
+| `SENTRY_DEBUG` | Enable Sentry debug logging | No | `false` |
+
+#### Example Configuration
+
+```bash
+# Enable Sentry monitoring
+export SENTRY_DSN="https://your-dsn@sentry.io/project-id"
+export SENTRY_ENVIRONMENT="production"
+export SENTRY_TRACES_SAMPLE_RATE="0.1"  # Sample 10% of transactions
+export SENTRY_DEBUG="false"
+
+# Run CLI commands normally
+kubiya chat -m "Deploy my application"
+```
+
+#### What Gets Monitored
+
+The CLI automatically captures:
+
+- **Errors**: Command failures, API errors, workflow execution errors, tool execution failures
+- **Performance**: Command execution times, API response times, workflow durations
+- **Breadcrumbs**: Command execution flow, user actions, API calls
+- **Context**: CLI version, environment, command arguments (sensitive data is excluded)
+
+#### Privacy and Data
+
+- No sensitive information (API keys, secrets, personal data) is sent to Sentry
+- Only error messages, performance metrics, and general context are captured
+- You have full control over when monitoring is enabled via environment variables
+- Monitoring can be completely disabled by not setting `SENTRY_DSN`
+
+---
+
 ## License 📄
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
