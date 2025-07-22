@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/spf13/cobra"
 
@@ -35,6 +36,11 @@ Need help? Visit: https://docs.kubiya.ai`,
 		PersistentPreRun: func(cmd *cobra.Command, args []string) {
 			// Skip update check for version and update commands
 			if cmd.Name() == "version" || cmd.Name() == "update" {
+				return
+			}
+
+			// Skip update check in automation mode
+			if os.Getenv("KUBIYA_AUTOMATION") != "" {
 				return
 			}
 
@@ -78,6 +84,7 @@ Need help? Visit: https://docs.kubiya.ai`,
 		newMcpCommand(cfg),
 		newWorkflowCommand(cfg),
 		newPolicyCommand(cfg),
+		newUsersCommand(cfg),
 	)
 
 	return rootCmd.Execute()

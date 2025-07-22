@@ -79,6 +79,17 @@ func isRetryableError(err error) bool {
 		"gateway timeout",
 		"temporary",
 		"transient",
+		"dial",
+		"host",
+		"dns",
+		"tls",
+		"ssl",
+		"handshake",
+		"broken pipe",
+		"i/o timeout",
+		"no route to host",
+		"connection reset by peer",
+		"connection aborted",
 	}
 
 	for _, retryable := range retryableErrors {
@@ -89,6 +100,62 @@ func isRetryableError(err error) bool {
 
 	// Default to retrying unknown errors (conservative approach)
 	return true
+}
+
+// isAgentErrorMessage detects if the agent's response indicates an internal error that should trigger session recovery
+func isAgentErrorMessage(content string) bool {
+	if content == "" {
+		return false
+	}
+
+	lowerContent := strings.ToLower(content)
+
+	// Common agent apology/error patterns that indicate the agent had an internal issue
+	agentErrorPatterns := []string{
+		"sorry, i had an issue",
+		"sorry, i encountered an issue",
+		"sorry, there was an issue",
+		"sorry, something went wrong",
+		"apologize, i had a problem",
+		"apologize, there was a problem",
+		"i'm having trouble",
+		"i'm experiencing difficulties",
+		"internal error occurred",
+		"something went wrong on my end",
+		"i encountered an unexpected error",
+		"sorry for the inconvenience",
+		"unable to process your request at this time",
+		"experiencing technical difficulties",
+		"temporary issue preventing me",
+		"let me try that again",
+		"please try your request again",
+		"i need to restart",
+		"let me reset and try again",
+		"i'm having connectivity issues",
+		"stream interrupted",
+		"connection lost",
+		"processing error",
+	}
+
+	for _, pattern := range agentErrorPatterns {
+		if strings.Contains(lowerContent, pattern) {
+			return true
+		}
+	}
+
+	// Also check for generic "sorry" combined with error indicators
+	if strings.Contains(lowerContent, "sorry") && 
+		(strings.Contains(lowerContent, "error") || 
+		 strings.Contains(lowerContent, "problem") || 
+		 strings.Contains(lowerContent, "issue") || 
+		 strings.Contains(lowerContent, "failed") ||
+		 strings.Contains(lowerContent, "unable") ||
+		 strings.Contains(lowerContent, "couldn't") ||
+		 strings.Contains(lowerContent, "can't")) {
+		return true
+	}
+
+	return false
 }
 
 // calculateBackoffDelay calculates exponential backoff with jitter
@@ -1434,11 +1501,17 @@ The command will automatically select the most appropriate agent unless one is s
 Enhanced Interactive Mode Features:
 • Beautiful terminal UI with colors and formatting
 • Session persistence and history management
-• Connection retry and error handling
+• Automatic retry and error recovery (15 retries by default)
 • Tool execution tracking with real-time status
 • Keyboard shortcuts for improved productivity
 • Auto-save functionality
 • Message history navigation
+
+Automatic Retry Features:
+• Connection errors are automatically retried with exponential backoff
+• Stream errors and timeouts trigger automatic reconnection
+• Agent errors trigger session recovery with original prompt
+• Comprehensive retry patterns for network, TLS, DNS, and connection issues
 
 Permission Levels:
 • read: Execute read-only operations (kubectl get, describe, logs, etc.)
@@ -1691,12 +1764,12 @@ For inline agents, use --inline with --tools-file or --tools-json to provide cus
 				}
 				rawEventLogging = os.Getenv("KUBIYA_RAW_EVENTS") == "1" || debug
 				msgChan         <-chan kubiya.ChatMessage
+				inlineAgent     map[string]interface{}
 			)
 
 			// Handle inline agent
 			if inline {
 				var tools []kubiya.Tool
-				var inlineAgent map[string]interface{}
 
 				// Load agent specification if provided
 				if agentSpec != "" {
@@ -2029,7 +2102,35 @@ For inline agents, use --inline with --tools-file or --tools-json to provide cus
 
 				msgChan, err = client.SendInlineAgentMessage(cmd.Context(), message, sessionID, context, inlineAgent)
 				if err != nil {
-					return err
+					// If inline agent connection fails, retry for retryable errors
+					if isRetryableError(err) {
+						if !automationMode {
+							fmt.Printf("\r%s\n", style.WarningStyle.Render("⚠️  Inline agent connection failed, retrying..."))
+						}
+						// For inline agents, we retry by sending the message again with exponential backoff
+						for retryAttempt := 1; retryAttempt <= retries; retryAttempt++ {
+							backoffDelay := calculateBackoffDelay(retryAttempt - 1)
+							if !automationMode {
+								fmt.Printf("%s\n", style.SpinnerStyle.Render(
+									fmt.Sprintf("🔄 Retrying inline agent connection (attempt %d/%d) in %.1fs...", 
+										retryAttempt, retries, backoffDelay.Seconds())))
+							}
+							time.Sleep(backoffDelay)
+							
+							msgChan, err = client.SendInlineAgentMessage(cmd.Context(), message, sessionID, context, inlineAgent)
+							if err == nil {
+								break // Success!
+							}
+							if !isRetryableError(err) {
+								break // Non-retryable error
+							}
+						}
+						if err != nil {
+							return fmt.Errorf("failed to connect to inline agent after %d retries: %w", retries, err)
+						}
+					} else {
+						return err
+					}
 				}
 
 				// Set agentID for inline agent to use the same processing logic
@@ -2212,8 +2313,8 @@ For inline agents, use --inline with --tools-file or --tools-json to provide cus
 			if !inline {
 				msgChan, err = client.SendMessageWithContext(cmd.Context(), agentID, enhancedMessage, sessionID, context)
 				if err != nil {
-					// If context method fails, try with retry mechanism
-					if strings.Contains(err.Error(), "connection") || strings.Contains(err.Error(), "timeout") {
+					// If context method fails, try with retry mechanism for retryable errors
+					if isRetryableError(err) {
 						if !automationMode {
 							fmt.Printf("\r%s\n", style.WarningStyle.Render("⚠️  Initial connection failed, retrying with enhanced resilience..."))
 						}
@@ -2240,7 +2341,7 @@ For inline agents, use --inline with --tools-file or --tools-json to provide cus
 				os.Stdout.Sync() // Force immediate display
 			}
 
-			// Read messages and handle session ID
+			// Read messages and handle session ID with session recovery support
 			var finalResponse strings.Builder
 			var completionReason string
 			var hasError bool
@@ -2248,6 +2349,7 @@ For inline agents, use --inline with --tools-file or --tools-json to provide cus
 			var toolsExecuted bool
 			var streamRetryCount int
 			var anyOutputTruncated bool
+			var sessionRetryCount int
 
 			// Add these message type constants
 			const (
@@ -2257,8 +2359,18 @@ For inline agents, use --inline with --tools-file or --tools-json to provide cus
 				toolOutput = "tool_output"
 			)
 
-			// Update the message handling loop with stream error handling:
-			for msg := range msgChan {
+			// Main session retry loop for agent error recovery
+			for sessionRetryCount <= retries {
+				// Reset per-session variables
+				finalResponse.Reset()
+				completionReason = ""
+				hasError = false
+				toolsExecuted = false
+				anyOutputTruncated = false
+				
+				// Update the message handling loop with stream error handling:
+				sessionRecoveryNeeded := false
+				for msg := range msgChan {
 				if msg.Error != "" {
 					// Smart retry logic with proper error classification
 					errorObj := fmt.Errorf(msg.Error)
@@ -2823,6 +2935,38 @@ For inline agents, use --inline with --tools-file or --tools-json to provide cus
 									style.CodeBlockStyle.Render(buf.codeBlock.String()),
 									style.CodeBlockStyle.Render("```"))
 							}
+
+							// Check for agent error messages and trigger session recovery if needed
+							fullContent := buf.content
+							if isAgentErrorMessage(fullContent) {
+								// Agent indicated an internal error - trigger session recovery
+								if streamRetryCount < retries {
+									streamRetryCount++
+									backoffDelay := calculateBackoffDelay(streamRetryCount - 1)
+									
+									if !automationMode {
+										fmt.Printf("\n%s\n", style.WarningStyle.Render(
+											fmt.Sprintf("⚠️  Agent error detected (attempt %d/%d): %s",
+												streamRetryCount, retries, "Agent indicated internal issue")))
+										fmt.Printf("%s\n", style.SpinnerStyle.Render(
+											fmt.Sprintf("🔄 Starting new session in %.1fs...", backoffDelay.Seconds())))
+									}
+
+									// Wait before retry
+									time.Sleep(backoffDelay)
+
+									// Start new session with original prompt by triggering session recovery
+									sessionRecoveryNeeded = true
+									hasError = true
+									break // Break out of message loop to trigger session recovery
+								} else {
+									// Exhausted retries for agent errors
+									fmt.Fprintf(os.Stderr, "%s\n", style.ErrorStyle.Render(
+										fmt.Sprintf("❌ Agent failed after %d session recoveries", retries)))
+									hasError = true
+									return fmt.Errorf("agent error after %d recoveries: %s", retries, strings.TrimSpace(fullContent[:min(100, len(fullContent))]))
+								}
+							}
 						}
 						// Add final completion message to ensure stream end is visible
 						if msg.Type == "completion" && msg.FinishReason != "" {
@@ -2835,120 +2979,163 @@ For inline agents, use --inline with --tools-file or --tools-json to provide cus
 				}
 			}
 
-			if !stream {
-				fmt.Println(finalResponse.String())
-			}
-
-			// Handle follow-up for non-interactive sessions without tool execution (skip for inline agents)
-			if !interactive && !toolsExecuted && !hasError && completionReason != "error" && !inline {
-				if debug {
-					fmt.Printf("🔄 No tools executed, sending follow-up prompt\n")
-				}
-
-				followUpMsg := "You didn't seem to execute anything. You're running in a non-interactive session and the user confirms to execute read-only operations. EXECUTE RIGHT AWAY!"
-
-				// Send follow-up message
-				followUpChan, err := client.SendMessageWithContext(cmd.Context(), agentID, followUpMsg, actualSessionID, map[string]string{})
-				if err != nil {
-					if debug {
-						fmt.Printf("⚠️ Failed to send follow-up message: %v\n", err)
-					}
-				} else {
+			// Check if session recovery is needed
+			if sessionRecoveryNeeded {
+				sessionRetryCount++
+				if sessionRetryCount <= retries {
+					backoffDelay := calculateBackoffDelay(sessionRetryCount - 1)
+					
 					if !automationMode {
-						fmt.Printf("\n%s\n", style.InfoBoxStyle.Render("🔄 Following up to ensure execution..."))
+						fmt.Printf("\n%s\n", style.WarningStyle.Render(
+							fmt.Sprintf("🔄 Starting new session (attempt %d/%d) in %.1fs...", 
+								sessionRetryCount+1, retries+1, backoffDelay.Seconds())))
 					}
-
-					// Process follow-up response
-					for msg := range followUpChan {
-						if msg.Error != "" {
-							fmt.Fprintf(os.Stderr, "%s\n", style.ErrorStyle.Render("❌ Error: "+msg.Error))
-							hasError = true
-							break
+					
+					// Wait before retry
+					time.Sleep(backoffDelay)
+					
+					// Start new session with original message
+					if !inline {
+						msgChan, err = client.SendMessageWithRetry(cmd.Context(), agentID, enhancedMessage, "", retries)
+						if err != nil {
+							return fmt.Errorf("failed to start new session after agent error: %w", err)
 						}
-						if msg.SessionID != "" {
-							actualSessionID = msg.SessionID
-						}
-						// Handle follow-up messages similar to main processing
-						if msg.Type == "tool" {
-							toolsExecuted = true
+					} else {
+						msgChan, err = client.SendInlineAgentMessage(cmd.Context(), message, "", context, inlineAgent)
+						if err != nil {
+							return fmt.Errorf("failed to start new inline session after agent error: %w", err)
 						}
 					}
-				}
-			}
-
-			// Show session continuation message (only if not in automation mode)
-			if !interactive && actualSessionID != "" && !automationMode {
-				fmt.Printf("\n%s\n", style.InfoBoxStyle.Render("💬 To continue this conversation, run:"))
-
-				// Include agent name in the continuation command if available
-				var continuationCmd string
-				if agentName != "" {
-					continuationCmd = fmt.Sprintf("kubiya chat -n %s --session %s -m \"your message here\"", agentName, actualSessionID)
-				} else if agentID != "" {
-					continuationCmd = fmt.Sprintf("kubiya chat -t %s --session %s -m \"your message here\"", agentID, actualSessionID)
+					
+					// Reset session ID to start fresh
+					actualSessionID = ""
+					
+					// Continue to next session retry iteration
+					continue
 				} else {
-					continuationCmd = fmt.Sprintf("kubiya chat --session %s -m \"your message here\"", actualSessionID)
+					// Exhausted all session retries
+					return fmt.Errorf("agent failed after %d session recoveries", retries)
 				}
-
-				fmt.Printf("%s\n", style.HighlightStyle.Render(continuationCmd))
-				fmt.Println()
 			}
 
-			// Show simple debug tip if any output was truncated
-			if anyOutputTruncated && !interactive && !automationMode {
-				fmt.Printf("\n%s\n", style.DimStyle.Render("💡 Use KUBIYA_DEBUG=1 to see full tool outputs"))
-			}
+			// If we reach here, the session completed successfully, break out of retry loop
+			break
+		}
 
-			// Handle completion status and exit codes
+		if !stream {
+			fmt.Println(finalResponse.String())
+		}
+
+		// Handle follow-up for non-interactive sessions without tool execution (skip for inline agents)
+		if !interactive && !toolsExecuted && !hasError && completionReason != "error" && !inline {
 			if debug {
-				fmt.Printf("🔍 Completion reason: %s, hasError: %v, toolsExecuted: %v\n", completionReason, hasError, toolsExecuted)
-				// Debug tool execution states
-				for msgID, te := range toolExecutions {
-					fmt.Printf("🔍 Tool %s (ID: %s): failed=%v, isComplete=%v, status=%s, errorMsg='%s'\n",
-						te.name, msgID[:8], te.failed, te.isComplete, te.status, te.errorMsg)
-				}
+				fmt.Printf("🔄 No tools executed, sending follow-up prompt\n")
 			}
 
-			// Return proper exit code based on completion status
-			// Check if we actually have any failed tools before exiting with error
-			actuallyHasFailures := false
-			for _, te := range toolExecutions {
-				if te.failed && te.isComplete {
-					actuallyHasFailures = true
-					break
+			followUpMsg := "You didn't seem to execute anything. You're running in a non-interactive session and the user confirms to execute read-only operations. EXECUTE RIGHT AWAY!"
+
+			// Send follow-up message
+			followUpChan, err := client.SendMessageWithContext(cmd.Context(), agentID, followUpMsg, actualSessionID, map[string]string{})
+			if err != nil {
+				if debug {
+					fmt.Printf("⚠️ Failed to send follow-up message: %v\n", err)
 				}
+			} else {
+				if !automationMode {
+					fmt.Printf("\n%s\n", style.InfoBoxStyle.Render("🔄 Following up to ensure execution..."))
+				}
+
+				// Process follow-up response
+				for msg := range followUpChan {
+					if msg.Error != "" {
+						fmt.Fprintf(os.Stderr, "%s\n", style.ErrorStyle.Render("❌ Error: "+msg.Error))
+						hasError = true
+						break
+					}
+					if msg.SessionID != "" {
+						actualSessionID = msg.SessionID
+					}
+					// Handle follow-up messages similar to main processing
+					if msg.Type == "tool" {
+						toolsExecuted = true
+					}
+				}
+			}
+		}
+
+		// Show session continuation message (only if not in automation mode)
+		if !interactive && actualSessionID != "" && !automationMode {
+			fmt.Printf("\n%s\n", style.InfoBoxStyle.Render("💬 To continue this conversation, run:"))
+
+			// Include agent name in the continuation command if available
+			var continuationCmd string
+			if agentName != "" {
+				continuationCmd = fmt.Sprintf("kubiya chat -n %s --session %s -m \"your message here\"", agentName, actualSessionID)
+			} else if agentID != "" {
+				continuationCmd = fmt.Sprintf("kubiya chat -t %s --session %s -m \"your message here\"", agentID, actualSessionID)
+			} else {
+				continuationCmd = fmt.Sprintf("kubiya chat --session %s -m \"your message here\"", actualSessionID)
 			}
 
-			if actuallyHasFailures {
-				if debug {
-					fmt.Printf("🚨 Exiting with error code 1 due to actual tool failures\n")
-				}
-				return fmt.Errorf("Some errors occurred during execution")
-			} else if hasError && debug {
-				// Debug: hasError was set but no actual failures
-				fmt.Printf("⚠️  Warning: hasError=true but no actual tool failures detected - ignoring\n")
-			}
+			fmt.Printf("%s\n", style.HighlightStyle.Render(continuationCmd))
+			fmt.Println()
+		}
 
-			// Check for non-successful completion reasons
-			switch completionReason {
-			case "error":
-				if debug {
-					fmt.Printf("🚨 Exiting with error code 1 due to completion reason: %s\n", completionReason)
-				}
-				return fmt.Errorf("agent execution failed with reason: %s", completionReason)
-			case "stop", "length", "":
-				// Normal successful completion
-				if debug {
-					fmt.Printf("✅ Exiting with success code 0\n")
-				}
-				return nil
-			default:
-				// Unknown completion reason - log but don't fail
-				if debug {
-					fmt.Printf("⚠️ Unknown completion reason: %s, treating as success\n", completionReason)
-				}
-				return nil
+		// Show simple debug tip if any output was truncated
+		if anyOutputTruncated && !interactive && !automationMode {
+			fmt.Printf("\n%s\n", style.DimStyle.Render("💡 Use KUBIYA_DEBUG=1 to see full tool outputs"))
+		}
+
+		// Handle completion status and exit codes
+		if debug {
+			fmt.Printf("🔍 Completion reason: %s, hasError: %v, toolsExecuted: %v\n", completionReason, hasError, toolsExecuted)
+			// Debug tool execution states
+			for msgID, te := range toolExecutions {
+				fmt.Printf("🔍 Tool %s (ID: %s): failed=%v, isComplete=%v, status=%s, errorMsg='%s'\n",
+					te.name, msgID[:8], te.failed, te.isComplete, te.status, te.errorMsg)
 			}
+		}
+
+		// Return proper exit code based on completion status
+		// Check if we actually have any failed tools before exiting with error
+		actuallyHasFailures := false
+		for _, te := range toolExecutions {
+			if te.failed && te.isComplete {
+				actuallyHasFailures = true
+				break
+			}
+		}
+
+		if actuallyHasFailures {
+			if debug {
+				fmt.Printf("🚨 Exiting with error code 1 due to actual tool failures\n")
+			}
+			return fmt.Errorf("Some errors occurred during execution")
+		} else if hasError && debug {
+			// Debug: hasError was set but no actual failures
+			fmt.Printf("⚠️  Warning: hasError=true but no actual tool failures detected - ignoring\n")
+		}
+
+		// Check for non-successful completion reasons
+		switch completionReason {
+		case "error":
+			if debug {
+				fmt.Printf("🚨 Exiting with error code 1 due to completion reason: %s\n", completionReason)
+			}
+			return fmt.Errorf("agent execution failed with reason: %s", completionReason)
+		case "stop", "length", "":
+			// Normal successful completion
+			if debug {
+				fmt.Printf("✅ Exiting with success code 0\n")
+			}
+			return nil
+		default:
+			// Unknown completion reason - log but don't fail
+			if debug {
+				fmt.Printf("⚠️ Unknown completion reason: %s, treating as success\n", completionReason)
+			}
+			return nil
+		}
 		},
 	}
 
@@ -2971,7 +3158,7 @@ For inline agents, use --inline with --tools-file or --tools-json to provide cus
 	cmd.Flags().BoolVar(&noClassify, "no-classify", false, "Disable automatic agent classification")
 	cmd.Flags().StringVar(&permissionLevel, "permission-level", "read", "Permission level for tool execution (read, readwrite, ask)")
 	cmd.Flags().BoolVar(&showToolCalls, "show-tool-calls", true, "Show tool call execution details")
-	cmd.Flags().IntVar(&retries, "retries", 10, "Number of retries for stream errors (default: 10)")
+	cmd.Flags().IntVar(&retries, "retries", 15, "Number of automatic retries for connection/stream/agent errors (default: 15)")
 	cmd.Flags().BoolVar(&silent, "silent", false, "Suppress progress updates for automation (can also use KUBIYA_AUTOMATION env var)")
 
 	// Inline agent flags
