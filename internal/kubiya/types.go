@@ -19,11 +19,11 @@ type Integration struct {
 
 // Agent represents a Kubiya agent
 type Agent struct {
-	UUID            string            `json:"uuid"`
-	ID              string            `json:"id"`
+	UUID            string            `json:"uuid,omitempty"`
+	ID              string            `json:"id,omitempty"`
 	Name            string            `json:"name"`
 	Description     string            `json:"description"`
-	Desc            string            `json:"desc"` // for backward compatibility
+	Desc            string            `json:"desc,omitempty"` // for backward compatibility
 	InstructionType string            `json:"instruction_type"`
 	LLMModel        string            `json:"llm_model"`
 	Sources         []string          `json:"sources"`
@@ -46,7 +46,7 @@ type Agent struct {
 	Metadata        struct {
 		CreatedAt   string `json:"created_at"`
 		LastUpdated string `json:"last_updated"`
-	} `json:"metadata"`
+	} `json:"metadata,omitempty"`
 }
 
 // Knowledge represents a knowledge base item
@@ -674,4 +674,24 @@ type ProjectExecution struct {
 	Status      string     `json:"status"`
 	StartTime   time.Time  `json:"start_time"`
 	EndTime     *time.Time `json:"end_time,omitempty"`
+}
+
+// User represents a Kubiya user
+type User struct {
+	ID     string   `json:"_id"`
+	UUID   string   `json:"uuid"`
+	Email  string   `json:"email"`
+	Name   string   `json:"name"`
+	Status string   `json:"user_status"`
+	Groups []string `json:"groups"`
+	Image  string   `json:"image"`
+}
+
+// Group represents a Kubiya group
+type Group struct {
+	UUID        string    `json:"uuid"`
+	Name        string    `json:"name"`
+	Description string    `json:"description"`
+	System      bool      `json:"system"`
+	CreatedAt   time.Time `json:"created_at"`
 }

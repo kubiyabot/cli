@@ -196,6 +196,10 @@ func (c *Client) post(ctx context.Context, path string, payload interface{}) (*h
 
 	var body bytes.Buffer
 	if payload != nil {
+		if c.debug {
+			payloadBytes, _ := json.MarshalIndent(payload, "", "  ")
+			fmt.Printf("POST method serializing payload:\n%s\n", string(payloadBytes))
+		}
 		if err := json.NewEncoder(&body).Encode(payload); err != nil {
 			return nil, fmt.Errorf("failed to encode payload: %w", err)
 		}
@@ -304,7 +308,7 @@ func (c *Client) put(ctx context.Context, path string, payload interface{}) (*ht
 
 	if resp.StatusCode != http.StatusOK {
 		resp.Body.Close()
-		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+		return nil, fmt.Errorf("unexpected status code: %d, body: %s", resp.StatusCode, string(responseBody))
 	}
 
 	return resp, nil
@@ -350,7 +354,7 @@ func (c *Client) delete(ctx context.Context, path string) (*http.Response, error
 
 // Example method: retrieving agents
 func (c *Client) GetAgents(ctx context.Context) ([]Agent, error) {
-	resp, err := c.get(ctx, "/agents")
+	resp, err := c.get(ctx, "/v1/agents")
 	if err != nil {
 		if c.debug {
 			fmt.Printf("Error getting agents: %v\n", err)
@@ -400,7 +404,7 @@ func (c *Client) GetAgents(ctx context.Context) ([]Agent, error) {
 
 // Example method: retrieving a agent's environment variable
 func (c *Client) GetAgentEnvVar(ctx context.Context, agentID, varName string) (string, error) {
-	resp, err := c.get(ctx, fmt.Sprintf("/agents/%s", agentID))
+	resp, err := c.get(ctx, fmt.Sprintf("/v1/agents/%s", agentID))
 	if err != nil {
 		return "", err
 	}
@@ -819,15 +823,87 @@ func (c *Client) DownloadManifest(ctx context.Context, url string) ([]byte, erro
 	return content, nil
 }
 
-// Example method: creating a agent
-func (c *Client) CreateAgent(ctx context.Context, agent Agent) (*Agent, error) {
-	// Debug output for the request
-	if c.debug {
-		payload, _ := json.MarshalIndent(agent, "", "  ")
-		fmt.Printf("CreateAgent request payload:\n%s\n", string(payload))
+// ListUsers retrieves all users in the organization
+func (c *Client) ListUsers(ctx context.Context) ([]User, error) {
+	// The baseURL is like https://api.kubiya.ai/api/v1, we need https://api.kubiya.ai/api/v2/users
+	baseURL := strings.Replace(c.baseURL, "/v1", "/v2", 1)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/users?limit=100&page=1", nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
-	resp, err := c.post(ctx, "/agents", agent)
+	var response struct {
+		Items []User `json:"items"`
+	}
+	if err := c.do(req, &response); err != nil {
+		return nil, err
+	}
+
+	return response.Items, nil
+}
+
+// ListGroups retrieves all groups in the organization  
+func (c *Client) ListGroups(ctx context.Context) ([]Group, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/manage/groups", nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	var groups []Group
+	if err := c.do(req, &groups); err != nil {
+		return nil, err
+	}
+
+	return groups, nil
+}
+
+// Example method: creating a agent
+func (c *Client) CreateAgent(ctx context.Context, agent Agent) (*Agent, error) {
+	fmt.Printf("TRACE: CreateAgent called with agent name: %s\n", agent.Name)
+
+	// Create a minimal API-compliant payload based on API documentation  
+	// This completely bypasses the problematic Agent struct serialization
+	payload := map[string]interface{}{
+		"name":        agent.Name,
+		"description": agent.Description,
+		"instruction_type": agent.InstructionType,
+		"llm_model":   agent.LLMModel,
+	}
+	
+	// Only include optional fields if they have meaningful values
+	if len(agent.Sources) > 0 {
+		payload["sources"] = agent.Sources
+	}
+	if len(agent.Tools) > 0 {
+		payload["tools"] = agent.Tools
+	}
+	if agent.AIInstructions != "" {
+		payload["ai_instructions"] = agent.AIInstructions
+	}
+	if len(agent.Secrets) > 0 {
+		payload["secrets"] = agent.Secrets
+	}
+	if len(agent.Integrations) > 0 {
+		payload["integrations"] = agent.Integrations
+	}
+	if agent.Environment != nil && len(agent.Environment) > 0 {
+		payload["environment_variables"] = agent.Environment
+	}
+
+	// Debug output for the request
+	if c.debug {
+		fmt.Printf("DEBUG: payload type: %T\n", payload)
+		payloadBytes, _ := json.MarshalIndent(payload, "", "  ")
+		fmt.Printf("CreateAgent request payload:\n%s\n", string(payloadBytes))
+	}
+
+	// Use PostRaw to send exactly what we want, bypassing any struct serialization
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal payload: %w", err)
+	}
+	
+	resp, err := c.PostRaw(ctx, "/agents", payloadBytes)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create agent: %w", err)
 	}
@@ -889,13 +965,53 @@ func (c *Client) CreateAgent(ctx context.Context, agent Agent) (*Agent, error) {
 
 // Example method: updating a agent
 func (c *Client) UpdateAgent(ctx context.Context, uuid string, agent Agent) (*Agent, error) {
+	// Create a minimal API-compliant payload similar to CreateAgent
+	payload := map[string]interface{}{
+		"name":        agent.Name,
+		"description": agent.Description,
+		"instruction_type": agent.InstructionType,
+		"llm_model":   agent.LLMModel,
+	}
+	
+	// Only include optional fields if they have meaningful values
+	if len(agent.Sources) > 0 {
+		payload["sources"] = agent.Sources
+	}
+	if len(agent.Tools) > 0 {
+		payload["tools"] = agent.Tools
+	}
+	if agent.AIInstructions != "" {
+		payload["ai_instructions"] = agent.AIInstructions
+	}
+	if len(agent.Secrets) > 0 {
+		payload["secrets"] = agent.Secrets
+	}
+	if len(agent.Integrations) > 0 {
+		payload["integrations"] = agent.Integrations
+	}
+	if agent.Environment != nil && len(agent.Environment) > 0 {
+		payload["environment_variables"] = agent.Environment
+	}
+	
 	// Debug output
 	if c.debug {
-		payload, _ := json.MarshalIndent(agent, "", "  ")
-		fmt.Printf("UpdateAgent request payload:\n%s\n", string(payload))
+		payloadBytes, _ := json.MarshalIndent(payload, "", "  ")
+		fmt.Printf("UpdateAgent request payload:\n%s\n", string(payloadBytes))
+	}
+	
+	// Use the raw update method to avoid struct serialization issues
+	return c.UpdateAgentRaw(ctx, uuid, payload)
+}
+
+// UpdateAgentRaw updates an agent using raw JSON data to avoid struct field issues
+func (c *Client) UpdateAgentRaw(ctx context.Context, uuid string, data map[string]interface{}) (*Agent, error) {
+	// Debug output
+	if c.debug {
+		payload, _ := json.MarshalIndent(data, "", "  ")
+		fmt.Printf("UpdateAgentRaw request payload:\n%s\n", string(payload))
 	}
 
-	resp, err := c.put(ctx, fmt.Sprintf("/agents/%s", uuid), agent)
+	resp, err := c.put(ctx, fmt.Sprintf("/agents/%s", uuid), data)
 	if err != nil {
 		return nil, err
 	}
@@ -909,7 +1025,7 @@ func (c *Client) UpdateAgent(ctx context.Context, uuid string, agent Agent) (*Ag
 
 	// Debug output
 	if c.debug {
-		fmt.Printf("UpdateAgent response:\n%s\n", string(bodyBytes))
+		fmt.Printf("UpdateAgentRaw response:\n%s\n", string(bodyBytes))
 	}
 
 	var updated Agent
@@ -930,7 +1046,7 @@ func (c *Client) UpdateAgent(ctx context.Context, uuid string, agent Agent) (*Ag
 
 // Example method: deleting a agent
 func (c *Client) DeleteAgent(ctx context.Context, uuid string) error {
-	resp, err := c.delete(ctx, fmt.Sprintf("/agents/%s", uuid))
+	resp, err := c.delete(ctx, fmt.Sprintf("/v1/agents/%s", uuid))
 	if err != nil {
 		return err
 	}
