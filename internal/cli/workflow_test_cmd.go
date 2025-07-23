@@ -95,7 +95,7 @@ It provides real-time streaming output so you can monitor the workflow execution
 			// Process streaming events
 			var hasError bool
 			for event := range events {
-				hasError = processWorkflowEvent(event, automationMode) || hasError
+				hasError = processWorkflowTestEvent(event, automationMode) || hasError
 			}
 
 			if hasError {
@@ -112,8 +112,8 @@ It provides real-time streaming output so you can monitor the workflow execution
 	return cmd
 }
 
-// processWorkflowEvent processes a single workflow event and returns true if an error occurred
-func processWorkflowEvent(event kubiya.WorkflowSSEEvent, automationMode bool) bool {
+// processWorkflowTestEvent processes a single workflow event and returns true if an error occurred
+func processWorkflowTestEvent(event kubiya.WorkflowSSEEvent, automationMode bool) bool {
 	switch event.Type {
 	case "data":
 		// Try to parse as JSON for structured output

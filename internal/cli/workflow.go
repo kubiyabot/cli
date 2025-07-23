@@ -48,6 +48,11 @@ This command provides comprehensive workflow management capabilities:
 		newWorkflowExecuteCommand(cfg),
 		newWorkflowComposeCommand(cfg),
 		newWorkflowResumeCommand(cfg),
+		// Enhanced streaming and management commands
+		newWorkflowStreamCommand(cfg),
+		newWorkflowRetryCommand(cfg),
+		newWorkflowStatusCommand(cfg),
+		newWorkflowListCommand(cfg),
 	)
 
 	return cmd
