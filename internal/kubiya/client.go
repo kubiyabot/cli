@@ -362,7 +362,6 @@ func (c *Client) GetAgents(ctx context.Context) ([]Agent, error) {
 			fmt.Printf("Full URL: %s/agents?mode=all\n", c.baseURL)
 			fmt.Printf("API Key present: %v\n", c.cfg.APIKey != "")
 		}
-		fmt.Printf("DEBUG: GetAgents error from client.go line 365\n")
 		return nil, fmt.Errorf("failed to get agents: %w", err)
 	}
 	defer resp.Body.Close()
