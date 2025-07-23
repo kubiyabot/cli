@@ -569,9 +569,19 @@ func (c *Client) ListRunners(ctx context.Context) ([]Runner, error) {
 	}
 	defer resp.Body.Close()
 
+	// Read and debug the response
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response body: %w", err)
+	}
+	
+	if c.debug {
+		fmt.Printf("DEBUG: Raw API response: %s\n", string(bodyBytes))
+	}
+
 	// First try to decode as an array of raw JSON objects to handle version conversion
 	var rawRunners []map[string]interface{}
-	if err := json.NewDecoder(resp.Body).Decode(&rawRunners); err != nil {
+	if err := json.Unmarshal(bodyBytes, &rawRunners); err != nil {
 		return nil, fmt.Errorf("failed to decode runners response: %w", err)
 	}
 

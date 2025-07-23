@@ -674,30 +674,54 @@ The format will be auto-detected and you can provide variables and choose the ru
 					style.InfoStyle.Render("🔌"), runnerDisplayName)
 			}
 			
-			// Execute workflow directly with simple client (like it worked 3 days ago!)
-			workflowClient := client.Workflow()
-			events, err := workflowClient.ExecuteWorkflow(ctx, req, runner)
+			// Enhanced workflow execution with better error handling and reconnection
+			if cfg.Debug || verbose {
+				fmt.Printf("[DEBUG] Using enhanced workflow execution\n")
+			}
+			
+			// Try enhanced client first, fallback to regular if not available
+			enhancedClient := client.WorkflowEnhanced()
+			enhancedEvents, err := enhancedClient.ExecuteWorkflowEnhanced(ctx, req, runner)
 			if err != nil {
 				if !automationMode {
-					fmt.Printf(" %s\n", style.ErrorStyle.Render("failed!"))
+					fmt.Printf(" %s\n", style.WarningStyle.Render("enhanced failed, trying regular..."))
 				}
-				return fmt.Errorf("failed to execute workflow: %w", err)
+				
+				// Fallback to regular workflow client
+				workflowClient := client.Workflow()
+				events, err := workflowClient.ExecuteWorkflow(ctx, req, runner)
+				if err != nil {
+					if !automationMode {
+						fmt.Printf(" %s\n", style.ErrorStyle.Render("failed!"))
+					}
+					return fmt.Errorf("failed to execute workflow: %w", err)
+				}
+				
+				if !automationMode {
+					fmt.Printf(" %s\n", style.SuccessStyle.Render("connected!"))
+				}
+				
+				// Process regular events
+				var stepStartTimes = make(map[string]time.Time)
+				var workflowTrace = NewWorkflowTrace(req.Name, len(req.Steps))
+				return processRegularWorkflowEvents(ctx, events, automationMode, verbose, saveTrace, workflowTrace, workflowFile, req, stepStartTimes, 0, len(req.Steps))
 			}
 			
 			if !automationMode {
-				fmt.Printf(" %s\n", style.SuccessStyle.Render("connected!"))
+				fmt.Printf(" %s\n", style.SuccessStyle.Render("connected with enhanced features!"))
 			}
 
-			// Process workflow events 
+			// Process enhanced workflow events with better error handling
 			var hasError bool
 			var stepCount int
 			var completedSteps int
+			var workflowID string
 			
 			// Count total steps for progress tracking
 			stepCount = len(req.Steps)
 			
 			if !automationMode {
-				fmt.Printf("\n%s Starting workflow execution...\n\n", 
+				fmt.Printf("\n%s Starting enhanced workflow execution...\n\n", 
 					style.InfoStyle.Render("🚀"))
 				
 				// Show initial progress
@@ -712,140 +736,215 @@ The format will be auto-detected and you can provide variables and choose the ru
 			var stepStartTimes = make(map[string]time.Time)
 			var workflowTrace = NewWorkflowTrace(req.Name, stepCount)
 			
-			for event := range events {
-				if event.Type == "data" {
-					// Parse JSON data for workflow events
-					var jsonData map[string]interface{}
-					if err := json.Unmarshal([]byte(event.Data), &jsonData); err == nil {
-						if eventType, ok := jsonData["type"].(string); ok {
-							switch eventType {
-							case "step_running":
-								if step, ok := jsonData["step"].(map[string]interface{}); ok {
-									if stepName, ok := step["name"].(string); ok {
-										stepStartTimes[stepName] = time.Now()
-										
-										// Update workflow trace
-										workflowTrace.StartStep(stepName)
-										
-										if !automationMode {
-											// Show step starting
-											progress := fmt.Sprintf("[%d/%d]", completedSteps+1, stepCount)
-											fmt.Printf("%s %s %s\n", 
-												style.BulletStyle.Render("▶️"), 
-												style.InfoStyle.Render(progress),
-												style.ToolNameStyle.Render(stepName))
-											fmt.Printf("  %s Running...\n", style.StatusStyle.Render("⏳"))
-										}
-									}
-								}
-								
-							case "step_complete":
-								if step, ok := jsonData["step"].(map[string]interface{}); ok {
-									if stepName, ok := step["name"].(string); ok {
-										// Calculate duration
-										var duration time.Duration
-										if startTime, ok := stepStartTimes[stepName]; ok {
-											duration = time.Since(startTime)
-											delete(stepStartTimes, stepName)
-										}
-										
-										// Extract step output if available
-										var stepOutput string
-										var stepStatus string = "finished"
-										if output, ok := step["output"].(string); ok && output != "" {
-											stepOutput = output
-										}
-										if status, ok := step["status"].(string); ok {
-											stepStatus = status
-										}
-										
-										if !automationMode {
-											// Show step completion with status
-											if duration > 0 {
-												fmt.Printf("  %s Step %s in %v\n", 
-													style.SuccessStyle.Render("✅"), 
-													stepStatus,
-													duration.Round(time.Millisecond))
-											} else {
-												fmt.Printf("  %s Step %s\n", 
-													style.SuccessStyle.Render("✅"),
-													stepStatus)
-											}
-											
-											// Show step output if available
-											if stepOutput != "" {
-												// Format output nicely
-												fmt.Printf("  %s %s\n", 
-													style.DimStyle.Render("📤 Output:"),
-													style.ToolOutputStyle.Render(formatStepOutput(stepOutput)))
-											}
-											
-											// Update progress
-											progressBar := generateProgressBar(completedSteps+1, stepCount)
-											fmt.Printf("  %s %s %s\n\n", 
-												style.SuccessStyle.Render("📊"),
-												progressBar,
-												style.HighlightStyle.Render(fmt.Sprintf("%d/%d steps completed", completedSteps+1, stepCount)))
-										}
-										
-										// Update workflow trace
-										workflowTrace.CompleteStep(stepName, stepStatus, stepOutput)
-										
-										// Update progress
-										completedSteps++
-									}
-								}
-								
-							case "workflow_complete":
-								// Workflow finished
-								if success, ok := jsonData["success"].(bool); ok && success {
-									workflowTrace.Complete("completed")
-									if !automationMode {
-										fmt.Printf("%s Workflow completed successfully!\n", 
-											style.SuccessStyle.Render("🎉"))
-									}
-								} else {
-									workflowTrace.Complete("failed")
-									if !automationMode {
-										fmt.Printf("%s Workflow execution failed\n", 
-											style.ErrorStyle.Render("💥"))
-									}
-									hasError = true
-								}
-								
-								if !automationMode {
-									// Show workflow execution graph
-									fmt.Print(workflowTrace.GenerateGraph())
-								}
-								
-								// Save trace to file if requested
-								if saveTrace {
-									if err := saveWorkflowTrace(workflowTrace, workflowFile); err != nil {
-										fmt.Fprintf(os.Stderr, "Warning: Failed to save workflow trace: %v\n", err)
-									}
-								}
-								
-								return nil
+			for enhancedEvent := range enhancedEvents {
+				// Extract workflow ID if available
+				if enhancedEvent.WorkflowID != "" && workflowID == "" {
+					workflowID = enhancedEvent.WorkflowID
+					if !automationMode && verbose {
+						fmt.Printf("[INFO] Workflow ID: %s\n", workflowID)
+					}
+				}
+				
+				switch enhancedEvent.Type {
+				case "reconnecting":
+					if !automationMode {
+						if attempt, ok := enhancedEvent.Data["attempt"].(int); ok {
+							if maxAttempts, ok := enhancedEvent.Data["max"].(int); ok {
+								fmt.Printf("%s Reconnecting... (attempt %d/%d)\n", 
+									style.WarningStyle.Render("🔄"), attempt, maxAttempts)
 							}
 						}
 					}
-				} else if event.Type == "error" {
+					
+				case "workflow_start":
 					if !automationMode {
-						fmt.Printf("%s %s\n", 
-							style.ErrorStyle.Render("💀 Error:"), 
-							event.Data)
+						fmt.Printf("%s Enhanced workflow started\n", style.InfoStyle.Render("🚀"))
 					}
+					
+				case "step_running":
+					if enhancedEvent.Step != nil {
+						stepName := enhancedEvent.Step.Name
+						stepStartTimes[stepName] = time.Now()
+						workflowTrace.StartStep(stepName)
+						
+						if !automationMode {
+							progress := fmt.Sprintf("[%d/%d]", completedSteps+1, stepCount)
+							fmt.Printf("%s %s %s\n", 
+								style.BulletStyle.Render("▶️"), 
+								style.InfoStyle.Render(progress),
+								style.ToolNameStyle.Render(stepName))
+							fmt.Printf("  %s Running...\n", style.StatusStyle.Render("⏳"))
+							
+							// Show live logs if available
+							if verbose && len(enhancedEvent.Step.Logs) > 0 {
+								for _, log := range enhancedEvent.Step.Logs {
+									fmt.Printf("  %s %s\n", style.DimStyle.Render("📝"), log)
+								}
+							}
+						}
+					}
+					
+				case "step_complete", "step_update":
+					if enhancedEvent.Step != nil {
+						stepName := enhancedEvent.Step.Name
+						
+						// Calculate duration
+						var duration time.Duration
+						if startTime, ok := stepStartTimes[stepName]; ok {
+							duration = time.Since(startTime)
+							delete(stepStartTimes, stepName)
+						}
+						
+						if !automationMode {
+							durationStr := ""
+							if duration > 0 {
+								durationStr = fmt.Sprintf(" in %v", duration.Round(time.Millisecond))
+							}
+							
+							fmt.Printf("  %s Step %s%s\n", 
+								style.SuccessStyle.Render("✅"), 
+								enhancedEvent.Step.Status, durationStr)
+							
+							// Show step output if available
+							if enhancedEvent.Step.Output != "" {
+								fmt.Printf("  %s %s\n", 
+									style.DimStyle.Render("📤 Output:"),
+									style.ToolOutputStyle.Render(formatStepOutput(enhancedEvent.Step.Output)))
+							}
+							
+							// Show variables if verbose and available
+							if verbose && enhancedEvent.Step.Variables != nil && len(enhancedEvent.Step.Variables) > 0 {
+								fmt.Printf("  %s Variables:\n", style.DimStyle.Render("🔧"))
+								for k, v := range enhancedEvent.Step.Variables {
+									fmt.Printf("    %s = %v\n", style.KeyStyle.Render(k), v)
+								}
+							}
+							
+							// Update progress
+							if enhancedEvent.Type == "step_complete" {
+								completedSteps++
+								progressBar := generateProgressBar(completedSteps, stepCount)
+								fmt.Printf("  %s %s %s\n\n", 
+									style.SuccessStyle.Render("📊"),
+									progressBar,
+									style.HighlightStyle.Render(fmt.Sprintf("%d/%d steps completed", completedSteps, stepCount)))
+							}
+						}
+						
+						// Update workflow trace
+						workflowTrace.CompleteStep(stepName, enhancedEvent.Step.Status, enhancedEvent.Step.Output)
+						if enhancedEvent.Type == "step_complete" {
+							completedSteps++
+						}
+					}
+					
+				case "step_failed":
 					hasError = true
-				} else if event.Type == "done" {
-					// Stream ended
-					break
+					if enhancedEvent.Step != nil {
+						stepName := enhancedEvent.Step.Name
+						
+						if !automationMode {
+							fmt.Printf("  %s Step failed: %s\n", 
+								style.ErrorStyle.Render("❌"), 
+								enhancedEvent.Step.Error)
+							
+							if enhancedEvent.Step.CanRetry && workflowID != "" {
+								fmt.Printf("  %s This step can be retried with: kubiya workflow retry %s --from-step %s\n",
+									style.InfoStyle.Render("💡"), workflowID, stepName)
+							}
+							
+							// Show error logs if verbose
+							if verbose && len(enhancedEvent.Step.Logs) > 0 {
+								fmt.Printf("  %s Error logs:\n", style.DimStyle.Render("📋"))
+								for _, log := range enhancedEvent.Step.Logs {
+									fmt.Printf("    %s\n", style.ErrorStyle.Render(log))
+								}
+							}
+						}
+						
+						// Update workflow trace with error
+						workflowTrace.CompleteStep(stepName, "failed", enhancedEvent.Step.Error)
+					}
+					
+				case "workflow_complete":
+					success := enhancedEvent.Data != nil && enhancedEvent.Error == nil
+					if success {
+						workflowTrace.Complete("completed")
+						if !automationMode {
+							fmt.Printf("%s Enhanced workflow completed successfully!\n", 
+								style.SuccessStyle.Render("🎉"))
+						}
+					} else {
+						workflowTrace.Complete("failed")
+						if !automationMode {
+							fmt.Printf("%s Enhanced workflow execution failed\n", 
+								style.ErrorStyle.Render("💥"))
+						}
+						hasError = true
+					}
+					
+					if !automationMode {
+						// Show workflow execution graph
+						fmt.Print(workflowTrace.GenerateGraph())
+					}
+					
+					// Save trace to file if requested
+					if saveTrace {
+						if err := saveWorkflowTrace(workflowTrace, workflowFile); err != nil {
+							fmt.Fprintf(os.Stderr, "Warning: Failed to save workflow trace: %v\n", err)
+						}
+					}
+					
+					// Show retry information if failed and we have workflow ID
+					if hasError && workflowID != "" && !automationMode {
+						fmt.Printf("\n%s To retry this workflow, use: kubiya workflow retry %s\n",
+							style.InfoStyle.Render("💡"), workflowID)
+						fmt.Printf("%s To check status: kubiya workflow status %s\n",
+							style.InfoStyle.Render("ℹ️"), workflowID)
+					}
+					
+					return nil
+					
+				case "error":
+					hasError = true
+					if enhancedEvent.Error != nil {
+						if !automationMode {
+							fmt.Printf("%s %s\n", 
+								style.ErrorStyle.Render("💥 Error:"), 
+								enhancedEvent.Error.Message)
+							
+							if enhancedEvent.Error.Details != "" && verbose {
+								fmt.Printf("  %s %s\n", 
+									style.DimStyle.Render("Details:"), 
+									enhancedEvent.Error.Details)
+							}
+							
+							// Show retry suggestion if applicable
+							if enhancedEvent.Error.Retry && workflowID != "" {
+								fmt.Printf("  %s This error can be retried with: kubiya workflow retry %s\n",
+									style.InfoStyle.Render("💡"), workflowID)
+							}
+						}
+					}
+					
+				case "done":
+					if verbose && !automationMode {
+						fmt.Printf("[VERBOSE] Enhanced stream completed\n")
+					}
+					goto streamEnd
 				}
 				
-				// Show verbose SSE details if requested  
+				// Show verbose event details if requested  
 				if verbose {
-					fmt.Printf("[VERBOSE] Event: %s, Data: %s\n", event.Type, event.Data)
+					if enhancedEvent.Error != nil {
+						fmt.Printf("[VERBOSE] Enhanced Event: %s, Error: %s\n", enhancedEvent.Type, enhancedEvent.Error.Message)
+					} else {
+						fmt.Printf("[VERBOSE] Enhanced Event: %s\n", enhancedEvent.Type)
+					}
 				}
 			}
+			
+		streamEnd:
 
 			if hasError {
 				workflowTrace.Complete("failed")
@@ -1270,5 +1369,219 @@ func saveWorkflowTrace(trace *WorkflowTrace, workflowFile string) error {
 	fmt.Printf("\n%s Workflow trace saved to: %s\n", 
 		style.InfoStyle.Render("💾"), traceFilename)
 	
+	return nil
+}
+
+// processRegularWorkflowEvents handles the original workflow event processing for fallback
+func processRegularWorkflowEvents(ctx context.Context, events <-chan kubiya.WorkflowSSEEvent, automationMode, verbose, saveTrace bool, workflowTrace *WorkflowTrace, workflowFile string, req kubiya.WorkflowExecutionRequest, stepStartTimes map[string]time.Time, completedSteps, stepCount int) error {
+	var hasError bool
+	
+	if !automationMode {
+		fmt.Printf("\n%s Starting workflow execution...\n\n", 
+			style.InfoStyle.Render("🚀"))
+		
+		// Show initial progress
+		progressBar := generateProgressBar(completedSteps, stepCount)
+		fmt.Printf("%s %s %s\n\n", 
+			style.InfoStyle.Render("📊"),
+			progressBar,
+			style.HighlightStyle.Render(fmt.Sprintf("%d/%d steps completed", completedSteps, stepCount)))
+	}
+	
+	for event := range events {
+		if event.Type == "data" {
+			// Parse JSON data for workflow events
+			var jsonData map[string]interface{}
+			if err := json.Unmarshal([]byte(event.Data), &jsonData); err == nil {
+				if eventType, ok := jsonData["type"].(string); ok {
+					switch eventType {
+					case "step_running":
+						if step, ok := jsonData["step"].(map[string]interface{}); ok {
+							if stepName, ok := step["name"].(string); ok {
+								stepStartTimes[stepName] = time.Now()
+								
+								// Update workflow trace
+								workflowTrace.StartStep(stepName)
+								
+								if !automationMode {
+									// Show step starting
+									progress := fmt.Sprintf("[%d/%d]", completedSteps+1, stepCount)
+									fmt.Printf("%s %s %s\n", 
+										style.BulletStyle.Render("▶️"), 
+										style.InfoStyle.Render(progress),
+										style.ToolNameStyle.Render(stepName))
+									fmt.Printf("  %s Running...\n", style.StatusStyle.Render("⏳"))
+								}
+							}
+						}
+						
+					case "step_complete":
+						if step, ok := jsonData["step"].(map[string]interface{}); ok {
+							if stepName, ok := step["name"].(string); ok {
+								// Calculate duration
+								var duration time.Duration
+								if startTime, ok := stepStartTimes[stepName]; ok {
+									duration = time.Since(startTime)
+									delete(stepStartTimes, stepName)
+								}
+								
+								// Extract step output if available
+								var stepOutput string
+								var stepStatus string = "finished"
+								if output, ok := step["output"].(string); ok && output != "" {
+									stepOutput = output
+								}
+								if status, ok := step["status"].(string); ok {
+									stepStatus = status
+								}
+								
+								if !automationMode {
+									// Show step completion with status
+									if duration > 0 {
+										fmt.Printf("  %s Step %s in %v\n", 
+											style.SuccessStyle.Render("✅"), 
+											stepStatus,
+											duration.Round(time.Millisecond))
+									} else {
+										fmt.Printf("  %s Step %s\n", 
+											style.SuccessStyle.Render("✅"),
+											stepStatus)
+									}
+									
+									// Show step output if available
+									if stepOutput != "" {
+										// Format output nicely
+										fmt.Printf("  %s %s\n", 
+											style.DimStyle.Render("📤 Output:"),
+											style.ToolOutputStyle.Render(formatStepOutput(stepOutput)))
+									}
+									
+									// Update progress
+									progressBar := generateProgressBar(completedSteps+1, stepCount)
+									fmt.Printf("  %s %s %s\n\n", 
+										style.SuccessStyle.Render("📊"),
+										progressBar,
+										style.HighlightStyle.Render(fmt.Sprintf("%d/%d steps completed", completedSteps+1, stepCount)))
+								}
+								
+								// Update workflow trace
+								workflowTrace.CompleteStep(stepName, stepStatus, stepOutput)
+								
+								// Update progress
+								completedSteps++
+							}
+						}
+						
+					case "workflow_complete":
+						// Workflow finished
+						if success, ok := jsonData["success"].(bool); ok && success {
+							workflowTrace.Complete("completed")
+							if !automationMode {
+								fmt.Printf("%s Workflow completed successfully!\n", 
+									style.SuccessStyle.Render("🎉"))
+							}
+						} else {
+							workflowTrace.Complete("failed")
+							if !automationMode {
+								fmt.Printf("%s Workflow execution failed\n", 
+									style.ErrorStyle.Render("💥"))
+							}
+							hasError = true
+						}
+						
+						if !automationMode {
+							// Show workflow execution graph
+							fmt.Print(workflowTrace.GenerateGraph())
+						}
+						
+						// Save trace to file if requested
+						if saveTrace {
+							if err := saveWorkflowTrace(workflowTrace, workflowFile); err != nil {
+								fmt.Fprintf(os.Stderr, "Warning: Failed to save workflow trace: %v\n", err)
+							}
+						}
+						
+						return nil
+					}
+				}
+			}
+		} else if event.Type == "error" {
+			if !automationMode {
+				fmt.Printf("%s %s\n", 
+					style.ErrorStyle.Render("💀 Error:"), 
+					event.Data)
+			}
+			hasError = true
+		} else if event.Type == "done" {
+			// Stream ended
+			break
+		}
+		
+		// Show verbose SSE details if requested  
+		if verbose {
+			fmt.Printf("[VERBOSE] Event: %s, Data: %s\n", event.Type, event.Data)
+		}
+	}
+
+	if hasError {
+		workflowTrace.Complete("failed")
+		if !automationMode {
+			fmt.Printf("\n%s Workflow execution failed. Check the logs above for details.\n", 
+				style.ErrorStyle.Render("💥"))
+			fmt.Print(workflowTrace.GenerateGraph())
+		}
+		
+		// Save trace to file if requested
+		if saveTrace {
+			if err := saveWorkflowTrace(workflowTrace, workflowFile); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: Failed to save workflow trace: %v\n", err)
+			}
+		}
+		
+		return fmt.Errorf("workflow execution failed")
+	}
+
+	// If we reach here, the stream ended without explicit completion
+	if !automationMode {
+		fmt.Printf("\n%s Stream ended - checking workflow status...\n", 
+			style.InfoStyle.Render("ℹ️"))
+	}
+	
+	if completedSteps >= stepCount && stepCount > 0 {
+		workflowTrace.Complete("completed")
+		if !automationMode {
+			fmt.Printf("%s Workflow appears to have completed successfully (%d/%d steps)\n", 
+				style.SuccessStyle.Render("✅"), completedSteps, stepCount)
+		}
+	} else {
+		workflowTrace.Complete("incomplete")
+		if !automationMode {
+			fmt.Printf("%s Workflow may be incomplete (%d/%d steps completed)\n", 
+				style.WarningStyle.Render("⚠️"), completedSteps, stepCount)
+			fmt.Print(workflowTrace.GenerateGraph())
+		}
+		
+		// Save trace to file if requested
+		if saveTrace {
+			if err := saveWorkflowTrace(workflowTrace, workflowFile); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: Failed to save workflow trace: %v\n", err)
+			}
+		}
+		
+		return fmt.Errorf("workflow stream ended unexpectedly")
+	}
+	
+	if !automationMode {
+		// Show final workflow execution graph
+		fmt.Print(workflowTrace.GenerateGraph())
+	}
+	
+	// Save trace to file if requested
+	if saveTrace {
+		if err := saveWorkflowTrace(workflowTrace, workflowFile); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: Failed to save workflow trace: %v\n", err)
+		}
+	}
+
 	return nil
 }

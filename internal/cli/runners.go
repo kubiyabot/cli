@@ -66,12 +66,12 @@ func newListRunnersCommand(cfg *config.Config) *cobra.Command {
 		Short:   "📋 List all runners",
 		Example: "  kubiya runner list\n  kubiya runner ls --output json\n  kubiya runner list --debug",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			client := kubiya.NewClient(cfg)
-
 			// Set debug mode in client if --debug is passed
 			if debug {
 				cfg.Debug = true
 			}
+			
+			client := kubiya.NewClient(cfg)
 
 			// Define spinner frames for progress indication
 			spinner := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
