@@ -83,6 +83,7 @@ Need help? Visit: https://docs.kubiya.ai`,
 		newInitCommand(cfg),
 		newMcpCommand(cfg),
 		newWorkflowCommand(cfg),
+		newTriggerCommand(cfg),
 		newPolicyCommand(cfg),
 		newUsersCommand(cfg),
 	)
