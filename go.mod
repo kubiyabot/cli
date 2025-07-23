@@ -19,6 +19,7 @@ require (
 	github.com/mattn/go-isatty v0.0.20
 	github.com/spf13/afero v1.14.0
 	github.com/spf13/cobra v1.9.1
+	golang.org/x/sync v0.13.0
 	golang.org/x/time v0.12.0
 	gopkg.in/yaml.v3 v3.0.1
 	k8s.io/api v0.32.3
@@ -81,7 +82,6 @@ require (
 	go.opentelemetry.io/proto/otlp v1.3.1 // indirect
 	golang.org/x/net v0.39.0 // indirect
 	golang.org/x/oauth2 v0.29.0 // indirect
-	golang.org/x/sync v0.13.0 // indirect
 	golang.org/x/sys v0.32.0 // indirect
 	golang.org/x/term v0.31.0 // indirect
 	golang.org/x/text v0.24.0 // indirect
