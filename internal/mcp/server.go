@@ -97,6 +97,12 @@ func (s *Server) addTools() error {
 		return err
 	}
 
+	if s.serverConfig.EnableDocumentation {
+		if err := s.addDocumentationTools(); err != nil {
+			return fmt.Errorf("failed to add documentation tools: %w", err)
+		}
+	}
+
 	return nil
 }
 
