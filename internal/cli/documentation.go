@@ -41,17 +41,31 @@ type GroupResults struct {
 	} `json:"results"`
 }
 type Chunk struct {
-	Title       string   `json:"title"`
 	HtmlContent string   `json:"chunk_html"`
 	TagSets     []string `json:"tag_set"`
+	Metadata    struct {
+		Title string `json:"title"`
+		Icon  string `json:"icon"`
+	} `json:"metadata"`
 }
 
 func (c *Chunk) String() string {
-	return c.HtmlContent
+	if c.isCode() {
+		return fmt.Sprintf("```%s\n```", c.HtmlContent)
+	}
+	return strings.ReplaceAll(c.HtmlContent, "\n", "\n\n")
 }
 
 func (c Chunk) isCode() bool {
 	return slices.Contains(c.TagSets, "code")
+}
+
+func (c Chunk) StringTitle() string {
+	return c.Metadata.Title
+}
+
+func (c Chunk) StringIcon() string {
+	return c.Metadata.Icon
 }
 
 func newDocumentationCommand(cfg *config.Config) *cobra.Command {
@@ -90,7 +104,7 @@ func (tr *TrieveResponse) SearchDocumentationByGroup(query string) (*GroupResult
 	req := &SearchRequest{
 		Query:          query,
 		PageSize:       10,
-		SearchType:     "fulltext",
+		SearchType:     "bm25",
 		ExtendResults:  true,
 		ScoreThreshold: 1.0,
 	}
@@ -136,15 +150,19 @@ func newQueryDocumentationCommand(cfg *config.Config) *cobra.Command {
 			resp, err := trieve.SearchDocumentationByGroup(prompt)
 			cobra.CheckErr(err)
 
-			for _, chunks := range resp.Results {
-				for _, chunk := range chunks.Chuncks {
-					out, err := glamour.Render(chunk.Chunk.HtmlContent, "dark")
-					if err != nil {
-						return err
-					}
+			for _, group := range resp.Results {
+				for _, chunk := range group.Chuncks {
+					// print the chunk title
+					title := fmt.Sprintf("# %s", chunk.Chunk.StringTitle())
+					out, _ := glamour.Render(title, "dracula")
+					fmt.Print(out)
+
+					// print the chunk body
+					style := "dracula"
+					out, err = glamour.Render(chunk.Chunk.String(), style)
+					cobra.CheckErr(err)
 					fmt.Print(out)
 				}
-
 			}
 			return nil
 		},
