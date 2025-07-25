@@ -15,18 +15,17 @@ import (
 
 func NewMCPServeCmd() *cobra.Command {
 	var (
-		configFile           string
-		disablePlatformAPIs  bool
-		productionMode       bool
-		whitelistedTools     []string
-		disableRunners       bool
-		enableOPAPolicies    bool
-		requireAuth          bool
-		sessionTimeout       int
-		serverName           string
-		serverVersion        string
-		disableDynamicTools  bool
-		enableVerboseLogging bool
+		configFile                                                     string
+		disablePlatformAPIs                                            bool
+		productionMode                                                 bool
+		whitelistedTools                                               []string
+		disableRunners                                                 bool
+		enableOPAPolicies                                              bool
+		requireAuth                                                    bool
+		sessionTimeout                                                 int
+		serverName                                                     string
+		serverVersion                                                  string
+		disableDynamicTools, enableVerboseLogging, enableDocumentation bool
 	)
 
 	cmd := &cobra.Command{
@@ -81,6 +80,9 @@ func NewMCPServeCmd() *cobra.Command {
 				if enableVerboseLogging {
 					serverConfig.VerboseLogging = true
 				}
+				if enableDocumentation {
+					serverConfig.EnableDocumentation = true
+				}
 
 				// Create Kubiya client
 				kubiyaClient := kubiya.NewClient(cfg)
@@ -117,7 +119,9 @@ func NewMCPServeCmd() *cobra.Command {
 				if enableVerboseLogging {
 					serverConfig.VerboseLogging = true
 				}
-
+				if enableDocumentation {
+					serverConfig.EnableDocumentation = true
+				}
 				// Create and start server
 				server := mcp.NewServer(cfg, serverConfig)
 				return server.Start()
@@ -143,6 +147,9 @@ func NewMCPServeCmd() *cobra.Command {
 
   # Disable runners and enable OPA policies
   kubiya mcp serve --disable-runners --enable-opa-policies
+
+  # Enable kubiya documentation search
+  kubiya mcp serve --enable-documentation
 
   # Configure in Claude Desktop (~/Library/Application Support/Claude/claude_desktop_config.json):
   {
@@ -173,6 +180,9 @@ func NewMCPServeCmd() *cobra.Command {
 
 	// Logging and debugging flags
 	cmd.Flags().BoolVar(&enableVerboseLogging, "verbose", false, "Enable verbose logging output")
+
+	// Documentation flags
+	cmd.Flags().BoolVar(&enableDocumentation, "enable-documentation", false, "Enable documentation features (experimental)")
 
 	// Production mode specific flags
 	cmd.Flags().BoolVar(&requireAuth, "require-auth", false, "Require authentication for MCP connections")

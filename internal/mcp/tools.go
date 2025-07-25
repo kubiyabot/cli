@@ -279,6 +279,14 @@ func (s *Server) addKnowledgeBaseTools() error {
 	return nil
 }
 
+func (s *Server) addDocumentationTools() error {
+	s.server.AddTool(mcp.NewTool("search_documentation",
+		mcp.WithDescription("Search kubiya documentation for contextual information and workflow specs"),
+		mcp.WithString("query", mcp.Required(), mcp.Description("Search query to find relevant documentation")),
+	), s.SearchDocumentationHandler)
+	return nil
+}
+
 // executeToolHandler handles tool execution
 func (s *Server) executeToolHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	args := request.Params.Arguments
@@ -476,4 +484,28 @@ func (s *Server) workflowDslWasmHandler(ctx context.Context, request mcp.CallToo
 	}
 
 	return mcp.NewToolResultText(string(output)), nil
+}
+
+func (s *Server) SearchDocumentationHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	args := request.Params.Arguments
+	query, _ := args["query"].(string)
+	if query == "" {
+		return mcp.NewToolResultError("query parameter is required"), nil
+	}
+	tr, err := kubiya.GetTrieveConfig()
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("Failed to get Trieve config: %v", err)), nil
+	}
+	results, err := tr.SearchDocumentationByGroup(query)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("Failed to search documentation: %v", err)), nil
+	}
+	if len(results.Results) == 0 {
+		return mcp.NewToolResultError(fmt.Sprintf("No results found for query: %s", query)), nil
+	}
+	data, err := json.MarshalIndent(results, "", "  ")
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("Failed to marshal results: %v", err)), nil
+	}
+	return mcp.NewToolResultText(string(data)), nil
 }
