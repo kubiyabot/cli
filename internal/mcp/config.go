@@ -12,13 +12,14 @@ import (
 
 // Configuration defines configuration for the MCP server
 type Configuration struct {
-	WhitelistedTools  []WhitelistedTool `json:"whitelisted_tools,omitempty" yaml:"whitelisted_tools,omitempty"`
-	ToolContexts      []ToolContext     `json:"tool_contexts,omitempty" yaml:"tool_contexts,omitempty"`
-	EnableRunners     bool              `json:"enable_runners" yaml:"enable_runners"`
-	AllowPlatformAPIs bool              `json:"allow_platform_apis" yaml:"allow_platform_apis"`
-	EnableOPAPolicies bool              `json:"enable_opa_policies" yaml:"enable_opa_policies"`
-	AllowDynamicTools bool              `json:"allow_dynamic_tools" yaml:"allow_dynamic_tools"`
-	VerboseLogging    bool              `json:"verbose_logging" yaml:"verbose_logging"`
+	WhitelistedTools    []WhitelistedTool `json:"whitelisted_tools,omitempty" yaml:"whitelisted_tools,omitempty"`
+	ToolContexts        []ToolContext     `json:"tool_contexts,omitempty" yaml:"tool_contexts,omitempty"`
+	EnableRunners       bool              `json:"enable_runners" yaml:"enable_runners"`
+	AllowPlatformAPIs   bool              `json:"allow_platform_apis" yaml:"allow_platform_apis"`
+	EnableOPAPolicies   bool              `json:"enable_opa_policies" yaml:"enable_opa_policies"`
+	AllowDynamicTools   bool              `json:"allow_dynamic_tools" yaml:"allow_dynamic_tools"`
+	VerboseLogging      bool              `json:"verbose_logging" yaml:"verbose_logging"`
+	EnableDocumentation bool              `json:"enable_documentation" yaml:"enable_documentation"`
 }
 
 // Config defines complete configuration for the production MCP server
@@ -36,11 +37,12 @@ type Config struct {
 	RateLimit              RateLimitConfig     `json:"rate_limit" yaml:"rate_limit"`
 
 	// Core functionality flags
-	EnableRunners     bool `json:"enable_runners" yaml:"enable_runners"`
-	AllowPlatformAPIs bool `json:"allow_platform_apis" yaml:"allow_platform_apis"`
-	EnableOPAPolicies bool `json:"enable_opa_policies" yaml:"enable_opa_policies"`
-	AllowDynamicTools bool `json:"allow_dynamic_tools" yaml:"allow_dynamic_tools"`
-	VerboseLogging    bool `json:"verbose_logging" yaml:"verbose_logging"`
+	EnableRunners       bool `json:"enable_runners" yaml:"enable_runners"`
+	AllowPlatformAPIs   bool `json:"allow_platform_apis" yaml:"allow_platform_apis"`
+	EnableOPAPolicies   bool `json:"enable_opa_policies" yaml:"enable_opa_policies"`
+	AllowDynamicTools   bool `json:"allow_dynamic_tools" yaml:"allow_dynamic_tools"`
+	VerboseLogging      bool `json:"verbose_logging" yaml:"verbose_logging"`
+	EnableDocumentation bool `json:"enable_documentation" yaml:"enable_documentation"`
 
 	// User organization ID (set automatically from user config)
 	OrgID string `json:"org_id,omitempty" yaml:"org_id,omitempty"`
@@ -181,14 +183,15 @@ func LoadConfiguration(fs afero.Fs, configFile string, disablePlatformAPIsFlag b
 func LoadProductionConfig(fs afero.Fs, configFile string, disablePlatformAPIsFlag bool, whitelistedTools []string) (*Config, error) {
 	// Start with default config - platform APIs enabled by default, dynamic tools enabled, verbose logging disabled
 	config := &Config{
-		ServerName:        "Kubiya MCP Server",
-		ServerVersion:     "1.0.0",
-		SessionTimeout:    1800, // 30 minutes
-		RequireAuth:       false,
-		EnableRunners:     true,
-		AllowPlatformAPIs: true,
-		AllowDynamicTools: true,
-		VerboseLogging:    false,
+		ServerName:          "Kubiya MCP Server",
+		ServerVersion:       "1.0.0",
+		SessionTimeout:      1800, // 30 minutes
+		RequireAuth:         false,
+		EnableRunners:       true,
+		AllowPlatformAPIs:   true,
+		AllowDynamicTools:   true,
+		VerboseLogging:      false,
+		EnableDocumentation: false,
 		RateLimit: RateLimitConfig{
 			RequestsPerSecond: 10.0,
 			Burst:             20,
