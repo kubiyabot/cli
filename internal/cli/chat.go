@@ -3,6 +3,7 @@ package cli
 import (
 	"bufio"
 	"bytes"
+	stdcontext "context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
@@ -23,6 +24,7 @@ import (
 
 	"github.com/kubiyabot/cli/internal/config"
 	"github.com/kubiyabot/cli/internal/kubiya"
+	sentryutil "github.com/kubiyabot/cli/internal/sentry"
 	"github.com/kubiyabot/cli/internal/style"
 	"github.com/kubiyabot/cli/internal/tui"
 	"github.com/mattn/go-isatty"
@@ -2100,7 +2102,19 @@ For inline agents, use --inline with --tools-file or --tools-json to provide cus
 					fmt.Printf("Debug mode: %v\n", debug)
 				}
 
-				msgChan, err = client.SendInlineAgentMessage(cmd.Context(), message, sessionID, context, inlineAgent)
+				err = sentryutil.WithKubiyaChat(cmd.Context(), "inline_agent", 1, func(ctx stdcontext.Context) error {
+					var chatErr error
+					msgChan, chatErr = client.SendInlineAgentMessage(ctx, message, sessionID, context, inlineAgent)
+					return chatErr
+				})
+				
+				// Add breadcrumb for inline agent chat
+				sentryutil.AddBreadcrumb("kubiya.chat", "Inline agent message sent", map[string]interface{}{
+					"message_length": len(message),
+					"session_id":     sessionID,
+					"has_context":    len(context) > 0,
+				})
+				
 				if err != nil {
 					// If inline agent connection fails, retry for retryable errors
 					if isRetryableError(err) {

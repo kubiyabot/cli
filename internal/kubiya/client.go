@@ -1961,14 +1961,33 @@ func (c *Client) findHealthyRunnerQuickly(ctx context.Context) (string, error) {
 
 // ExecuteToolWithTimeout executes a tool directly using the tool execution API with a configurable timeout
 func (c *Client) ExecuteToolWithTimeout(ctx context.Context, toolName string, toolDef map[string]interface{}, runner string, timeout time.Duration, args map[string]any) (<-chan WorkflowSSEEvent, error) {
-	// Create Sentry span for tracing
-	span, ctx := sentryutil.StartSpan(ctx, "execute_tool")
-	if span != nil {
-		span.SetTag("tool.name", toolName)
-		span.SetTag("runner", runner)
-		span.SetTag("timeout", timeout.String())
-		defer span.Finish()
+	// Use comprehensive tool execution tracing
+	var eventChan <-chan WorkflowSSEEvent
+	var execErr error
+	
+	err := sentryutil.WithToolExecution(ctx, toolName, runner, func(ctx context.Context) error {
+		// Create Sentry span for tracing (keeping existing pattern)
+		span, ctx := sentryutil.StartSpan(ctx, "execute_tool")
+		if span != nil {
+			span.SetTag("tool.name", toolName)
+			span.SetTag("runner", runner)
+			span.SetTag("timeout", timeout.String())
+			defer span.Finish()
+		}
+		
+		eventChan, execErr = c.executeToolWithTimeoutInternal(ctx, toolName, toolDef, runner, timeout, args)
+		return execErr
+	})
+	
+	if err != nil {
+		return nil, err
 	}
+	
+	return eventChan, nil
+}
+
+// executeToolWithTimeoutInternal contains the actual implementation
+func (c *Client) executeToolWithTimeoutInternal(ctx context.Context, toolName string, toolDef map[string]interface{}, runner string, timeout time.Duration, args map[string]any) (<-chan WorkflowSSEEvent, error) {
 
 	// Handle "auto" runner selection with fast failover
 	selectedRunner := runner
@@ -2182,13 +2201,33 @@ func (c *Client) streamToolExecution(resp *http.Response, timeout time.Duration,
 		reader := bufio.NewReader(resp.Body)
 
 		// Start a goroutine to monitor for timeouts only if timeout > 0
+		// Use a much more generous timeout for SSE streams to allow long-running silent operations
 		if timeout > 0 {
-			ticker := time.NewTicker(time.Second)
+			// For tool executions, use a longer inactivity timeout (3x the original timeout or minimum 1 hour)
+			inactivityTimeout := timeout * 3
+			if inactivityTimeout < time.Hour {
+				inactivityTimeout = time.Hour // Minimum 1 hour for long-running tools
+			}
+			
+			ticker := time.NewTicker(30 * time.Second) // Check less frequently
 			defer ticker.Stop()
 
 			go func() {
 				for range ticker.C {
-					if time.Since(lastEventTime) > timeout {
+					timeSinceLastEvent := time.Since(lastEventTime)
+					if timeSinceLastEvent > inactivityTimeout {
+						if c.debug {
+							fmt.Printf("[DEBUG] SSE stream timeout after %v of inactivity (configured: %v)\n", timeSinceLastEvent, inactivityTimeout)
+						}
+						// Add Sentry tracking for stream timeouts
+						sentryutil.CaptureError(fmt.Errorf("SSE stream inactivity timeout"), map[string]string{
+							"timeout_type":     "sse_inactivity",
+							"configured_timeout": inactivityTimeout.String(),
+							"actual_inactivity": timeSinceLastEvent.String(),
+						}, map[string]interface{}{
+							"runner": runnerName,
+							"inactivity_minutes": timeSinceLastEvent.Minutes(),
+						})
 						resp.Body.Close() // Force close the connection
 						return
 					}

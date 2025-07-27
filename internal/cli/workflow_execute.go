@@ -15,6 +15,7 @@ import (
 
 	"github.com/kubiyabot/cli/internal/config"
 	"github.com/kubiyabot/cli/internal/kubiya"
+	sentryutil "github.com/kubiyabot/cli/internal/sentry"
 	"github.com/kubiyabot/cli/internal/style"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
@@ -681,7 +682,22 @@ The format will be auto-detected and you can provide variables and choose the ru
 			
 			// Try enhanced client first, fallback to regular if not available
 			enhancedClient := client.WorkflowEnhanced()
-			enhancedEvents, err := enhancedClient.ExecuteWorkflowEnhanced(ctx, req, runner)
+			
+			var enhancedEvents <-chan kubiya.EnhancedWorkflowEvent
+			err = sentryutil.WithWorkflowExecution(ctx, req.Name, req.Name, func(ctx context.Context) error {
+				var execErr error
+				enhancedEvents, execErr = enhancedClient.ExecuteWorkflowEnhanced(ctx, req, runner)
+				return execErr
+			})
+			
+			// Add breadcrumb for workflow execution start
+			sentryutil.AddBreadcrumb("kubiya.workflow", "Workflow execution started", map[string]interface{}{
+				"workflow_name": req.Name,
+				"runner":        runner,
+				"step_count":    len(req.Steps),
+				"enhanced":      true,
+			})
+			
 			if err != nil {
 				if !automationMode {
 					fmt.Printf(" %s\n", style.WarningStyle.Render("enhanced failed, trying regular..."))
@@ -689,7 +705,21 @@ The format will be auto-detected and you can provide variables and choose the ru
 				
 				// Fallback to regular workflow client
 				workflowClient := client.Workflow()
-				events, err := workflowClient.ExecuteWorkflow(ctx, req, runner)
+				
+				var events <-chan kubiya.WorkflowSSEEvent
+				err = sentryutil.WithWorkflowExecution(ctx, req.Name, req.Name, func(ctx context.Context) error {
+					var execErr error
+					events, execErr = workflowClient.ExecuteWorkflow(ctx, req, runner)
+					return execErr
+				})
+				
+				// Update breadcrumb for fallback
+				sentryutil.AddBreadcrumb("kubiya.workflow", "Fallback to regular workflow execution", map[string]interface{}{
+					"workflow_name": req.Name,
+					"runner":        runner,
+					"enhanced":      false,
+				})
+				
 				if err != nil {
 					if !automationMode {
 						fmt.Printf(" %s\n", style.ErrorStyle.Render("failed!"))
