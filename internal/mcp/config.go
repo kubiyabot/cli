@@ -31,7 +31,7 @@ type Config struct {
 	EnableTimeRestrictions bool                `json:"enable_time_restrictions" yaml:"enable_time_restrictions"`
 	FeatureFlags           map[string]bool     `json:"feature_flags,omitempty" yaml:"feature_flags,omitempty"`
 	ToolPermissions        map[string][]string `json:"tool_permissions,omitempty" yaml:"tool_permissions,omitempty"`
-	ToolTimeouts           map[string]int      `json:"tool_timeouts,omitempty" yaml:"tool_timeouts,omitempty"` // in seconds
+	ToolTimeouts           map[string]int      `json:"tool_timeouts,omitempty" yaml:"tool_timeouts,omitempty"` // in seconds - for long-running tools consider 3600+ (1+ hour)
 	WhitelistedTools       []WhitelistedTool   `json:"whitelisted_tools,omitempty" yaml:"whitelisted_tools,omitempty"`
 	ToolContexts           []ToolContext       `json:"tool_contexts,omitempty" yaml:"tool_contexts,omitempty"`
 	RateLimit              RateLimitConfig     `json:"rate_limit" yaml:"rate_limit"`

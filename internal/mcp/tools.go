@@ -8,7 +8,9 @@ import (
 	"time"
 
 	extism "github.com/extism/go-sdk"
+	"github.com/getsentry/sentry-go"
 	"github.com/kubiyabot/cli/internal/kubiya"
+	sentryutil "github.com/kubiyabot/cli/internal/sentry"
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
@@ -289,80 +291,138 @@ func (s *Server) addDocumentationTools() error {
 
 // executeToolHandler handles tool execution
 func (s *Server) executeToolHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	args := request.Params.Arguments
+	// Wrap in MCP transaction with comprehensive tracing
+	return s.wrapMCPHandler(ctx, "execute_tool", "", func(ctx context.Context) (*mcp.CallToolResult, error) {
+		args := request.Params.Arguments
 
-	toolName, ok := args["tool_name"].(string)
-	if !ok || toolName == "" {
-		return mcp.NewToolResultError("tool_name parameter is required"), nil
-	}
-
-	runner, _ := args["runner"].(string)
-	toolArgs, _ := args["args"].(map[string]interface{})
-	integrationTemplate, _ := args["integration_template"].(string)
-
-	// Create tool definition
-	toolDef := map[string]interface{}{
-		"name": toolName,
-		"args": toolArgs,
-	}
-
-	if integrationTemplate != "" {
-		toolDef["integration_template"] = integrationTemplate
-	}
-
-	// Enhanced runner selection logic using production methods
-	if runner == "" || runner == "default" {
-		runner = "default"
-	}
-	// Note: "auto" runner selection is already handled by ExecuteToolWithTimeout method
-
-	// Policy validation (if enabled)
-	if s.serverConfig.EnableOPAPolicies {
-		allowed, message, err := s.client.ValidateToolExecution(ctx, toolName, toolArgs, runner)
-		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("Policy validation failed: %v", err)), nil
+		toolName, ok := args["tool_name"].(string)
+		if !ok || toolName == "" {
+			return mcp.NewToolResultError("tool_name parameter is required"), nil
 		}
-		if !allowed {
-			errorMsg := fmt.Sprintf("Tool execution denied by policy: %s", toolName)
-			if message != "" {
-				errorMsg += fmt.Sprintf(" - %s", message)
+
+		// Add breadcrumb for tool execution start
+		sentryutil.AddBreadcrumb("mcp.tool_execution", "Starting tool execution", map[string]interface{}{
+			"tool_name": toolName,
+			"has_args":  len(args) > 1,
+		})
+
+		runner, _ := args["runner"].(string)
+		toolArgs, _ := args["args"].(map[string]interface{})
+		integrationTemplate, _ := args["integration_template"].(string)
+
+		// Create tool definition
+		toolDef := map[string]interface{}{
+			"name": toolName,
+			"args": toolArgs,
+		}
+
+		if integrationTemplate != "" {
+			toolDef["integration_template"] = integrationTemplate
+		}
+
+		// Enhanced runner selection logic using production methods
+		if runner == "" || runner == "default" {
+			runner = "default"
+		}
+		// Note: "auto" runner selection is already handled by ExecuteToolWithTimeout method
+
+		// Policy validation (if enabled)
+		if s.serverConfig.EnableOPAPolicies {
+			allowed, message, err := s.client.ValidateToolExecution(ctx, toolName, toolArgs, runner)
+			if err != nil {
+				sentryutil.CaptureError(err, map[string]string{
+					"mcp.operation": "execute_tool",
+					"tool_name":     toolName,
+					"error_type":    "policy_validation",
+				}, map[string]interface{}{
+					"runner": runner,
+				})
+				return mcp.NewToolResultError(fmt.Sprintf("Policy validation failed: %v", err)), nil
 			}
-			return mcp.NewToolResultError(errorMsg), nil
+			if !allowed {
+				errorMsg := fmt.Sprintf("Tool execution denied by policy: %s", toolName)
+				if message != "" {
+					errorMsg += fmt.Sprintf(" - %s", message)
+				}
+				sentryutil.CaptureMessage(errorMsg, sentry.LevelWarning, map[string]string{
+					"mcp.operation": "execute_tool",
+					"tool_name":     toolName,
+					"denial_reason": "policy",
+				})
+				return mcp.NewToolResultError(errorMsg), nil
+			}
 		}
-	}
-	argVals := make(map[string]any) // to get argument values
+		argVals := make(map[string]any) // to get argument values
 
-	// Execute with timeout (5 minutes)
-	timeout := 300 * time.Second
-	eventChan, err := s.client.ExecuteToolWithTimeout(ctx, toolName, toolDef, runner, timeout, argVals)
-	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("Failed to execute tool: %v", err)), nil
-	}
+		// Execute with timeout (30 minutes for long-running operations)
+		timeout := 30 * time.Minute
+		
+		// Add breadcrumb for tool execution start
+		sentryutil.AddBreadcrumb("mcp.tool_execution", "Executing tool with timeout", map[string]interface{}{
+			"tool_name":    toolName,
+			"runner":       runner,
+			"timeout_sec":  timeout.Seconds(),
+			"args_count":   len(toolArgs),
+		})
 
-	var output strings.Builder
-	output.WriteString(fmt.Sprintf("🚀 Executing tool: %s\n", toolName))
-	if runner != "" {
-		output.WriteString(fmt.Sprintf("📍 Runner: %s\n", runner))
-	}
-	output.WriteString("=" + strings.Repeat("=", 50) + "\n\n")
-
-	for event := range eventChan {
-		switch event.Type {
-		case "error":
-			output.WriteString(fmt.Sprintf("❌ Error: %s\n", event.Data))
-			return mcp.NewToolResultText(output.String()), nil
-		case "stdout":
-			output.WriteString(event.Data)
-		case "stderr":
-			output.WriteString(fmt.Sprintf("⚠️ %s", event.Data))
-		case "done":
-			output.WriteString("\n✅ Tool execution completed\n")
-		default:
-			output.WriteString(fmt.Sprintf("📝 %s: %s\n", event.Type, event.Data))
+		eventChan, err := s.client.ExecuteToolWithTimeout(ctx, toolName, toolDef, runner, timeout, argVals)
+		if err != nil {
+			sentryutil.CaptureError(err, map[string]string{
+				"mcp.operation": "execute_tool",
+				"tool_name":     toolName,
+				"error_type":    "execution_start",
+			}, map[string]interface{}{
+				"runner":  runner,
+				"timeout": timeout.String(),
+			})
+			return mcp.NewToolResultError(fmt.Sprintf("Failed to execute tool: %v", err)), nil
 		}
-	}
 
-	return mcp.NewToolResultText(output.String()), nil
+		var output strings.Builder
+		output.WriteString(fmt.Sprintf("🚀 Executing tool: %s\n", toolName))
+		if runner != "" {
+			output.WriteString(fmt.Sprintf("📍 Runner: %s\n", runner))
+		}
+		output.WriteString("=" + strings.Repeat("=", 50) + "\n\n")
+
+		eventCount := 0
+		errorCount := 0
+		
+		for event := range eventChan {
+			eventCount++
+			switch event.Type {
+			case "error":
+				errorCount++
+				output.WriteString(fmt.Sprintf("❌ Error: %s\n", event.Data))
+				
+				// Add breadcrumb for execution error
+				sentryutil.AddBreadcrumb("mcp.tool_execution", "Tool execution error", map[string]interface{}{
+					"tool_name":   toolName,
+					"error_data":  event.Data,
+					"event_count": eventCount,
+				})
+				
+				return mcp.NewToolResultText(output.String()), nil
+			case "stdout":
+				output.WriteString(event.Data)
+			case "stderr":
+				output.WriteString(fmt.Sprintf("⚠️ %s", event.Data))
+			case "done":
+				output.WriteString("\n✅ Tool execution completed\n")
+				
+				// Add successful completion breadcrumb
+				sentryutil.AddBreadcrumb("mcp.tool_execution", "Tool execution completed successfully", map[string]interface{}{
+					"tool_name":    toolName,
+					"event_count":  eventCount,
+					"error_count":  errorCount,
+				})
+			default:
+				output.WriteString(fmt.Sprintf("📝 %s: %s\n", event.Type, event.Data))
+			}
+		}
+
+		return mcp.NewToolResultText(output.String()), nil
+	})
 }
 
 // Knowledge base handlers
@@ -387,6 +447,7 @@ func (s *Server) listKnowledgeHandler(ctx context.Context, request mcp.CallToolR
 
 	return mcp.NewToolResultText(string(data)), nil
 }
+
 
 func (s *Server) searchKnowledgeHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	args := request.Params.Arguments
@@ -452,6 +513,7 @@ func (s *Server) getKnowledgeHandler(ctx context.Context, request mcp.CallToolRe
 	return mcp.NewToolResultText(string(data)), nil
 }
 
+
 // Workflow DSL WASM execution
 
 func (s *Server) workflowDslWasmHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -508,4 +570,25 @@ func (s *Server) SearchDocumentationHandler(ctx context.Context, request mcp.Cal
 		return mcp.NewToolResultError(fmt.Sprintf("Failed to marshal results: %v", err)), nil
 	}
 	return mcp.NewToolResultText(string(data)), nil
+}
+
+
+// wrapMCPHandler wraps MCP handlers with comprehensive Sentry tracing
+func (s *Server) wrapMCPHandler(ctx context.Context, operation string, toolName string, handler func(context.Context) (*mcp.CallToolResult, error)) (*mcp.CallToolResult, error) {
+	var result *mcp.CallToolResult
+	var handlerErr error
+	
+	err := sentryutil.WithMCPTransaction(ctx, operation, toolName, func(ctx context.Context) error {
+		result, handlerErr = handler(ctx)
+		return handlerErr
+	})
+	
+	if err != nil {
+		if result != nil {
+			return result, nil
+		}
+		return mcp.NewToolResultError(fmt.Sprintf("MCP operation failed: %v", err)), nil
+	}
+	
+	return result, handlerErr
 }
