@@ -1,0 +1,28 @@
+-----BEGIN PGP SIGNED MESSAGE-----
+Hash: SHA512
+
+Origin: Kubiya
+Label: Kubiya APT Repository
+Suite: stable
+Version: v2.5.1
+Codename: stable
+Date: Sun, 27 Jul 2025 23:39:47 UTC
+Architectures: amd64
+Components: main
+Description: APT repository for Kubiya CLI
+-----BEGIN PGP SIGNATURE-----
+
+iQIzBAEBCgAdFiEEh4p571o9TCAe+87I/PHDCfXOmkkFAmiGuMMACgkQ/PHDCfXO
+mknhdw/+LjHVap9YLAj4CBH68KSu7zxRryARhpd32w5aq3kZb/ZsyCaomQSjq5KO
+M0DFcLnuibGLMf/Fagreb1Hz1CGqNgDBbi9AP4LlD2kSxHBrpDuTEWwhLMDaIwpA
+9icT/P3RsEFqcf4q/Cpb8qMRGD6S4V8As0+MZfxGsEX4crQ/3VtX2WdvxP3sQldr
+n9/0eU3Ita5CwZCYuloNETEcRUce9LMCrSCk+l8mr+SApvkkYnNhtgcRmArsnsJH
+2hedtbfh/Ix+t/XxR9f5R8AUb7hyqefPrBpLbPbeYRuzBjqYYia5xrMam+lc3+MR
+RxzDLewzYpcdtS9jy1XjF5c0YBIvK/HAFd7yF3bzLnbFtQsQcgr/LuTrVuSYS2Vq
+PhthdF98vSKBtRyFU7L5l0GxNn8WwS58QUnQ3MYwaYL7CgK2h3t5lliBA4MvEKVr
+1q1XZvNjwl2qd7O70hjgvgAXzt8h3xXb9XafxVgC8/Z+eqEDkN5xp5xgmQ2/Juz5
+DA3fe+SsDApKv/rT0Kc7xxDZoTwHIwb6kDKHJnP6N21/ZHepvggl29Laa0ylYfE2
+hP2aOZFc5Va2IJHWQlU589kirmK1qj1UUEcBdmp3A54+s3HVYV6tGeaTvIAd9Ixj
+KR4fN67jrTIYlvsglopfWTRXvdcNt0+FsKPeWQMSQ6AAYE7EpUg=
+=WqIG
+-----END PGP SIGNATURE-----
