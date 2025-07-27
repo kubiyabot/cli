@@ -331,6 +331,13 @@ func (m *TimeoutMiddleware) Apply(next ToolHandler) ToolHandler {
 		timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
 		defer cancel()
 
+		// Add breadcrumb for timeout monitoring
+		sentryutil.AddBreadcrumb("mcp.timeout", "Tool execution started with timeout", map[string]interface{}{
+			"tool":           req.Params.Name,
+			"timeout_mins":   timeout.Minutes(),
+			"timeout_string": timeout.String(),
+		})
+
 		// Channel for result
 		type resultWrapper struct {
 			result *mcp.CallToolResult
@@ -338,8 +345,28 @@ func (m *TimeoutMiddleware) Apply(next ToolHandler) ToolHandler {
 		}
 		resultChan := make(chan resultWrapper, 1)
 
+		// Track execution start time
+		startTime := time.Now()
+
 		// Execute in goroutine
 		go func() {
+			defer func() {
+				if r := recover(); r != nil {
+					sentryutil.CaptureError(fmt.Errorf("tool execution panic: %v", r), map[string]string{
+						"tool":     req.Params.Name,
+						"timeout":  timeout.String(),
+						"duration": time.Since(startTime).String(),
+					}, map[string]interface{}{
+						"panic_value": r,
+						"args":        req.Params.Arguments,
+					})
+					resultChan <- resultWrapper{
+						result: mcp.NewToolResultError(fmt.Sprintf("Tool execution failed due to panic: %v", r)),
+						err:    nil,
+					}
+				}
+			}()
+			
 			result, err := next(timeoutCtx, req)
 			resultChan <- resultWrapper{result, err}
 		}()
@@ -347,13 +374,44 @@ func (m *TimeoutMiddleware) Apply(next ToolHandler) ToolHandler {
 		// Wait for result or timeout
 		select {
 		case res := <-resultChan:
-			return res.result, res.err
-		case <-timeoutCtx.Done():
-			sentryutil.CaptureMessage("Tool execution timeout", sentry.LevelWarning, map[string]string{
-				"tool":    req.Params.Name,
-				"timeout": timeout.String(),
+			duration := time.Since(startTime)
+			
+			// Add breadcrumb for successful completion
+			sentryutil.AddBreadcrumb("mcp.timeout", "Tool execution completed", map[string]interface{}{
+				"tool":         req.Params.Name,
+				"duration_sec": duration.Seconds(),
+				"success":      res.err == nil,
 			})
-			return mcp.NewToolResultError(fmt.Sprintf("Tool execution timed out after %v", timeout)), nil
+			
+			return res.result, res.err
+			
+		case <-timeoutCtx.Done():
+			duration := time.Since(startTime)
+			
+			// Enhanced timeout error reporting
+			timeoutError := fmt.Sprintf("Tool execution timed out after %v (configured timeout: %v)", duration, timeout)
+			
+			sentryutil.CaptureError(context.DeadlineExceeded, map[string]string{
+				"tool":           req.Params.Name,
+				"timeout":        timeout.String(),
+				"actual_duration": duration.String(),
+				"error_type":     "context_deadline_exceeded",
+			}, map[string]interface{}{
+				"args":               req.Params.Arguments,
+				"timeout_minutes":    timeout.Minutes(),
+				"duration_seconds":   duration.Seconds(),
+				"percentage_of_timeout": (duration.Seconds() / timeout.Seconds()) * 100,
+			})
+			
+			// Add breadcrumb for timeout
+			sentryutil.AddBreadcrumb("mcp.timeout", "Tool execution timeout", map[string]interface{}{
+				"tool":              req.Params.Name,
+				"timeout_mins":      timeout.Minutes(),
+				"actual_duration":   duration.String(),
+				"timeout_exceeded":  true,
+			})
+			
+			return mcp.NewToolResultError(timeoutError), nil
 		}
 	}
 }
