@@ -549,7 +549,7 @@ func (s *Server) executeSpecificTool(ctx context.Context, tool *kubiya.Tool, arg
 
 	argVals := make(map[string]any) // to get argument values
 	// Execute with timeout
-	timeout := 300 * time.Second // 5 minutes
+	timeout := 30 * time.Minute // Extended timeout for platform tools
 	eventChan, err := s.client.ExecuteToolWithTimeout(ctx, tool.Name, toolDef, runner, timeout, argVals)
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("Failed to execute tool: %v", err)), nil
@@ -638,8 +638,8 @@ func (s *Server) createOnDemandToolHandler(ctx context.Context, request mcp.Call
 	output.WriteString(fmt.Sprintf("📍 Runner: %s\n", runner))
 	output.WriteString("=" + strings.Repeat("=", 50) + "\n\n")
 
-	// Execute with timeout (5 minutes)
-	timeout := 300 * time.Second
+	// Execute with timeout (30 minutes for discovery operations)
+	timeout := 30 * time.Minute
 	argVals := make(map[string]any) // to get argument values
 
 	eventChan, err := s.client.ExecuteToolWithTimeout(ctx, name, toolDef, runner, timeout, argVals)

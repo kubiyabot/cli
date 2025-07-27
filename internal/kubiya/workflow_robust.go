@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	sentryutil "github.com/kubiyabot/cli/internal/sentry"
 )
 
 // RobustExecutionOptions configures robust workflow execution behavior
@@ -235,16 +237,16 @@ func (rwc *RobustWorkflowClient) attemptConnection(ctx context.Context, state *W
 		}
 	}
 
-	// Process events with heartbeat monitoring (shorter timeout for better responsiveness)
+	// Process events with heartbeat monitoring (extended timeout for long-running operations)
 	lastEventTime := time.Now()
-	connectionTimeout := 60 * time.Second // No events for 60 seconds = connection lost
+	connectionTimeout := 20 * time.Minute // Extended from 60s to 20m for long-running workflows
 
 	// Start a goroutine to monitor for connection timeouts
 	timeoutCtx, timeoutCancel := context.WithCancel(ctx)
 	defer timeoutCancel()
 	
 	go func() {
-		ticker := time.NewTicker(5 * time.Second)
+		ticker := time.NewTicker(30 * time.Second) // Check less frequently to reduce overhead
 		defer ticker.Stop()
 		
 		for {
@@ -252,10 +254,22 @@ func (rwc *RobustWorkflowClient) attemptConnection(ctx context.Context, state *W
 			case <-timeoutCtx.Done():
 				return
 			case <-ticker.C:
-				if time.Since(lastEventTime) > connectionTimeout {
+				timeSinceLastEvent := time.Since(lastEventTime)
+				if timeSinceLastEvent > connectionTimeout {
 					if rwc.debug {
-						fmt.Printf("[DEBUG] Connection timeout detected for execution %s\n", state.ExecutionID)
+						fmt.Printf("[DEBUG] Connection timeout detected for execution %s after %v of inactivity (limit: %v)\n", 
+							state.ExecutionID, timeSinceLastEvent, connectionTimeout)
 					}
+					// Add Sentry tracking for workflow connection timeouts
+					sentryutil.CaptureError(fmt.Errorf("workflow connection timeout"), map[string]string{
+						"timeout_type":      "workflow_connection",
+						"execution_id":      state.ExecutionID,
+						"inactivity_time":   timeSinceLastEvent.String(),
+						"configured_timeout": connectionTimeout.String(),
+					}, map[string]interface{}{
+						"inactivity_minutes": timeSinceLastEvent.Minutes(),
+						"timeout_minutes":   connectionTimeout.Minutes(),
+					})
 					timeoutCancel()
 					return
 				}

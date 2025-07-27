@@ -80,8 +80,8 @@ func (s *Server) executeWhitelistedToolHandler(ctx context.Context, request mcp.
 	output.WriteString(fmt.Sprintf("📍 Runner: %s\n", runner))
 	output.WriteString("=" + strings.Repeat("=", 50) + "\n\n")
 
-	// Execute with timeout (5 minutes)
-	timeout := 300 * time.Second
+	// Execute with timeout (30 minutes for whitelisted tools)
+	timeout := 30 * time.Minute
 
 	argVals := make(map[string]any) // to get argument values
 

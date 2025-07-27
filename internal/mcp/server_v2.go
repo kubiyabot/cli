@@ -85,8 +85,25 @@ func NewProductionServer(kubiyaClient *kubiya.Client, config *Config) (*Producti
 	recoveryMW := middleware.NewErrorRecoveryMiddleware(logger)
 	middlewares = append(middlewares, recoveryMW.Apply)
 
-	// Timeout middleware
-	timeoutMW := middleware.NewTimeoutMiddleware(5 * time.Minute)
+	// Timeout middleware with extended defaults for long-running tools
+	defaultTimeout := 20 * time.Minute // Increased from 5 to 20 minutes
+	timeoutMW := middleware.NewTimeoutMiddleware(defaultTimeout)
+	
+	// Set extended timeouts for known long-running tools
+	longRunningTools := map[string]time.Duration{
+		"execute_tool":            30 * time.Minute, // Tool execution can be very long
+		"execute_workflow":        45 * time.Minute, // Workflows can be complex
+		"create_on_demand_tool":   25 * time.Minute, // Dynamic tool creation + execution
+		"execute_whitelisted_tool": 30 * time.Minute, // Whitelisted tools may be complex
+		"workflow_dsl_wasm":       15 * time.Minute, // WASM execution can be slow
+		"chat_with_agent":         10 * time.Minute, // Agent conversations can be lengthy
+	}
+	
+	for tool, timeout := range longRunningTools {
+		timeoutMW.SetToolTimeout(tool, timeout)
+	}
+	
+	// Apply user-configured timeouts (override defaults)
 	if config.ToolTimeouts != nil {
 		for tool, timeout := range config.ToolTimeouts {
 			timeoutMW.SetToolTimeout(tool, time.Duration(timeout)*time.Second)
