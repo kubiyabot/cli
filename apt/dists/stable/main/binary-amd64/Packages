@@ -1,0 +1,14 @@
+Package: kubiya-cli
+Version: 2.5.2
+Architecture: amd64
+Maintainer: Kubiya <support@kubiya.ai>
+Installed-Size: 142984
+Filename: pool/main/kubiya-cli_2.5.2_amd64.deb
+Size: 45500546
+MD5sum: f8ff67aa89c04779522f5221afba7f77
+SHA1: c4e749d5c91fe6f6a39d1467f1db1d160204eb4b
+SHA256: 34bc65cbdc8d87ba4265458bff732012ca069951348c2b0b4d2763d4bd2f08c4
+Priority: optional
+Homepage: https://github.com/kubiyabot/cli
+Description: Command line interface for Kubiya AI platform
+
