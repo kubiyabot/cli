@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 
 	"github.com/kubiyabot/cli/internal/mcp/filter"
 	"github.com/spf13/afero"
@@ -20,6 +21,11 @@ type Configuration struct {
 	AllowDynamicTools   bool              `json:"allow_dynamic_tools" yaml:"allow_dynamic_tools"`
 	VerboseLogging      bool              `json:"verbose_logging" yaml:"verbose_logging"`
 	EnableDocumentation bool              `json:"enable_documentation" yaml:"enable_documentation"`
+
+	// Content size limits for responses
+	MaxResponseSize     int `json:"max_response_size,omitempty" yaml:"max_response_size,omitempty"`
+	MaxToolsInResponse  int `json:"max_tools_in_response,omitempty" yaml:"max_tools_in_response,omitempty"`
+	DefaultPageSize     int `json:"default_page_size,omitempty" yaml:"default_page_size,omitempty"`
 }
 
 // Config defines complete configuration for the production MCP server
@@ -35,6 +41,11 @@ type Config struct {
 	WhitelistedTools       []WhitelistedTool   `json:"whitelisted_tools,omitempty" yaml:"whitelisted_tools,omitempty"`
 	ToolContexts           []ToolContext       `json:"tool_contexts,omitempty" yaml:"tool_contexts,omitempty"`
 	RateLimit              RateLimitConfig     `json:"rate_limit" yaml:"rate_limit"`
+
+	// Content size limits (in bytes) for MCP tool responses
+	MaxResponseSize     int `json:"max_response_size" yaml:"max_response_size"`         // Default: 50KB
+	MaxToolsInResponse  int `json:"max_tools_in_response" yaml:"max_tools_in_response"` // Default: 50 tools per response
+	DefaultPageSize     int `json:"default_page_size" yaml:"default_page_size"`         // Default: 20 items per page
 
 	// Core functionality flags
 	EnableRunners       bool `json:"enable_runners" yaml:"enable_runners"`
@@ -121,10 +132,13 @@ type ToolContext struct {
 func LoadConfiguration(fs afero.Fs, configFile string, disablePlatformAPIsFlag bool, whitelistedTools []string) (*Configuration, error) {
 	// Start with default config - platform APIs enabled by default, dynamic tools enabled, verbose logging disabled
 	config := &Configuration{
-		EnableRunners:     true,
-		AllowPlatformAPIs: true,
-		AllowDynamicTools: true,
-		VerboseLogging:    false,
+		EnableRunners:       true,
+		AllowPlatformAPIs:   true,
+		AllowDynamicTools:   true,
+		VerboseLogging:      false,
+		MaxResponseSize:     51200, // 50KB default
+		MaxToolsInResponse:  50,    // 50 tools max
+		DefaultPageSize:     20,    // 20 items per page
 	}
 
 	// Use provided config file or default location
@@ -161,6 +175,25 @@ func LoadConfiguration(fs afero.Fs, configFile string, disablePlatformAPIsFlag b
 		config.EnableOPAPolicies = envOPAPolicies == "true" || envOPAPolicies == "1"
 	}
 
+	// Content size environment overrides for simple Configuration
+	if envMaxSize := os.Getenv("KUBIYA_MCP_MAX_RESPONSE_SIZE"); envMaxSize != "" {
+		if size, err := strconv.Atoi(envMaxSize); err == nil && size > 0 {
+			config.MaxResponseSize = size
+		}
+	}
+	
+	if envMaxTools := os.Getenv("KUBIYA_MCP_MAX_TOOLS_IN_RESPONSE"); envMaxTools != "" {
+		if count, err := strconv.Atoi(envMaxTools); err == nil && count > 0 {
+			config.MaxToolsInResponse = count
+		}
+	}
+	
+	if envPageSize := os.Getenv("KUBIYA_MCP_DEFAULT_PAGE_SIZE"); envPageSize != "" {
+		if size, err := strconv.Atoi(envPageSize); err == nil && size > 0 {
+			config.DefaultPageSize = size
+		}
+	}
+
 	// Override with command line flags
 	if disablePlatformAPIsFlag {
 		config.AllowPlatformAPIs = false
@@ -192,6 +225,9 @@ func LoadProductionConfig(fs afero.Fs, configFile string, disablePlatformAPIsFla
 		AllowDynamicTools:   true,
 		VerboseLogging:      false,
 		EnableDocumentation: false,
+		MaxResponseSize:     51200, // 50KB default
+		MaxToolsInResponse:  50,    // 50 tools max
+		DefaultPageSize:     20,    // 20 items per page
 		RateLimit: RateLimitConfig{
 			RequestsPerSecond: 10.0,
 			Burst:             20,
@@ -234,6 +270,25 @@ func LoadProductionConfig(fs afero.Fs, configFile string, disablePlatformAPIsFla
 
 	if envAuth := os.Getenv("KUBIYA_MCP_REQUIRE_AUTH"); envAuth != "" {
 		config.RequireAuth = envAuth == "true"
+	}
+
+	// Content size environment overrides
+	if envMaxSize := os.Getenv("KUBIYA_MCP_MAX_RESPONSE_SIZE"); envMaxSize != "" {
+		if size, err := strconv.Atoi(envMaxSize); err == nil && size > 0 {
+			config.MaxResponseSize = size
+		}
+	}
+	
+	if envMaxTools := os.Getenv("KUBIYA_MCP_MAX_TOOLS_IN_RESPONSE"); envMaxTools != "" {
+		if count, err := strconv.Atoi(envMaxTools); err == nil && count > 0 {
+			config.MaxToolsInResponse = count
+		}
+	}
+	
+	if envPageSize := os.Getenv("KUBIYA_MCP_DEFAULT_PAGE_SIZE"); envPageSize != "" {
+		if size, err := strconv.Atoi(envPageSize); err == nil && size > 0 {
+			config.DefaultPageSize = size
+		}
 	}
 
 	// Override with command line flags

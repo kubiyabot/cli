@@ -87,8 +87,16 @@ func (s *Server) addCorePlatformTools() error {
 		},
 		{
 			name:        "list_sources",
-			description: "List all tool sources",
+			description: "List all tool sources with metadata and pagination",
 			handler:     s.listSourcesHandler,
+			params: []func(string, ...mcp.PropertyOption) mcp.ToolOption{
+				func(name string, opts ...mcp.PropertyOption) mcp.ToolOption {
+					return mcp.WithNumber("page", append(opts, mcp.Description("Page number (default: 1)"))...)
+				},
+				func(name string, opts ...mcp.PropertyOption) mcp.ToolOption {
+					return mcp.WithNumber("page_size", append(opts, mcp.Description("Items per page (default: 20, max: 50)"))...)
+				},
+			},
 		},
 		{
 			name:        "list_secrets",
@@ -112,6 +120,31 @@ func (s *Server) addCorePlatformTools() error {
 			params: []func(string, ...mcp.PropertyOption) mcp.ToolOption{
 				func(name string, opts ...mcp.PropertyOption) mcp.ToolOption {
 					return mcp.WithString("runner_type", append(opts, mcp.Description("Type of runner needed (optional)"))...)
+				},
+			},
+		},
+		{
+			name:        "search_tools",
+			description: "Search for tools across all sources with pagination and filtering",
+			handler:     s.searchToolsHandler,
+			params: []func(string, ...mcp.PropertyOption) mcp.ToolOption{
+				func(name string, opts ...mcp.PropertyOption) mcp.ToolOption {
+					return mcp.WithString("query", append(opts, mcp.Required(), mcp.Description("Search query for tool names and descriptions"))...)
+				},
+				func(name string, opts ...mcp.PropertyOption) mcp.ToolOption {
+					return mcp.WithNumber("page", append(opts, mcp.Description("Page number (default: 1)"))...)
+				},
+				func(name string, opts ...mcp.PropertyOption) mcp.ToolOption {
+					return mcp.WithNumber("page_size", append(opts, mcp.Description("Items per page (default: 20, max: 50)"))...)
+				},
+				func(name string, opts ...mcp.PropertyOption) mcp.ToolOption {
+					return mcp.WithString("source_uuid", append(opts, mcp.Description("Filter by specific source UUID (optional)"))...)
+				},
+				func(name string, opts ...mcp.PropertyOption) mcp.ToolOption {
+					return mcp.WithString("tool_type", append(opts, mcp.Description("Filter by tool type (docker, python, bash, etc.)"))...)
+				},
+				func(name string, opts ...mcp.PropertyOption) mcp.ToolOption {
+					return mcp.WithBoolean("long_running_only", append(opts, mcp.Description("Show only long-running tools"))...)
 				},
 			},
 		},
