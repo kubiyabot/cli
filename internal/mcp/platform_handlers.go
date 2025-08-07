@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -169,17 +170,99 @@ func (s *Server) createIntegrationHandler(ctx context.Context, request mcp.CallT
 }
 
 func (s *Server) listSourcesHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	args := request.Params.Arguments
+	
+	// Parse pagination parameters
+	page := 1
+	if pageStr, ok := args["page"].(string); ok {
+		if p, err := strconv.Atoi(pageStr); err == nil && p > 0 {
+			page = p
+		}
+	} else if pageFloat, ok := args["page"].(float64); ok && pageFloat > 0 {
+		page = int(pageFloat)
+	}
+	
+	// Set default page size with fallback
+	pageSize := 20 // Default fallback
+	maxResponseSize := 51200 // 50KB default
+	maxToolsInResponse := 50 // Default max tools
+	
+	// Use serverConfig values if available
+	if s.serverConfig != nil {
+		if s.serverConfig.DefaultPageSize > 0 {
+			pageSize = s.serverConfig.DefaultPageSize
+		}
+		if s.serverConfig.MaxResponseSize > 0 {
+			maxResponseSize = s.serverConfig.MaxResponseSize
+		}
+		if s.serverConfig.MaxToolsInResponse > 0 {
+			maxToolsInResponse = s.serverConfig.MaxToolsInResponse
+		}
+	}
+	
+	if pageSizeStr, ok := args["page_size"].(string); ok {
+		if ps, err := strconv.Atoi(pageSizeStr); err == nil && ps > 0 {
+			pageSize = ps
+		}
+	} else if pageSizeFloat, ok := args["page_size"].(float64); ok && pageSizeFloat > 0 {
+		pageSize = int(pageSizeFloat)
+	}
+	
+	// Limit page size to maximum configured
+	if pageSize > maxToolsInResponse {
+		pageSize = maxToolsInResponse
+	}
+
+	// Get sources from API
 	sources, err := s.client.ListSources(ctx)
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("Failed to list sources: %v", err)), nil
 	}
 
-	data, err := json.MarshalIndent(sources, "", "  ")
+	// Convert to metadata-only format
+	var sourceMetadata []interface{}
+	for _, source := range sources {
+		// Get basic metadata for each source
+		metadata := SourceMetadata{
+			UUID:        source.UUID,
+			Name:        source.Name,
+			Description: source.Description,
+			URL:         source.URL,
+			ToolCount:   len(source.Tools) + len(source.InlineTools),
+			CreatedAt:   source.CreatedAt,
+			UpdatedAt:   source.UpdatedAt,
+			Status:      "active", // Default status
+		}
+		
+		// Note: Git metadata would need to be fetched separately if needed
+		
+		sourceMetadata = append(sourceMetadata, metadata)
+	}
+
+	// Apply pagination
+	paginatedItems, currentPage, totalPages, hasMore := paginateItems(sourceMetadata, page, pageSize)
+
+	// Create response with pagination info
+	response := map[string]interface{}{
+		"sources": paginatedItems,
+		"pagination": map[string]interface{}{
+			"page":        currentPage,
+			"page_size":   pageSize,
+			"total_pages": totalPages,
+			"total_items": len(sourceMetadata),
+			"has_more":    hasMore,
+		},
+	}
+
+	// Marshal and apply size limits
+	data, err := json.MarshalIndent(response, "", "  ")
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("Failed to marshal sources: %v", err)), nil
 	}
 
-	return mcp.NewToolResultText(string(data)), nil
+	// Apply response size limit
+	limitedData := s.limitResponseSize(data, maxResponseSize)
+	return mcp.NewToolResultText(string(limitedData)), nil
 }
 
 func (s *Server) listSecretsHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -666,6 +749,184 @@ func (s *Server) createOnDemandToolHandler(ctx context.Context, request mcp.Call
 	return mcp.NewToolResultText(output.String()), nil
 }
 
+// searchToolsHandler handles searching for tools across all sources
+func (s *Server) searchToolsHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	args := request.Params.Arguments
+	
+	// Get required query parameter
+	query, ok := args["query"].(string)
+	if !ok || query == "" {
+		return mcp.NewToolResultError("query parameter is required"), nil
+	}
+	
+	// Parse pagination parameters
+	page := 1
+	if pageStr, ok := args["page"].(string); ok {
+		if p, err := strconv.Atoi(pageStr); err == nil && p > 0 {
+			page = p
+		}
+	} else if pageFloat, ok := args["page"].(float64); ok && pageFloat > 0 {
+		page = int(pageFloat)
+	}
+	
+	// Set default page size with fallback
+	pageSize := 20 // Default fallback
+	maxResponseSize := 51200 // 50KB default
+	maxToolsInResponse := 50 // Default max tools
+	
+	// Use serverConfig values if available
+	if s.serverConfig != nil {
+		if s.serverConfig.DefaultPageSize > 0 {
+			pageSize = s.serverConfig.DefaultPageSize
+		}
+		if s.serverConfig.MaxResponseSize > 0 {
+			maxResponseSize = s.serverConfig.MaxResponseSize
+		}
+		if s.serverConfig.MaxToolsInResponse > 0 {
+			maxToolsInResponse = s.serverConfig.MaxToolsInResponse
+		}
+	}
+	
+	if pageSizeStr, ok := args["page_size"].(string); ok {
+		if ps, err := strconv.Atoi(pageSizeStr); err == nil && ps > 0 {
+			pageSize = ps
+		}
+	} else if pageSizeFloat, ok := args["page_size"].(float64); ok && pageSizeFloat > 0 {
+		pageSize = int(pageSizeFloat)
+	}
+	
+	// Limit page size to maximum configured
+	if pageSize > maxToolsInResponse {
+		pageSize = maxToolsInResponse
+	}
+	
+	// Get optional filter parameters
+	sourceUUID, _ := args["source_uuid"].(string)
+	toolType, _ := args["tool_type"].(string)
+	longRunningOnly, _ := args["long_running_only"].(bool)
+
+	// Get all sources
+	sources, err := s.client.ListSources(ctx)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("Failed to list sources: %v", err)), nil
+	}
+
+	// Filter sources if sourceUUID is provided
+	if sourceUUID != "" {
+		var filteredSources []kubiya.Source
+		for _, source := range sources {
+			if source.UUID == sourceUUID {
+				filteredSources = append(filteredSources, source)
+				break
+			}
+		}
+		sources = filteredSources
+	}
+
+	// Search through all tools
+	var allMatches []ToolMetadata
+	queryLower := strings.ToLower(query)
+
+	for _, source := range sources {
+		// Get source metadata to access tools
+		metadata, err := s.client.GetSourceMetadata(ctx, source.UUID)
+		if err != nil {
+			continue // Skip sources that can't be accessed
+		}
+
+		// Search through regular tools
+		for _, tool := range metadata.Tools {
+			if matchesTool(tool, queryLower, toolType, longRunningOnly) {
+				toolMeta := ToolMetadata{
+					Name:        tool.Name,
+					Description: tool.Description,
+					SourceUUID:  source.UUID,
+					SourceName:  source.Name,
+					Type:        tool.Type,
+					ArgCount:    len(tool.Args),
+					LongRunning: tool.LongRunning,
+				}
+				allMatches = append(allMatches, toolMeta)
+			}
+		}
+
+		// Search through inline tools
+		for _, tool := range metadata.InlineTools {
+			if matchesTool(tool, queryLower, toolType, longRunningOnly) {
+				toolMeta := ToolMetadata{
+					Name:        tool.Name,
+					Description: tool.Description,
+					SourceUUID:  source.UUID,
+					SourceName:  source.Name,
+					Type:        tool.Type,
+					ArgCount:    len(tool.Args),
+					LongRunning: tool.LongRunning,
+				}
+				allMatches = append(allMatches, toolMeta)
+			}
+		}
+	}
+
+	// Convert to interface{} slice for pagination
+	var items []interface{}
+	for _, match := range allMatches {
+		items = append(items, match)
+	}
+
+	// Apply pagination
+	paginatedItems, currentPage, totalPages, hasMore := paginateItems(items, page, pageSize)
+
+	// Create response
+	response := map[string]interface{}{
+		"tools": paginatedItems,
+		"pagination": map[string]interface{}{
+			"page":        currentPage,
+			"page_size":   pageSize,
+			"total_pages": totalPages,
+			"total_items": len(allMatches),
+			"has_more":    hasMore,
+		},
+		"query": query,
+		"filters": map[string]interface{}{
+			"source_uuid":       sourceUUID,
+			"tool_type":         toolType,
+			"long_running_only": longRunningOnly,
+		},
+	}
+
+	// Marshal and apply size limits
+	data, err := json.MarshalIndent(response, "", "  ")
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("Failed to marshal search results: %v", err)), nil
+	}
+
+	// Apply response size limit
+	limitedData := s.limitResponseSize(data, maxResponseSize)
+	return mcp.NewToolResultText(string(limitedData)), nil
+}
+
+// matchesTool checks if a tool matches the search criteria
+func matchesTool(tool kubiya.Tool, queryLower, toolType string, longRunningOnly bool) bool {
+	// Check query match (name or description)
+	toolNameLower := strings.ToLower(tool.Name)
+	toolDescLower := strings.ToLower(tool.Description)
+	if !strings.Contains(toolNameLower, queryLower) && !strings.Contains(toolDescLower, queryLower) {
+		return false
+	}
+	
+	// Check tool type filter
+	if toolType != "" && strings.ToLower(tool.Type) != strings.ToLower(toolType) {
+		return false
+	}
+	
+	// Check long running filter
+	if longRunningOnly && !tool.LongRunning {
+		return false
+	}
+	
+	return true
+}
+
 // executeWorkflowHandler handles workflow execution with streaming
 func (s *Server) executeWorkflowHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	args := request.Params.Arguments
@@ -902,4 +1163,78 @@ func (s *Server) executeWorkflowHandler(ctx context.Context, request mcp.CallToo
 	}
 
 	return mcp.NewToolResultText(output.String()), nil
+}
+
+// Helper functions for content size limiting and pagination
+
+// limitResponseSize ensures the response doesn't exceed the configured maximum size
+func (s *Server) limitResponseSize(data []byte, maxSize int) []byte {
+	if len(data) <= maxSize {
+		return data
+	}
+	
+	// Truncate response and add indicator
+	truncated := data[:maxSize-100] // Reserve space for truncation message
+	truncated = append(truncated, []byte("\n\n... Response truncated due to size limit ...")...)
+	return truncated
+}
+
+// paginateItems applies pagination to a slice of items
+func paginateItems(items []interface{}, page, pageSize int) ([]interface{}, int, int, bool) {
+	if pageSize <= 0 {
+		pageSize = 20 // Default page size
+	}
+	
+	total := len(items)
+	totalPages := (total + pageSize - 1) / pageSize
+	
+	if page < 1 {
+		page = 1
+	}
+	
+	start := (page - 1) * pageSize
+	if start >= total {
+		return []interface{}{}, page, totalPages, false
+	}
+	
+	end := start + pageSize
+	if end > total {
+		end = total
+	}
+	
+	hasMore := end < total
+	return items[start:end], page, totalPages, hasMore
+}
+
+// SourceMetadata represents minimal metadata about a source for MCP responses
+type SourceMetadata struct {
+	UUID        string    `json:"uuid"`
+	Name        string    `json:"name"`
+	Description string    `json:"description,omitempty"`
+	URL         string    `json:"url,omitempty"`
+	ToolCount   int       `json:"tool_count"`
+	CreatedAt   time.Time `json:"created_at,omitempty"`
+	UpdatedAt   time.Time `json:"updated_at,omitempty"`
+	GitMeta     *GitMeta  `json:"git_meta,omitempty"`
+	Status      string    `json:"status,omitempty"`
+}
+
+// GitMeta represents git repository metadata
+type GitMeta struct {
+	Repository string `json:"repository,omitempty"`
+	Branch     string `json:"branch,omitempty"`
+	Commit     string `json:"commit,omitempty"`
+	CommitDate string `json:"commit_date,omitempty"`
+}
+
+// ToolMetadata represents minimal metadata about a tool for search results
+type ToolMetadata struct {
+	Name        string   `json:"name"`
+	Description string   `json:"description,omitempty"`
+	SourceUUID  string   `json:"source_uuid"`
+	SourceName  string   `json:"source_name"`
+	Type        string   `json:"type,omitempty"`
+	ArgCount    int      `json:"arg_count"`
+	Tags        []string `json:"tags,omitempty"`
+	LongRunning bool     `json:"long_running,omitempty"`
 }
