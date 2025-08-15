@@ -1615,8 +1615,7 @@ For inline agents, use --inline with --tools-file or --tools-json to provide cus
 			automationMode := silent || os.Getenv("KUBIYA_AUTOMATION") != ""
 
 			if interactive {
-				chatUI := tui.NewEnhancedChatUI(cfg)
-				return chatUI.Run()
+				return tui.RunEnhancedChat(cfg)
 			}
 
 			// Handle inline agent validation
