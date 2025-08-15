@@ -821,9 +821,32 @@ func (ui *EnhancedAgentSelection) renderError() string {
 		Bold(true).
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color("196")).
-		Padding(1, 2)
+		Padding(1, 2).
+		Width(ui.width - 4)
 
-	return style.Render(fmt.Sprintf("❌ Error: %v\n\nPress 'r' to retry or 'q' to quit", ui.err))
+	var errorMsg string
+	if ui.err != nil {
+		errorMsg = fmt.Sprintf("❌ Error loading agents: %v", ui.err)
+		
+		// Provide helpful suggestions based on common error types
+		errorStr := ui.err.Error()
+		if strings.Contains(errorStr, "connection") || strings.Contains(errorStr, "timeout") {
+			errorMsg += "\n\n💡 This looks like a connection issue. Please check:\n"
+			errorMsg += "• Your internet connection\n"
+			errorMsg += "• Kubiya API endpoint configuration\n"
+			errorMsg += "• Your API key configuration"
+		} else if strings.Contains(errorStr, "unauthorized") || strings.Contains(errorStr, "401") {
+			errorMsg += "\n\n💡 Authentication failed. Please check:\n"
+			errorMsg += "• Your API key is valid\n"
+			errorMsg += "• Run 'kubiya config' to update your configuration"
+		}
+	} else {
+		errorMsg = "❌ Unknown error occurred"
+	}
+
+	errorMsg += "\n\nPress 'r' to retry or 'q' to quit"
+	
+	return style.Render(errorMsg)
 }
 
 func (ui *EnhancedAgentSelection) renderLoading() string {
@@ -892,17 +915,32 @@ func (ui *EnhancedAgentSelection) filterAgents(query string) {
 
 func (ui *EnhancedAgentSelection) loadAgents() tea.Cmd {
 	return func() tea.Msg {
+		// Try to fetch agents with proper error handling
 		agents, err := ui.client.ListAgents(ui.ctx)
 		if err != nil {
-			return err
+			// If the main endpoint fails, try the legacy endpoint
+			if legacyAgents, legacyErr := ui.client.ListAgentsLegacy(ui.ctx); legacyErr == nil {
+				agents = legacyAgents
+			} else {
+				// Return the original error if both fail
+				return err
+			}
+		}
+		
+		// Validate agents and filter out invalid ones
+		validAgents := make([]kubiya.Agent, 0, len(agents))
+		for _, agent := range agents {
+			if agent.UUID != "" && agent.Name != "" {
+				validAgents = append(validAgents, agent)
+			}
 		}
 		
 		// Sort agents by name
-		sort.Slice(agents, func(i, j int) bool {
-			return agents[i].Name < agents[j].Name
+		sort.Slice(validAgents, func(i, j int) bool {
+			return validAgents[i].Name < validAgents[j].Name
 		})
 		
-		return agents
+		return validAgents
 	}
 }
 
@@ -912,6 +950,7 @@ func (ui *EnhancedAgentSelection) loadAgentDetails(agent kubiya.Agent) tea.Cmd {
 		// Get detailed agent info
 		detailedAgent, err := ui.client.GetAgent(ui.ctx, agent.UUID)
 		if err != nil {
+			ui.detailsLoading = false
 			return err
 		}
 		
@@ -984,7 +1023,15 @@ func (ui *EnhancedAgentSelection) OnError(callback func(error)) {
 }
 
 func (ui *EnhancedAgentSelection) Run() error {
-	p := tea.NewProgram(ui, tea.WithAltScreen())
+	// Check if we can use alt screen, fallback if not
+	var programOptions []tea.ProgramOption
+	
+	// Try to detect if we have a proper terminal
+	if isTerminal() {
+		programOptions = append(programOptions, tea.WithAltScreen())
+	}
+	
+	p := tea.NewProgram(ui, programOptions...)
 	_, err := p.Run()
 	return err
 }
@@ -992,3 +1039,4 @@ func (ui *EnhancedAgentSelection) Run() error {
 func (ui *EnhancedAgentSelection) Cleanup() {
 	ui.cancel()
 }
+
