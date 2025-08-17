@@ -15,8 +15,6 @@ func (c *Client) ListAgents(ctx context.Context) ([]Agent, error) {
 		return nil, err
 	}
 
-	req.Header.Set("Authorization", "UserKey "+c.cfg.APIKey)
-
 	resp, err := c.client.Do(req)
 	if err != nil {
 		return nil, err
@@ -43,13 +41,13 @@ func (c *Client) GetAgentByName(ctx context.Context, name string) (*Agent, error
 	if err != nil {
 		return nil, err
 	}
-	
+
 	for _, agent := range agents {
 		if agent.Name == name {
 			return &agent, nil
 		}
 	}
-	
+
 	return nil, fmt.Errorf("agent not found: %s", name)
 }
 
@@ -60,8 +58,6 @@ func (c *Client) ListAgentsLegacy(ctx context.Context) ([]Agent, error) {
 	if err != nil {
 		return nil, err
 	}
-
-	req.Header.Set("Authorization", "UserKey "+c.cfg.APIKey)
 
 	if c.debug {
 		fmt.Printf("ListAgents: Making request to %s\n", req.URL.String())
@@ -109,8 +105,6 @@ func (c *Client) GetAgent(ctx context.Context, agentID string) (*Agent, error) {
 	if err != nil {
 		return nil, err
 	}
-
-	req.Header.Set("Authorization", "UserKey "+c.cfg.APIKey)
 
 	if c.debug {
 		fmt.Printf("GetAgent: Making request to %s\n", req.URL.String())

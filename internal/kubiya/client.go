@@ -68,10 +68,13 @@ func logAPICall(method, url string, headers map[string]string, body []byte, resp
 func NewClient(cfg *config.Config) *Client {
 	client := &Client{
 		cfg:     cfg,
-		client:  &http.Client{Timeout: 30 * time.Second},
 		baseURL: cfg.BaseURL,
 		debug:   cfg.Debug,
-		cache:   NewCache(5 * time.Minute),
+		client: &http.Client{
+			Timeout:   30 * time.Second,
+			Transport: NewAuthRoundTripper(),
+		},
+		cache: NewCache(5 * time.Minute),
 	}
 	client.audit = NewAuditClient(client)
 	return client
@@ -84,7 +87,6 @@ func (c *Client) Audit() *AuditClient {
 
 // do performs an HTTP request and decodes the response into v
 func (c *Client) do(req *http.Request, v interface{}) error {
-	req.Header.Set("Authorization", "UserKey "+c.cfg.APIKey)
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.client.Do(req)
@@ -108,7 +110,6 @@ func (c *Client) do(req *http.Request, v interface{}) error {
 
 // do performs an HTTP request and decodes the response into v
 func (c *Client) doRaw(req *http.Request) ([]byte, error) {
-	req.Header.Set("Authorization", "UserKey "+c.cfg.APIKey)
 	req.Header.Set("Content-Type", "application/json")
 
 	c.client.Timeout = 5 * time.Minute // entended timeout for this request
@@ -139,7 +140,6 @@ func (c *Client) newJSONRequest(ctx context.Context, method, url string, payload
 	}
 
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "UserKey "+c.cfg.APIKey)
 
 	return req, nil
 }
@@ -152,7 +152,6 @@ func (c *Client) get(ctx context.Context, path string) (*http.Response, error) {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
-	req.Header.Set("Authorization", "UserKey "+c.cfg.APIKey)
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.client.Do(req)
@@ -210,8 +209,6 @@ func (c *Client) post(ctx context.Context, path string, payload interface{}) (*h
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
-	req.Header.Set("Authorization", "UserKey "+c.cfg.APIKey)
-
 	req.Header.Set("Content-Type", "application/json")
 	return c.client.Do(req)
 }
@@ -230,7 +227,6 @@ func (c *Client) PostRaw(ctx context.Context, path string, data []byte) (*http.R
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
-	req.Header.Set("Authorization", "UserKey "+c.cfg.APIKey)
 	req.Header.Set("Content-Type", "application/json")
 
 	if c.debug {
@@ -278,7 +274,6 @@ func (c *Client) put(ctx context.Context, path string, payload interface{}) (*ht
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
-	req.Header.Set("Authorization", "UserKey "+c.cfg.APIKey)
 	req.Header.Set("Content-Type", "application/json")
 
 	// Capture request body for logging
@@ -321,7 +316,6 @@ func (c *Client) delete(ctx context.Context, path string) (*http.Response, error
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
-	req.Header.Set("Authorization", "UserKey "+c.cfg.APIKey)
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.client.Do(req)
@@ -559,7 +553,6 @@ func (c *Client) ListRunners(ctx context.Context) ([]Runner, error) {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
-	req.Header.Set("Authorization", "UserKey "+c.cfg.APIKey)
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.client.Do(req)
@@ -573,7 +566,7 @@ func (c *Client) ListRunners(ctx context.Context) ([]Runner, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response body: %w", err)
 	}
-	
+
 	if c.debug {
 		fmt.Printf("DEBUG: Raw API response: %s\n", string(bodyBytes))
 	}
@@ -627,7 +620,6 @@ func (c *Client) ListRunners(ctx context.Context) ([]Runner, error) {
 				return
 			}
 
-			healthReq.Header.Set("Authorization", "UserKey "+c.cfg.APIKey)
 			healthReq.Header.Set("Content-Type", "application/json")
 
 			healthResp, err := c.client.Do(healthReq)
@@ -750,7 +742,6 @@ func (c *Client) GetRunnerHelmChart(ctx context.Context, name string) (*RunnerHe
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
-	req.Header.Set("Authorization", "UserKey "+c.cfg.APIKey)
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.client.Do(req)
@@ -786,7 +777,6 @@ func (c *Client) CreateRunnerManifest(ctx context.Context, name string) (RunnerM
 		return RunnerManifest{}, fmt.Errorf("failed to create request: %w", err)
 	}
 
-	req.Header.Set("Authorization", "UserKey "+c.cfg.APIKey)
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.client.Do(req)
@@ -852,7 +842,7 @@ func (c *Client) ListUsers(ctx context.Context) ([]User, error) {
 	return response.Items, nil
 }
 
-// ListGroups retrieves all groups in the organization  
+// ListGroups retrieves all groups in the organization
 func (c *Client) ListGroups(ctx context.Context) ([]Group, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/manage/groups", nil)
 	if err != nil {
@@ -871,15 +861,15 @@ func (c *Client) ListGroups(ctx context.Context) ([]Group, error) {
 func (c *Client) CreateAgent(ctx context.Context, agent Agent) (*Agent, error) {
 	fmt.Printf("TRACE: CreateAgent called with agent name: %s\n", agent.Name)
 
-	// Create a minimal API-compliant payload based on API documentation  
+	// Create a minimal API-compliant payload based on API documentation
 	// This completely bypasses the problematic Agent struct serialization
 	payload := map[string]interface{}{
-		"name":        agent.Name,
-		"description": agent.Description,
+		"name":             agent.Name,
+		"description":      agent.Description,
 		"instruction_type": agent.InstructionType,
-		"llm_model":   agent.LLMModel,
+		"llm_model":        agent.LLMModel,
 	}
-	
+
 	// Only include optional fields if they have meaningful values
 	if len(agent.Sources) > 0 {
 		payload["sources"] = agent.Sources
@@ -912,7 +902,7 @@ func (c *Client) CreateAgent(ctx context.Context, agent Agent) (*Agent, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal payload: %w", err)
 	}
-	
+
 	resp, err := c.PostRaw(ctx, "/agents", payloadBytes)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create agent: %w", err)
@@ -977,12 +967,12 @@ func (c *Client) CreateAgent(ctx context.Context, agent Agent) (*Agent, error) {
 func (c *Client) UpdateAgent(ctx context.Context, uuid string, agent Agent) (*Agent, error) {
 	// Create a minimal API-compliant payload similar to CreateAgent
 	payload := map[string]interface{}{
-		"name":        agent.Name,
-		"description": agent.Description,
+		"name":             agent.Name,
+		"description":      agent.Description,
 		"instruction_type": agent.InstructionType,
-		"llm_model":   agent.LLMModel,
+		"llm_model":        agent.LLMModel,
 	}
-	
+
 	// Only include optional fields if they have meaningful values
 	if len(agent.Sources) > 0 {
 		payload["sources"] = agent.Sources
@@ -1002,13 +992,13 @@ func (c *Client) UpdateAgent(ctx context.Context, uuid string, agent Agent) (*Ag
 	if agent.Environment != nil && len(agent.Environment) > 0 {
 		payload["environment_variables"] = agent.Environment
 	}
-	
+
 	// Debug output
 	if c.debug {
 		payloadBytes, _ := json.MarshalIndent(payload, "", "  ")
 		fmt.Printf("UpdateAgent request payload:\n%s\n", string(payloadBytes))
 	}
-	
+
 	// Use the raw update method to avoid struct serialization issues
 	return c.UpdateAgentRaw(ctx, uuid, payload)
 }
@@ -1258,7 +1248,6 @@ func (c *Client) GenerateTool(ctx context.Context, description, sessionID string
 		// Set headers to request SSE
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("x-vercel-ai-data-stream", "v1") // protocol flag
-		req.Header.Set("Authorization", "UserKey "+c.cfg.APIKey)
 		req.Header.Set("Cache-Control", "no-cache")
 		req.Header.Set("Connection", "keep-alive")
 
@@ -1425,7 +1414,6 @@ func (c *Client) CreateProject(ctx context.Context, templateID string, name stri
 	}
 
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "UserKey "+c.cfg.APIKey)
 
 	resp, err := c.client.Do(req)
 	if err != nil {
@@ -1520,7 +1508,6 @@ func (c *Client) UpdateProject(ctx context.Context, projectID string, name strin
 	}
 
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "UserKey "+c.cfg.APIKey)
 
 	resp, err := c.client.Do(req)
 	if err != nil {
@@ -1562,8 +1549,6 @@ func (c *Client) ListProjectTemplates(ctx context.Context, repository string) ([
 		return nil, err
 	}
 
-	req.Header.Set("Authorization", "UserKey "+c.cfg.APIKey)
-
 	resp, err := c.client.Do(req)
 	if err != nil {
 		return nil, err
@@ -1602,8 +1587,6 @@ func (c *Client) GetProjectTemplate(ctx context.Context, id string) (*ProjectTem
 	if err != nil {
 		return nil, err
 	}
-
-	req.Header.Set("Authorization", "UserKey "+c.cfg.APIKey)
 
 	resp, err := c.client.Do(req)
 	if err != nil {
@@ -1964,7 +1947,7 @@ func (c *Client) ExecuteToolWithTimeout(ctx context.Context, toolName string, to
 	// Use comprehensive tool execution tracing
 	var eventChan <-chan WorkflowSSEEvent
 	var execErr error
-	
+
 	err := sentryutil.WithToolExecution(ctx, toolName, runner, func(ctx context.Context) error {
 		// Create Sentry span for tracing (keeping existing pattern)
 		span, ctx := sentryutil.StartSpan(ctx, "execute_tool")
@@ -1974,15 +1957,15 @@ func (c *Client) ExecuteToolWithTimeout(ctx context.Context, toolName string, to
 			span.SetTag("timeout", timeout.String())
 			defer span.Finish()
 		}
-		
+
 		eventChan, execErr = c.executeToolWithTimeoutInternal(ctx, toolName, toolDef, runner, timeout, args)
 		return execErr
 	})
-	
+
 	if err != nil {
 		return nil, err
 	}
-	
+
 	return eventChan, nil
 }
 
@@ -2084,7 +2067,6 @@ func (c *Client) executeToolWithTimeoutInternal(ctx context.Context, toolName st
 		}
 
 		// Set headers for SSE
-		req.Header.Set("Authorization", "UserKey "+c.cfg.APIKey)
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("x-vercel-ai-data-stream", "v1") // protocol flag
 		req.Header.Set("Cache-Control", "no-cache")
@@ -2208,7 +2190,7 @@ func (c *Client) streamToolExecution(resp *http.Response, timeout time.Duration,
 			if inactivityTimeout < time.Hour {
 				inactivityTimeout = time.Hour // Minimum 1 hour for long-running tools
 			}
-			
+
 			ticker := time.NewTicker(30 * time.Second) // Check less frequently
 			defer ticker.Stop()
 
@@ -2221,11 +2203,11 @@ func (c *Client) streamToolExecution(resp *http.Response, timeout time.Duration,
 						}
 						// Add Sentry tracking for stream timeouts
 						sentryutil.CaptureError(fmt.Errorf("SSE stream inactivity timeout"), map[string]string{
-							"timeout_type":     "sse_inactivity",
+							"timeout_type":       "sse_inactivity",
 							"configured_timeout": inactivityTimeout.String(),
-							"actual_inactivity": timeSinceLastEvent.String(),
+							"actual_inactivity":  timeSinceLastEvent.String(),
 						}, map[string]interface{}{
-							"runner": runnerName,
+							"runner":             runnerName,
 							"inactivity_minutes": timeSinceLastEvent.Minutes(),
 						})
 						resp.Body.Close() // Force close the connection

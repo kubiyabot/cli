@@ -437,7 +437,6 @@ func (c *Client) CreateSource(ctx context.Context, url string, opts ...SourceOpt
 		return nil, err
 	}
 
-	req.Header.Set("Authorization", "UserKey "+c.cfg.APIKey)
 	req.Header.Set("Content-Type", "application/json")
 
 	var created Source
@@ -513,7 +512,6 @@ func (c *Client) UpdateSource(ctx context.Context, uuid string, opts ...SourceOp
 		return nil, err
 	}
 
-	req.Header.Set("Authorization", "UserKey "+c.cfg.APIKey)
 	req.Header.Set("Content-Type", "application/json")
 
 	var updated Source
@@ -601,7 +599,6 @@ func (c *Client) GetRawSourceMetadata(ctx context.Context, uuid string) (string,
 		return "", err
 	}
 
-	req.Header.Set("Authorization", "UserKey "+c.cfg.APIKey)
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.client.Do(req)
@@ -678,7 +675,6 @@ func (c *Client) CreateZipSource(ctx context.Context, zipPath string, name strin
 
 	// Set the content type
 	req.Header.Set("Content-Type", writer.FormDataContentType())
-	req.Header.Set("Authorization", "UserKey "+c.cfg.APIKey)
 
 	// Make the request
 	resp, err := c.client.Do(req)
@@ -762,7 +758,7 @@ func (c *Client) LoadZipSource(ctx context.Context, zipPath string, name string,
 
 	// Set the content type
 	req.Header.Set("Content-Type", writer.FormDataContentType())
-	req.Header.Set("Authorization", "UserKey "+c.cfg.APIKey)
+	//req.Header.Set("Authorization", "UserKey "+c.cfg.APIKey)
 
 	// Make the request
 	resp, err := c.client.Do(req)

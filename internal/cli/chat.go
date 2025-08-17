@@ -22,13 +22,14 @@ import (
 	"text/template"
 	"time"
 
+	"github.com/mattn/go-isatty"
+	"github.com/spf13/cobra"
+
 	"github.com/kubiyabot/cli/internal/config"
 	"github.com/kubiyabot/cli/internal/kubiya"
 	sentryutil "github.com/kubiyabot/cli/internal/sentry"
 	"github.com/kubiyabot/cli/internal/style"
 	"github.com/kubiyabot/cli/internal/tui"
-	"github.com/mattn/go-isatty"
-	"github.com/spf13/cobra"
 )
 
 // Helper function for min values
@@ -146,14 +147,14 @@ func isAgentErrorMessage(content string) bool {
 	}
 
 	// Also check for generic "sorry" combined with error indicators
-	if strings.Contains(lowerContent, "sorry") && 
-		(strings.Contains(lowerContent, "error") || 
-		 strings.Contains(lowerContent, "problem") || 
-		 strings.Contains(lowerContent, "issue") || 
-		 strings.Contains(lowerContent, "failed") ||
-		 strings.Contains(lowerContent, "unable") ||
-		 strings.Contains(lowerContent, "couldn't") ||
-		 strings.Contains(lowerContent, "can't")) {
+	if strings.Contains(lowerContent, "sorry") &&
+		(strings.Contains(lowerContent, "error") ||
+			strings.Contains(lowerContent, "problem") ||
+			strings.Contains(lowerContent, "issue") ||
+			strings.Contains(lowerContent, "failed") ||
+			strings.Contains(lowerContent, "unable") ||
+			strings.Contains(lowerContent, "couldn't") ||
+			strings.Contains(lowerContent, "can't")) {
 		return true
 	}
 
@@ -194,7 +195,7 @@ func formatToolParameters(toolArgs string) string {
 	}
 
 	var formatted []string
-	
+
 	for k, v := range argMap {
 		valueStr := fmt.Sprintf("%v", v)
 
@@ -254,15 +255,15 @@ func formatLiveJSON(jsonStr string) string {
 	if jsonStr == "" {
 		return ""
 	}
-	
+
 	// Clean up common escape sequences for better display
 	cleaned := strings.ReplaceAll(jsonStr, "\\n", " ")
 	cleaned = strings.ReplaceAll(cleaned, "\\\"", `"`)
 	cleaned = strings.ReplaceAll(cleaned, "\\t", " ")
-	
+
 	// Remove extra whitespace but preserve structure while making it more compact
 	cleaned = strings.TrimSpace(cleaned)
-	
+
 	// For very long content, show a more intelligent truncation
 	if len(cleaned) > 120 {
 		// Try to find a good break point (after comma, before closing brace)
@@ -272,7 +273,7 @@ func formatLiveJSON(jsonStr string) string {
 			cleaned = cleaned[:117] + "..."
 		}
 	}
-	
+
 	return cleaned
 }
 
@@ -287,16 +288,16 @@ func showWorkingAnimation(toolName string) {
 	stopChan := make(chan bool, 1)
 	workingAnimations[toolName] = stopChan
 	workingAnimationsMu.Unlock()
-	
+
 	defer func() {
 		workingAnimationsMu.Lock()
 		delete(workingAnimations, toolName)
 		workingAnimationsMu.Unlock()
 	}()
-	
+
 	workingMessages := []string{
 		"Analyzing request...",
-		"Planning approach...", 
+		"Planning approach...",
 		"Generating parameters...",
 		"Optimizing strategy...",
 		"Building context...",
@@ -305,24 +306,24 @@ func showWorkingAnimation(toolName string) {
 		"Computing...",
 		"Preparing...",
 	}
-	
+
 	spinners := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
 	messageIndex := 0
 	spinnerIndex := 0
-	
+
 	// Show initial state immediately
 	fmt.Printf("\r⚡ %s %s %s",
 		style.ToolExecutingStyle.Render(toolName),
 		style.SpinnerStyle.Render(spinners[spinnerIndex]),
 		style.DimStyle.Render(workingMessages[messageIndex]))
 	os.Stdout.Sync()
-	
-	ticker := time.NewTicker(500 * time.Millisecond) // Change message every 500ms
+
+	ticker := time.NewTicker(500 * time.Millisecond)       // Change message every 500ms
 	spinnerTicker := time.NewTicker(80 * time.Millisecond) // Spin every 80ms (faster for more dynamic feel)
-	
+
 	defer ticker.Stop()
 	defer spinnerTicker.Stop()
-	
+
 	for {
 		select {
 		case <-stopChan:
@@ -335,7 +336,7 @@ func showWorkingAnimation(toolName string) {
 				style.SpinnerStyle.Render(spinners[spinnerIndex]),
 				style.DimStyle.Render(workingMessages[messageIndex]))
 			os.Stdout.Sync()
-			
+
 		case <-spinnerTicker.C:
 			// Rotate spinner
 			spinnerIndex = (spinnerIndex + 1) % len(spinners)
@@ -352,7 +353,7 @@ func showWorkingAnimation(toolName string) {
 func stopWorkingAnimation(toolName string) {
 	workingAnimationsMu.Lock()
 	defer workingAnimationsMu.Unlock()
-	
+
 	if stopChan, exists := workingAnimations[toolName]; exists {
 		select {
 		case stopChan <- true:
@@ -365,7 +366,7 @@ func stopWorkingAnimation(toolName string) {
 func isAnimationRunning(toolName string) bool {
 	workingAnimationsMu.Lock()
 	defer workingAnimationsMu.Unlock()
-	
+
 	_, exists := workingAnimations[toolName]
 	return exists
 }
@@ -2107,14 +2108,14 @@ For inline agents, use --inline with --tools-file or --tools-json to provide cus
 					msgChan, chatErr = client.SendInlineAgentMessage(ctx, message, sessionID, context, inlineAgent)
 					return chatErr
 				})
-				
+
 				// Add breadcrumb for inline agent chat
 				sentryutil.AddBreadcrumb("kubiya.chat", "Inline agent message sent", map[string]interface{}{
 					"message_length": len(message),
 					"session_id":     sessionID,
 					"has_context":    len(context) > 0,
 				})
-				
+
 				if err != nil {
 					// If inline agent connection fails, retry for retryable errors
 					if isRetryableError(err) {
@@ -2126,11 +2127,11 @@ For inline agents, use --inline with --tools-file or --tools-json to provide cus
 							backoffDelay := calculateBackoffDelay(retryAttempt - 1)
 							if !automationMode {
 								fmt.Printf("%s\n", style.SpinnerStyle.Render(
-									fmt.Sprintf("🔄 Retrying inline agent connection (attempt %d/%d) in %.1fs...", 
+									fmt.Sprintf("🔄 Retrying inline agent connection (attempt %d/%d) in %.1fs...",
 										retryAttempt, retries, backoffDelay.Seconds())))
 							}
 							time.Sleep(backoffDelay)
-							
+
 							msgChan, err = client.SendInlineAgentMessage(cmd.Context(), message, sessionID, context, inlineAgent)
 							if err == nil {
 								break // Success!
@@ -2181,7 +2182,7 @@ For inline agents, use --inline with --tools-file or --tools-json to provide cus
 
 				// Set headers
 				req.Header.Set("Content-Type", "application/json")
-				req.Header.Set("Authorization", "UserKey "+cfg.APIKey)
+				//req.Header.Set("Authorization", "UserKey "+cfg.APIKey)
 
 				if debug {
 					fmt.Printf("🌐 Sending classification request to: %s\n", classifyURL)
@@ -2381,518 +2382,544 @@ For inline agents, use --inline with --tools-file or --tools-json to provide cus
 				hasError = false
 				toolsExecuted = false
 				anyOutputTruncated = false
-				
+
 				// Update the message handling loop with stream error handling:
 				sessionRecoveryNeeded := false
 				for msg := range msgChan {
-				if msg.Error != "" {
-					// Smart retry logic with proper error classification
-					errorObj := fmt.Errorf(msg.Error)
+					if msg.Error != "" {
+						// Smart retry logic with proper error classification
+						errorObj := fmt.Errorf(msg.Error)
 
-					if isRetryableError(errorObj) && streamRetryCount < retries {
-						streamRetryCount++
+						if isRetryableError(errorObj) && streamRetryCount < retries {
+							streamRetryCount++
 
-						// Calculate proper exponential backoff with jitter
-						backoffDelay := calculateBackoffDelay(streamRetryCount - 1)
+							// Calculate proper exponential backoff with jitter
+							backoffDelay := calculateBackoffDelay(streamRetryCount - 1)
 
-						if !automationMode {
-							fmt.Printf("\r%s\n", style.WarningStyle.Render(
-								fmt.Sprintf("⚠️  Stream error (attempt %d/%d): %s",
-									streamRetryCount, retries, msg.Error)))
-							fmt.Printf("%s\n", style.SpinnerStyle.Render(
-								fmt.Sprintf("🔄 Retrying in %.1fs...", backoffDelay.Seconds())))
-						}
-
-						// Wait with proper backoff
-						select {
-						case <-cmd.Context().Done():
-							return cmd.Context().Err()
-						case <-time.After(backoffDelay):
-							// Continue with retry
-						}
-
-						// Attempt to reconnect with remaining retries
-						if !inline {
-							remainingRetries := retries - streamRetryCount
-							if remainingRetries < 1 {
-								remainingRetries = 1
+							if !automationMode {
+								fmt.Printf("\r%s\n", style.WarningStyle.Render(
+									fmt.Sprintf("⚠️  Stream error (attempt %d/%d): %s",
+										streamRetryCount, retries, msg.Error)))
+								fmt.Printf("%s\n", style.SpinnerStyle.Render(
+									fmt.Sprintf("🔄 Retrying in %.1fs...", backoffDelay.Seconds())))
 							}
 
-							msgChan, err = client.SendMessageWithRetry(cmd.Context(), agentID, enhancedMessage, actualSessionID, remainingRetries)
-							if err != nil {
-								if !automationMode {
-									fmt.Printf("%s\n", style.ErrorStyle.Render(fmt.Sprintf("❌ Reconnection failed: %v", err)))
+							// Wait with proper backoff
+							select {
+							case <-cmd.Context().Done():
+								return cmd.Context().Err()
+							case <-time.After(backoffDelay):
+								// Continue with retry
+							}
+
+							// Attempt to reconnect with remaining retries
+							if !inline {
+								remainingRetries := retries - streamRetryCount
+								if remainingRetries < 1 {
+									remainingRetries = 1
 								}
-								// Don't continue here - let it fall through to retry logic
+
+								msgChan, err = client.SendMessageWithRetry(cmd.Context(), agentID, enhancedMessage, actualSessionID, remainingRetries)
+								if err != nil {
+									if !automationMode {
+										fmt.Printf("%s\n", style.ErrorStyle.Render(fmt.Sprintf("❌ Reconnection failed: %v", err)))
+									}
+									// Don't continue here - let it fall through to retry logic
+									continue
+								}
+								if !automationMode {
+									fmt.Printf("%s\n", style.SuccessStyle.Render("✅ Reconnected successfully, continuing..."))
+								}
+								// Reset retry count on successful reconnection
+								streamRetryCount = 0
 								continue
 							}
-							if !automationMode {
-								fmt.Printf("%s\n", style.SuccessStyle.Render("✅ Reconnected successfully, continuing..."))
-							}
-							// Reset retry count on successful reconnection
-							streamRetryCount = 0
-							continue
-						}
-					} else {
-						// Either non-retryable error or exhausted retries
-						if streamRetryCount >= retries {
-							fmt.Fprintf(os.Stderr, "%s\n", style.ErrorStyle.Render(
-								fmt.Sprintf("❌ Stream failed after %d retries: %s", retries, msg.Error)))
 						} else {
-							fmt.Fprintf(os.Stderr, "%s\n", style.ErrorStyle.Render(
-								fmt.Sprintf("❌ Non-retryable error: %s", msg.Error)))
-						}
-						hasError = true
-						return fmt.Errorf("stream error: %s", msg.Error)
-					}
-				}
-
-				// Raw event logging for debugging
-				if rawEventLogging {
-					fmt.Printf("[RAW EVENT] Type: %s, Content: %s, MessageID: %s, Final: %v, SessionID: %s\n",
-						msg.Type, msg.Content, msg.MessageID, msg.Final, msg.SessionID)
-				}
-
-				// Capture completion reason and session ID from final messages
-				if msg.Final && msg.FinishReason != "" {
-					completionReason = msg.FinishReason
-				}
-				if msg.SessionID != "" {
-					actualSessionID = msg.SessionID
-				}
-
-				// Handle system messages (only show if not in automation mode)
-				if msg.Type == systemMsg {
-					if !automationMode {
-						fmt.Fprintf(os.Stderr, "%s\n", style.SystemStyle.Render("🔄 "+msg.Content))
-					}
-					continue
-				}
-
-				switch msg.Type {
-				case toolMsg:
-					toolInfo := strings.TrimSpace(msg.Content)
-					if strings.HasPrefix(toolInfo, "Tool:") {
-						parts := strings.SplitN(toolInfo, "Arguments:", 2)
-						toolName := strings.TrimSpace(strings.TrimPrefix(parts[0], "Tool:"))
-						toolArgs := ""
-						if len(parts) > 1 {
-							toolArgs = strings.TrimSpace(parts[1])
-						}
-
-						// LIVE streaming of tool calls and arguments
-						if showToolCalls && !automationMode {
-							// Check if this is a new tool call (first time we see this tool)
-							isNewTool := true
-							for _, te := range toolExecutions {
-								if te.name == toolName && !te.isComplete {
-									isNewTool = false
-									break
-								}
-							}
-
-							if isNewTool {
-								// Compact tool header - start the live streaming line
-								// No sync here - we'll update this line as args build
-							}
-
-							// LIVE streaming - keep working animation until tool execution starts
-							if toolArgs == "" {
-								// Initial tool detection - start dynamic working animation
-								if !isAnimationRunning(toolName) {
-									go showWorkingAnimation(toolName)
-								}
-							} else if !strings.HasSuffix(toolArgs, "}") {
-								// Parameters are building but not complete - ensure animation is running
-								if !isAnimationRunning(toolName) {
-									go showWorkingAnimation(toolName)
-								}
-								// This gives users continuous feedback that the AI is actively working
+							// Either non-retryable error or exhausted retries
+							if streamRetryCount >= retries {
+								fmt.Fprintf(os.Stderr, "%s\n", style.ErrorStyle.Render(
+									fmt.Sprintf("❌ Stream failed after %d retries: %s", retries, msg.Error)))
 							} else {
-								// Parameters are complete - show final result and prepare for execution
-								stopWorkingAnimation(toolName)
-								
-								// Parameters complete - show formatted final args and move to next line
-								displayArgs := formatLiveJSON(toolArgs)
-								fmt.Printf("\r⚡ %s %s %s\n",
-									style.ToolExecutingStyle.Render(toolName),
-									style.ValueStyle.Render(displayArgs),
-									style.DimStyle.Render("✓"))
-								os.Stdout.Sync()
+								fmt.Fprintf(os.Stderr, "%s\n", style.ErrorStyle.Render(
+									fmt.Sprintf("❌ Non-retryable error: %s", msg.Error)))
 							}
+							hasError = true
+							return fmt.Errorf("stream error: %s", msg.Error)
 						}
+					}
 
-						// Only process final tool execution if we have complete arguments
-						if strings.HasSuffix(toolArgs, "}") {
-							// Check for duplicate tool execution
-							isDuplicate := false
-							for _, te := range toolExecutions {
-								if te.name == toolName && te.args == toolArgs && !te.isComplete {
-									isDuplicate = true
-									break
-								}
+					// Raw event logging for debugging
+					if rawEventLogging {
+						fmt.Printf("[RAW EVENT] Type: %s, Content: %s, MessageID: %s, Final: %v, SessionID: %s\n",
+							msg.Type, msg.Content, msg.MessageID, msg.Final, msg.SessionID)
+					}
+
+					// Capture completion reason and session ID from final messages
+					if msg.Final && msg.FinishReason != "" {
+						completionReason = msg.FinishReason
+					}
+					if msg.SessionID != "" {
+						actualSessionID = msg.SessionID
+					}
+
+					// Handle system messages (only show if not in automation mode)
+					if msg.Type == systemMsg {
+						if !automationMode {
+							fmt.Fprintf(os.Stderr, "%s\n", style.SystemStyle.Render("🔄 "+msg.Content))
+						}
+						continue
+					}
+
+					switch msg.Type {
+					case toolMsg:
+						toolInfo := strings.TrimSpace(msg.Content)
+						if strings.HasPrefix(toolInfo, "Tool:") {
+							parts := strings.SplitN(toolInfo, "Arguments:", 2)
+							toolName := strings.TrimSpace(strings.TrimPrefix(parts[0], "Tool:"))
+							toolArgs := ""
+							if len(parts) > 1 {
+								toolArgs = strings.TrimSpace(parts[1])
 							}
 
-							if !isDuplicate {
-								// Update tool statistics
-								toolStats.mu.Lock()
-								toolStats.totalCalls++
-								toolStats.activeCalls++
-								toolStats.toolTypes[toolName]++
-								toolStats.mu.Unlock()
-
-								// Create new tool execution
-								te := &toolExecution{
-									name:       toolName,
-									args:       toolArgs,
-									msgID:      msg.MessageID,
-									status:     "waiting",
-									startTime:  time.Now(),
-									runner:     connStatus.runner,
-									toolCallId: msg.MessageID,
-								}
-								toolExecutions[msg.MessageID] = te
-								toolsExecuted = true
-
-								// Show smart parameter summary if available
-								if showToolCalls && !automationMode {
-									paramSummary := formatToolParameters(toolArgs)
-									if paramSummary != "" {
-										fmt.Printf("   %s\n", style.DimStyle.Render(paramSummary))
+							// LIVE streaming of tool calls and arguments
+							if showToolCalls && !automationMode {
+								// Check if this is a new tool call (first time we see this tool)
+								isNewTool := true
+								for _, te := range toolExecutions {
+									if te.name == toolName && !te.isComplete {
+										isNewTool = false
+										break
 									}
+								}
+
+								if isNewTool {
+									// Compact tool header - start the live streaming line
+									// No sync here - we'll update this line as args build
+								}
+
+								// LIVE streaming - keep working animation until tool execution starts
+								if toolArgs == "" {
+									// Initial tool detection - start dynamic working animation
+									if !isAnimationRunning(toolName) {
+										go showWorkingAnimation(toolName)
+									}
+								} else if !strings.HasSuffix(toolArgs, "}") {
+									// Parameters are building but not complete - ensure animation is running
+									if !isAnimationRunning(toolName) {
+										go showWorkingAnimation(toolName)
+									}
+									// This gives users continuous feedback that the AI is actively working
+								} else {
+									// Parameters are complete - show final result and prepare for execution
+									stopWorkingAnimation(toolName)
+
+									// Parameters complete - show formatted final args and move to next line
+									displayArgs := formatLiveJSON(toolArgs)
+									fmt.Printf("\r⚡ %s %s %s\n",
+										style.ToolExecutingStyle.Render(toolName),
+										style.ValueStyle.Render(displayArgs),
+										style.DimStyle.Render("✓"))
 									os.Stdout.Sync()
 								}
 							}
-						}
-					}
 
-				case toolOutput:
-					te := toolExecutions[msg.MessageID]
-					if te != nil && !te.isComplete {
-						// Mark that we received output
-						te.hasOutput = true
-
-						// Update status to running when we start receiving output
-						if te.status == "waiting" {
-							te.status = "running"
-							// Clear the previous line and show running state
-							if showToolCalls && !automationMode {
-								fmt.Printf("\r⚡ %s %s\n",
-									style.ToolExecutingStyle.Render(te.name),
-									style.SpinnerStyle.Render("🔄 executing..."))
-								os.Stdout.Sync()
-							}
-							// Show clean animation only during execution
-							if showToolCalls && !automationMode && !te.animationStarted {
-								te.animationStarted = true
-								go startToolAnimation(te)
-							}
-						}
-
-						// Also check if we need to mark as complete based on content
-						lowerContent := strings.ToLower(msg.Content)
-						if strings.Contains(lowerContent, "completed") ||
-							strings.Contains(lowerContent, "finished") ||
-							strings.Contains(lowerContent, "done") ||
-							strings.Contains(lowerContent, "success") ||
-							strings.Contains(lowerContent, "created") ||
-							strings.Contains(lowerContent, "saved") {
-							te.isComplete = true
-							// Ensure it's not marked as failed if we detect success
-							if !te.failed {
-								te.status = "completed"
-							}
-						}
-
-						// Store the full content
-						te.output.WriteString(msg.Content)
-
-						// Get the current content buffer for this message
-						storedContent := messageBuffer[msg.MessageID]
-						if storedContent == nil {
-							storedContent = &chatBuffer{}
-							messageBuffer[msg.MessageID] = storedContent
-						}
-
-						// Only process new content since last update
-						newContent := msg.Content
-						if len(storedContent.content) > 0 && len(msg.Content) > len(storedContent.content) {
-							newContent = msg.Content[len(storedContent.content):]
-						} else if len(storedContent.content) > 0 {
-							newContent = ""
-						}
-
-						// Process new content if any
-						trimmedContent := strings.TrimSpace(newContent)
-
-						// Check for empty output scenarios that should show "output truncated"
-						if trimmedContent == "" || trimmedContent == "\"\"" || trimmedContent == "{}" {
-							te.outputTruncated = true
-							anyOutputTruncated = true
-							if showToolCalls && !automationMode {
-								// Just track that output was truncated, don't spam the user
-								// We'll show a single message at the end
-							}
-						} else if trimmedContent != "" {
-							// Try to parse as JSON first for structured output
-							var outputData struct {
-								State   string `json:"state,omitempty"`
-								Status  string `json:"status,omitempty"`
-								Output  string `json:"output,omitempty"`
-								Error   string `json:"error,omitempty"`
-								Message string `json:"message,omitempty"`
-							}
-
-							if err := json.Unmarshal([]byte(trimmedContent), &outputData); err == nil {
-								// Handle structured output
-								if outputData.State != "" {
-									te.status = outputData.State
+							// Only process final tool execution if we have complete arguments
+							if strings.HasSuffix(toolArgs, "}") {
+								// Check for duplicate tool execution
+								isDuplicate := false
+								for _, te := range toolExecutions {
+									if te.name == toolName && te.args == toolArgs && !te.isComplete {
+										isDuplicate = true
+										break
+									}
 								}
-								if outputData.Error != "" {
-									te.failed = true
-									te.errorMsg = outputData.Error // Store the actual error message
-									te.status = "failed"
-									hasError = true
-									
-									// Stop working animation if it's still running
-									stopWorkingAnimation(te.name)
-									
+
+								if !isDuplicate {
+									// Update tool statistics
+									toolStats.mu.Lock()
+									toolStats.totalCalls++
+									toolStats.activeCalls++
+									toolStats.toolTypes[toolName]++
+									toolStats.mu.Unlock()
+
+									// Create new tool execution
+									te := &toolExecution{
+										name:       toolName,
+										args:       toolArgs,
+										msgID:      msg.MessageID,
+										status:     "waiting",
+										startTime:  time.Now(),
+										runner:     connStatus.runner,
+										toolCallId: msg.MessageID,
+									}
+									toolExecutions[msg.MessageID] = te
+									toolsExecuted = true
+
+									// Show smart parameter summary if available
 									if showToolCalls && !automationMode {
-										// Show clear "Tool call failed" message
-										errorMsg := outputData.Error
-										if len(errorMsg) > 100 {
-											errorMsg = errorMsg[:97] + "..."
+										paramSummary := formatToolParameters(toolArgs)
+										if paramSummary != "" {
+											fmt.Printf("   %s\n", style.DimStyle.Render(paramSummary))
 										}
-										fmt.Printf("\r⚡ %s %s\n",
-											style.ToolExecutingStyle.Render(te.name),
-											style.ErrorStyle.Render(fmt.Sprintf("Tool call failed: %s", errorMsg)))
-									}
-								}
-								if outputData.Output != "" || outputData.Message != "" {
-									output := outputData.Output
-									if output == "" {
-										output = outputData.Message
-									}
-									// Don't show every line - just track that we got output
-									// This prevents spam during streaming
-									if showToolCalls && !automationMode && !te.hasShownOutput {
-										fmt.Printf("   %s\n", style.LiveStatusStyle.Render("Receiving output..."))
-										te.hasShownOutput = true
 										os.Stdout.Sync()
 									}
 								}
-							} else {
-								// Handle plain text output - analyze for key messages only
+							}
+						}
+
+					case toolOutput:
+						te := toolExecutions[msg.MessageID]
+						if te != nil && !te.isComplete {
+							// Mark that we received output
+							te.hasOutput = true
+
+							// Update status to running when we start receiving output
+							if te.status == "waiting" {
+								te.status = "running"
+								// Clear the previous line and show running state
 								if showToolCalls && !automationMode {
-									// Only show important messages, not every line
-									lowerContent := strings.ToLower(trimmedContent)
-									
-									// More sophisticated error detection - only flag actual failures, not mentions of errors
-									isActualError := false
-									// Look for actual error patterns, excluding common success patterns
-									if (strings.Contains(lowerContent, "error:") || strings.Contains(lowerContent, "failed:") ||
-										strings.Contains(lowerContent, "error occurred") || strings.Contains(lowerContent, "execution failed") ||
-										strings.Contains(lowerContent, "command failed") || strings.Contains(lowerContent, "operation failed") ||
-										(strings.Contains(lowerContent, "exit code") && (strings.Contains(lowerContent, " 1") || strings.Contains(lowerContent, " 2")))) &&
-										// Exclude success patterns that might contain "error" in context
-										!strings.Contains(lowerContent, "successfully") &&
-										!strings.Contains(lowerContent, "completed") &&
-										!strings.Contains(lowerContent, "created") &&
-										!strings.Contains(lowerContent, "saved") &&
-										!strings.Contains(lowerContent, "finished") {
-										isActualError = true
+									fmt.Printf("\r⚡ %s %s\n",
+										style.ToolExecutingStyle.Render(te.name),
+										style.SpinnerStyle.Render("🔄 executing..."))
+									os.Stdout.Sync()
+								}
+								// Show clean animation only during execution
+								if showToolCalls && !automationMode && !te.animationStarted {
+									te.animationStarted = true
+									go startToolAnimation(te)
+								}
+							}
+
+							// Also check if we need to mark as complete based on content
+							lowerContent := strings.ToLower(msg.Content)
+							if strings.Contains(lowerContent, "completed") ||
+								strings.Contains(lowerContent, "finished") ||
+								strings.Contains(lowerContent, "done") ||
+								strings.Contains(lowerContent, "success") ||
+								strings.Contains(lowerContent, "created") ||
+								strings.Contains(lowerContent, "saved") {
+								te.isComplete = true
+								// Ensure it's not marked as failed if we detect success
+								if !te.failed {
+									te.status = "completed"
+								}
+							}
+
+							// Store the full content
+							te.output.WriteString(msg.Content)
+
+							// Get the current content buffer for this message
+							storedContent := messageBuffer[msg.MessageID]
+							if storedContent == nil {
+								storedContent = &chatBuffer{}
+								messageBuffer[msg.MessageID] = storedContent
+							}
+
+							// Only process new content since last update
+							newContent := msg.Content
+							if len(storedContent.content) > 0 && len(msg.Content) > len(storedContent.content) {
+								newContent = msg.Content[len(storedContent.content):]
+							} else if len(storedContent.content) > 0 {
+								newContent = ""
+							}
+
+							// Process new content if any
+							trimmedContent := strings.TrimSpace(newContent)
+
+							// Check for empty output scenarios that should show "output truncated"
+							if trimmedContent == "" || trimmedContent == "\"\"" || trimmedContent == "{}" {
+								te.outputTruncated = true
+								anyOutputTruncated = true
+								if showToolCalls && !automationMode {
+									// Just track that output was truncated, don't spam the user
+									// We'll show a single message at the end
+								}
+							} else if trimmedContent != "" {
+								// Try to parse as JSON first for structured output
+								var outputData struct {
+									State   string `json:"state,omitempty"`
+									Status  string `json:"status,omitempty"`
+									Output  string `json:"output,omitempty"`
+									Error   string `json:"error,omitempty"`
+									Message string `json:"message,omitempty"`
+								}
+
+								if err := json.Unmarshal([]byte(trimmedContent), &outputData); err == nil {
+									// Handle structured output
+									if outputData.State != "" {
+										te.status = outputData.State
 									}
-									
-									if isActualError {
-										// Show friendly warning only for actual errors
-										if !te.hasShownError {
-											// Try to extract meaningful error info
-											errorMsg := "encountered an issue"
-											if strings.Contains(lowerContent, "not found") {
-												errorMsg = "resource not found"
-											} else if strings.Contains(lowerContent, "permission") || strings.Contains(lowerContent, "credentials") {
-												errorMsg = "permission issue"
-											} else if strings.Contains(lowerContent, "timeout") {
-												errorMsg = "timed out"
-											} else if strings.Contains(lowerContent, "connection") {
-												errorMsg = "connection issue"
+									if outputData.Error != "" {
+										te.failed = true
+										te.errorMsg = outputData.Error // Store the actual error message
+										te.status = "failed"
+										hasError = true
+
+										// Stop working animation if it's still running
+										stopWorkingAnimation(te.name)
+
+										if showToolCalls && !automationMode {
+											// Show clear "Tool call failed" message
+											errorMsg := outputData.Error
+											if len(errorMsg) > 100 {
+												errorMsg = errorMsg[:97] + "..."
 											}
-											
-											// Stop working animation
-											stopWorkingAnimation(te.name)
-											
 											fmt.Printf("\r⚡ %s %s\n",
 												style.ToolExecutingStyle.Render(te.name),
 												style.ErrorStyle.Render(fmt.Sprintf("Tool call failed: %s", errorMsg)))
-											te.hasShownError = true
-											te.failed = true
-											te.status = "failed"
-											te.errorMsg = errorMsg // Store the inferred error message
-											hasError = true
+										}
+									}
+									if outputData.Output != "" || outputData.Message != "" {
+										output := outputData.Output
+										if output == "" {
+											output = outputData.Message
+										}
+										// Don't show every line - just track that we got output
+										// This prevents spam during streaming
+										if showToolCalls && !automationMode && !te.hasShownOutput {
+											fmt.Printf("   %s\n", style.LiveStatusStyle.Render("Receiving output..."))
+											te.hasShownOutput = true
 											os.Stdout.Sync()
 										}
-									} else if strings.Contains(lowerContent, "success") || strings.Contains(lowerContent, "completed") || 
-										strings.Contains(lowerContent, "created") || strings.Contains(lowerContent, "saved") ||
-										strings.Contains(lowerContent, "finished") || strings.Contains(lowerContent, "done") {
-										// Stop working animation on success
-										stopWorkingAnimation(te.name)
-										
-										fmt.Printf("\r⚡ %s %s\n",
-											style.ToolExecutingStyle.Render(te.name),
-											style.SuccessStyle.Render("✅ completed successfully"))
-										os.Stdout.Sync()
-									} else if !te.hasShownOutput {
-										fmt.Printf("   %s\n", style.LiveStatusStyle.Render("Processing..."))
-										te.hasShownOutput = true
-										os.Stdout.Sync()
 									}
-								}
-							}
-						}
-
-						// Update stored content
-						storedContent.content = msg.Content
-					}
-
-				default:
-					// Handle tool completion - check on any non-tool message type if we have pending tool executions
-					for msgID, te := range toolExecutions {
-						if te.hasOutput && !te.isComplete {
-							// Mark as complete if we receive a final message or if enough time has passed
-							if msg.Final || time.Since(te.startTime) > 2*time.Minute {
-								te.isComplete = true
-							} else if te.status == "running" && time.Since(te.startTime) > 30*time.Second {
-								// If running for more than 30 seconds without completion, mark as complete
-								te.isComplete = true
-							}
-
-							if te.isComplete {
-								// Stop any running animation cleanly
-								te.status = "complete"
-
-								// Update tool statistics
-								toolStats.mu.Lock()
-								toolStats.activeCalls--
-								if te.failed {
-									toolStats.failedCalls++
 								} else {
-									toolStats.completedCalls++
-								}
-								toolStats.mu.Unlock()
+									// Handle plain text output - analyze for key messages only
+									if showToolCalls && !automationMode {
+										// Only show important messages, not every line
+										lowerContent := strings.ToLower(trimmedContent)
 
-								duration := time.Since(te.startTime).Seconds()
+										// More sophisticated error detection - only flag actual failures, not mentions of errors
+										isActualError := false
+										// Look for actual error patterns, excluding common success patterns
+										if (strings.Contains(lowerContent, "error:") || strings.Contains(lowerContent, "failed:") ||
+											strings.Contains(lowerContent, "error occurred") || strings.Contains(lowerContent, "execution failed") ||
+											strings.Contains(lowerContent, "command failed") || strings.Contains(lowerContent, "operation failed") ||
+											(strings.Contains(lowerContent, "exit code") && (strings.Contains(lowerContent, " 1") || strings.Contains(lowerContent, " 2")))) &&
+											// Exclude success patterns that might contain "error" in context
+											!strings.Contains(lowerContent, "successfully") &&
+											!strings.Contains(lowerContent, "completed") &&
+											!strings.Contains(lowerContent, "created") &&
+											!strings.Contains(lowerContent, "saved") &&
+											!strings.Contains(lowerContent, "finished") {
+											isActualError = true
+										}
 
-								// Show clean completion status with actual error messages
-								if showToolCalls && !automationMode {
-									if te.failed {
-										// Show compact error message
-										errorDisplay := "error"
-										if te.errorMsg != "" {
-											errorDisplay = strings.TrimSpace(te.errorMsg)
-											if len(errorDisplay) > 50 {
-												errorDisplay = errorDisplay[:50] + "..."
+										if isActualError {
+											// Show friendly warning only for actual errors
+											if !te.hasShownError {
+												// Try to extract meaningful error info
+												errorMsg := "encountered an issue"
+												if strings.Contains(lowerContent, "not found") {
+													errorMsg = "resource not found"
+												} else if strings.Contains(lowerContent, "permission") || strings.Contains(lowerContent, "credentials") {
+													errorMsg = "permission issue"
+												} else if strings.Contains(lowerContent, "timeout") {
+													errorMsg = "timed out"
+												} else if strings.Contains(lowerContent, "connection") {
+													errorMsg = "connection issue"
+												}
+
+												// Stop working animation
+												stopWorkingAnimation(te.name)
+
+												fmt.Printf("\r⚡ %s %s\n",
+													style.ToolExecutingStyle.Render(te.name),
+													style.ErrorStyle.Render(fmt.Sprintf("Tool call failed: %s", errorMsg)))
+												te.hasShownError = true
+												te.failed = true
+												te.status = "failed"
+												te.errorMsg = errorMsg // Store the inferred error message
+												hasError = true
+												os.Stdout.Sync()
 											}
-											// Clean for single line display
-											errorDisplay = strings.ReplaceAll(errorDisplay, "\n", " ")
-											errorDisplay = strings.ReplaceAll(errorDisplay, "\r", " ")
+										} else if strings.Contains(lowerContent, "success") || strings.Contains(lowerContent, "completed") ||
+											strings.Contains(lowerContent, "created") || strings.Contains(lowerContent, "saved") ||
+											strings.Contains(lowerContent, "finished") || strings.Contains(lowerContent, "done") {
+											// Stop working animation on success
+											stopWorkingAnimation(te.name)
+
+											fmt.Printf("\r⚡ %s %s\n",
+												style.ToolExecutingStyle.Render(te.name),
+												style.SuccessStyle.Render("✅ completed successfully"))
+											os.Stdout.Sync()
+										} else if !te.hasShownOutput {
+											fmt.Printf("   %s\n", style.LiveStatusStyle.Render("Processing..."))
+											te.hasShownOutput = true
+											os.Stdout.Sync()
 										}
-										fmt.Printf("   ⚠️  %s: %s (%.1fs)\n",
-											style.WarningStyle.Render(te.name),
-											style.DimStyle.Render(errorDisplay),
-											duration)
-									} else {
-										fmt.Printf("   ✓ %s (%.1fs)\n",
-											style.SuccessStyle.Render("Completed"),
-											duration)
 									}
-									os.Stdout.Sync()
-									continue // Skip the old completion display
+								}
+							}
+
+							// Update stored content
+							storedContent.content = msg.Content
+						}
+
+					default:
+						// Handle tool completion - check on any non-tool message type if we have pending tool executions
+						for msgID, te := range toolExecutions {
+							if te.hasOutput && !te.isComplete {
+								// Mark as complete if we receive a final message or if enough time has passed
+								if msg.Final || time.Since(te.startTime) > 2*time.Minute {
+									te.isComplete = true
+								} else if te.status == "running" && time.Since(te.startTime) > 30*time.Second {
+									// If running for more than 30 seconds without completion, mark as complete
+									te.isComplete = true
 								}
 
-								// Legacy variables for any remaining code
-								var statusEmoji string
-								var completionStatus string
-								if te.failed {
-									statusEmoji = statusFailed
-									completionStatus = "failed"
-								} else {
-									statusEmoji = statusDone
-									completionStatus = "completed"
-								}
+								if te.isComplete {
+									// Stop any running animation cleanly
+									te.status = "complete"
 
-								// Show updated statistics only if tool calls are enabled and not in automation mode
-								if showToolCalls && !automationMode {
-									toolStats.mu.RLock()
-									updatedStatsStr := fmt.Sprintf("[%d active, %d completed, %d failed]",
-										toolStats.activeCalls, toolStats.completedCalls, toolStats.failedCalls)
-									toolStats.mu.RUnlock()
-
-									// Print completion status with enhanced summary
-									fmt.Printf("\n%s\n",
-										style.InfoBoxStyle.Render(fmt.Sprintf("%s %s %s (%0.1fs) %s",
-											statusEmoji,
-											style.ToolNameStyle.Render(te.name),
-											style.ToolCompleteStyle.Render(strings.ToUpper(completionStatus)),
-											duration,
-											style.ToolStatsStyle.Render(updatedStatsStr))))
-
-									// Print error summary if failed
+									// Update tool statistics
+									toolStats.mu.Lock()
+									toolStats.activeCalls--
 									if te.failed {
-										fmt.Printf("%s %s\n",
-											style.ToolOutputPrefixStyle.Render("⚠️"),
-											style.ErrorStyle.Render("Tool encountered errors during execution"))
+										toolStats.failedCalls++
+									} else {
+										toolStats.completedCalls++
 									}
+									toolStats.mu.Unlock()
 
-									// Print output summary with better formatting
-									if te.output.Len() > 0 {
-										outputSize := te.output.Len()
-										var sizeStr string
-										if outputSize < 1024 {
-											sizeStr = fmt.Sprintf("%d bytes", outputSize)
-										} else if outputSize < 1024*1024 {
-											sizeStr = fmt.Sprintf("%.1f KB", float64(outputSize)/1024)
+									duration := time.Since(te.startTime).Seconds()
+
+									// Show clean completion status with actual error messages
+									if showToolCalls && !automationMode {
+										if te.failed {
+											// Show compact error message
+											errorDisplay := "error"
+											if te.errorMsg != "" {
+												errorDisplay = strings.TrimSpace(te.errorMsg)
+												if len(errorDisplay) > 50 {
+													errorDisplay = errorDisplay[:50] + "..."
+												}
+												// Clean for single line display
+												errorDisplay = strings.ReplaceAll(errorDisplay, "\n", " ")
+												errorDisplay = strings.ReplaceAll(errorDisplay, "\r", " ")
+											}
+											fmt.Printf("   ⚠️  %s: %s (%.1fs)\n",
+												style.WarningStyle.Render(te.name),
+												style.DimStyle.Render(errorDisplay),
+												duration)
 										} else {
-											sizeStr = fmt.Sprintf("%.1f MB", float64(outputSize)/(1024*1024))
+											fmt.Printf("   ✓ %s (%.1fs)\n",
+												style.SuccessStyle.Render("Completed"),
+												duration)
 										}
-
-										outputSummary := fmt.Sprintf("Output: %s on runner://%s", sizeStr, te.runner)
-										if te.outputTruncated {
-											outputSummary += " (output was truncated)"
-										}
-
-										fmt.Printf("%s %s\n",
-											style.ToolOutputPrefixStyle.Render("📊"),
-											style.ToolSummaryStyle.Render(outputSummary))
-									} else if te.outputTruncated {
-										fmt.Printf("%s\n", style.DimStyle.Render(
-											"💡 Set KUBIYA_DEBUG=1 to see full output"))
+										os.Stdout.Sync()
+										continue // Skip the old completion display
 									}
 
-									// Remove redundant divider line for cleaner output
+									// Legacy variables for any remaining code
+									var statusEmoji string
+									var completionStatus string
+									if te.failed {
+										statusEmoji = statusFailed
+										completionStatus = "failed"
+									} else {
+										statusEmoji = statusDone
+										completionStatus = "completed"
+									}
+
+									// Show updated statistics only if tool calls are enabled and not in automation mode
+									if showToolCalls && !automationMode {
+										toolStats.mu.RLock()
+										updatedStatsStr := fmt.Sprintf("[%d active, %d completed, %d failed]",
+											toolStats.activeCalls, toolStats.completedCalls, toolStats.failedCalls)
+										toolStats.mu.RUnlock()
+
+										// Print completion status with enhanced summary
+										fmt.Printf("\n%s\n",
+											style.InfoBoxStyle.Render(fmt.Sprintf("%s %s %s (%0.1fs) %s",
+												statusEmoji,
+												style.ToolNameStyle.Render(te.name),
+												style.ToolCompleteStyle.Render(strings.ToUpper(completionStatus)),
+												duration,
+												style.ToolStatsStyle.Render(updatedStatsStr))))
+
+										// Print error summary if failed
+										if te.failed {
+											fmt.Printf("%s %s\n",
+												style.ToolOutputPrefixStyle.Render("⚠️"),
+												style.ErrorStyle.Render("Tool encountered errors during execution"))
+										}
+
+										// Print output summary with better formatting
+										if te.output.Len() > 0 {
+											outputSize := te.output.Len()
+											var sizeStr string
+											if outputSize < 1024 {
+												sizeStr = fmt.Sprintf("%d bytes", outputSize)
+											} else if outputSize < 1024*1024 {
+												sizeStr = fmt.Sprintf("%.1f KB", float64(outputSize)/1024)
+											} else {
+												sizeStr = fmt.Sprintf("%.1f MB", float64(outputSize)/(1024*1024))
+											}
+
+											outputSummary := fmt.Sprintf("Output: %s on runner://%s", sizeStr, te.runner)
+											if te.outputTruncated {
+												outputSummary += " (output was truncated)"
+											}
+
+											fmt.Printf("%s %s\n",
+												style.ToolOutputPrefixStyle.Render("📊"),
+												style.ToolSummaryStyle.Render(outputSummary))
+										} else if te.outputTruncated {
+											fmt.Printf("%s\n", style.DimStyle.Render(
+												"💡 Set KUBIYA_DEBUG=1 to see full output"))
+										}
+
+										// Remove redundant divider line for cleaner output
+									}
+									delete(toolExecutions, msgID)
 								}
-								delete(toolExecutions, msgID)
 							}
 						}
-					}
 
-					// Regular chat message
-					if msg.SenderName != "You" {
-						buf, exists := messageBuffer[msg.MessageID]
-						if !exists {
-							buf = &chatBuffer{}
-							messageBuffer[msg.MessageID] = buf
-						}
+						// Regular chat message
+						if msg.SenderName != "You" {
+							buf, exists := messageBuffer[msg.MessageID]
+							if !exists {
+								buf = &chatBuffer{}
+								messageBuffer[msg.MessageID] = buf
+							}
 
-						if len(msg.Content) > len(buf.content) {
-							newContent := msg.Content[len(buf.content):]
+							if len(msg.Content) > len(buf.content) {
+								newContent := msg.Content[len(buf.content):]
 
-							// Accumulate content and handle code blocks
-							for _, char := range newContent {
-								if char == '`' {
-									buf.inCodeBlock = !buf.inCodeBlock
+								// Accumulate content and handle code blocks
+								for _, char := range newContent {
+									if char == '`' {
+										buf.inCodeBlock = !buf.inCodeBlock
+										if buf.inCodeBlock {
+											// Print accumulated sentence before code block
+											if buf.sentence.Len() > 0 {
+												sentence := strings.TrimSpace(buf.sentence.String())
+												if sentence != "" {
+													// Print without [Bot] prefix
+													fmt.Printf("%s\n",
+														style.AgentStyle.Render(sentence))
+													buf.sentence.Reset()
+												}
+											}
+										} else {
+											// Print accumulated code block
+											if buf.codeBlock.Len() > 0 {
+												fmt.Printf("%s\n%s\n%s\n",
+													style.CodeBlockStyle.Render("```"),
+													style.CodeBlockStyle.Render(buf.codeBlock.String()),
+													style.CodeBlockStyle.Render("```"))
+												buf.codeBlock.Reset()
+											}
+										}
+										continue
+									}
+
 									if buf.inCodeBlock {
-										// Print accumulated sentence before code block
-										if buf.sentence.Len() > 0 {
+										buf.codeBlock.WriteRune(char)
+									} else {
+										buf.sentence.WriteRune(char)
+										if char == '.' || char == '!' || char == '?' || char == '\n' {
 											sentence := strings.TrimSpace(buf.sentence.String())
 											if sentence != "" {
 												// Print without [Bot] prefix
@@ -2901,255 +2928,229 @@ For inline agents, use --inline with --tools-file or --tools-json to provide cus
 												buf.sentence.Reset()
 											}
 										}
+									}
+								}
+
+								buf.content = msg.Content
+							}
+						}
+
+						if msg.Final {
+							// Print any remaining content in the sentence buffer
+							if buf, exists := messageBuffer[msg.MessageID]; exists {
+								remaining := strings.TrimSpace(buf.sentence.String())
+								if remaining != "" {
+									fmt.Printf("%s\n",
+										style.AgentStyle.Render(remaining))
+								}
+								// Also handle any remaining code block
+								if buf.codeBlock.Len() > 0 {
+									fmt.Printf("%s\n%s\n%s\n",
+										style.CodeBlockStyle.Render("```"),
+										style.CodeBlockStyle.Render(buf.codeBlock.String()),
+										style.CodeBlockStyle.Render("```"))
+								}
+
+								// Check for agent error messages and trigger session recovery if needed
+								fullContent := buf.content
+								if isAgentErrorMessage(fullContent) {
+									// Agent indicated an internal error - trigger session recovery
+									if streamRetryCount < retries {
+										streamRetryCount++
+										backoffDelay := calculateBackoffDelay(streamRetryCount - 1)
+
+										if !automationMode {
+											fmt.Printf("\n%s\n", style.WarningStyle.Render(
+												fmt.Sprintf("⚠️  Agent error detected (attempt %d/%d): %s",
+													streamRetryCount, retries, "Agent indicated internal issue")))
+											fmt.Printf("%s\n", style.SpinnerStyle.Render(
+												fmt.Sprintf("🔄 Starting new session in %.1fs...", backoffDelay.Seconds())))
+										}
+
+										// Wait before retry
+										time.Sleep(backoffDelay)
+
+										// Start new session with original prompt by triggering session recovery
+										sessionRecoveryNeeded = true
+										hasError = true
+										break // Break out of message loop to trigger session recovery
 									} else {
-										// Print accumulated code block
-										if buf.codeBlock.Len() > 0 {
-											fmt.Printf("%s\n%s\n%s\n",
-												style.CodeBlockStyle.Render("```"),
-												style.CodeBlockStyle.Render(buf.codeBlock.String()),
-												style.CodeBlockStyle.Render("```"))
-											buf.codeBlock.Reset()
-										}
-									}
-									continue
-								}
-
-								if buf.inCodeBlock {
-									buf.codeBlock.WriteRune(char)
-								} else {
-									buf.sentence.WriteRune(char)
-									if char == '.' || char == '!' || char == '?' || char == '\n' {
-										sentence := strings.TrimSpace(buf.sentence.String())
-										if sentence != "" {
-											// Print without [Bot] prefix
-											fmt.Printf("%s\n",
-												style.AgentStyle.Render(sentence))
-											buf.sentence.Reset()
-										}
+										// Exhausted retries for agent errors
+										fmt.Fprintf(os.Stderr, "%s\n", style.ErrorStyle.Render(
+											fmt.Sprintf("❌ Agent failed after %d session recoveries", retries)))
+										hasError = true
+										return fmt.Errorf("agent error after %d recoveries: %s", retries, strings.TrimSpace(fullContent[:min(100, len(fullContent))]))
 									}
 								}
 							}
-
-							buf.content = msg.Content
-						}
-					}
-
-					if msg.Final {
-						// Print any remaining content in the sentence buffer
-						if buf, exists := messageBuffer[msg.MessageID]; exists {
-							remaining := strings.TrimSpace(buf.sentence.String())
-							if remaining != "" {
-								fmt.Printf("%s\n",
-									style.AgentStyle.Render(remaining))
-							}
-							// Also handle any remaining code block
-							if buf.codeBlock.Len() > 0 {
-								fmt.Printf("%s\n%s\n%s\n",
-									style.CodeBlockStyle.Render("```"),
-									style.CodeBlockStyle.Render(buf.codeBlock.String()),
-									style.CodeBlockStyle.Render("```"))
-							}
-
-							// Check for agent error messages and trigger session recovery if needed
-							fullContent := buf.content
-							if isAgentErrorMessage(fullContent) {
-								// Agent indicated an internal error - trigger session recovery
-								if streamRetryCount < retries {
-									streamRetryCount++
-									backoffDelay := calculateBackoffDelay(streamRetryCount - 1)
-									
-									if !automationMode {
-										fmt.Printf("\n%s\n", style.WarningStyle.Render(
-											fmt.Sprintf("⚠️  Agent error detected (attempt %d/%d): %s",
-												streamRetryCount, retries, "Agent indicated internal issue")))
-										fmt.Printf("%s\n", style.SpinnerStyle.Render(
-											fmt.Sprintf("🔄 Starting new session in %.1fs...", backoffDelay.Seconds())))
-									}
-
-									// Wait before retry
-									time.Sleep(backoffDelay)
-
-									// Start new session with original prompt by triggering session recovery
-									sessionRecoveryNeeded = true
-									hasError = true
-									break // Break out of message loop to trigger session recovery
-								} else {
-									// Exhausted retries for agent errors
-									fmt.Fprintf(os.Stderr, "%s\n", style.ErrorStyle.Render(
-										fmt.Sprintf("❌ Agent failed after %d session recoveries", retries)))
-									hasError = true
-									return fmt.Errorf("agent error after %d recoveries: %s", retries, strings.TrimSpace(fullContent[:min(100, len(fullContent))]))
+							// Add final completion message to ensure stream end is visible
+							if msg.Type == "completion" && msg.FinishReason != "" {
+								if debug {
+									fmt.Printf("\n[STREAM COMPLETE] Reason: %s\n", msg.FinishReason)
 								}
 							}
+							fmt.Println()
 						}
-						// Add final completion message to ensure stream end is visible
-						if msg.Type == "completion" && msg.FinishReason != "" {
-							if debug {
-								fmt.Printf("\n[STREAM COMPLETE] Reason: %s\n", msg.FinishReason)
-							}
-						}
-						fmt.Println()
 					}
 				}
-			}
 
-			// Check if session recovery is needed
-			if sessionRecoveryNeeded {
-				sessionRetryCount++
-				if sessionRetryCount <= retries {
-					backoffDelay := calculateBackoffDelay(sessionRetryCount - 1)
-					
-					if !automationMode {
-						fmt.Printf("\n%s\n", style.WarningStyle.Render(
-							fmt.Sprintf("🔄 Starting new session (attempt %d/%d) in %.1fs...", 
-								sessionRetryCount+1, retries+1, backoffDelay.Seconds())))
-					}
-					
-					// Wait before retry
-					time.Sleep(backoffDelay)
-					
-					// Start new session with original message
-					if !inline {
-						msgChan, err = client.SendMessageWithRetry(cmd.Context(), agentID, enhancedMessage, "", retries)
-						if err != nil {
-							return fmt.Errorf("failed to start new session after agent error: %w", err)
+				// Check if session recovery is needed
+				if sessionRecoveryNeeded {
+					sessionRetryCount++
+					if sessionRetryCount <= retries {
+						backoffDelay := calculateBackoffDelay(sessionRetryCount - 1)
+
+						if !automationMode {
+							fmt.Printf("\n%s\n", style.WarningStyle.Render(
+								fmt.Sprintf("🔄 Starting new session (attempt %d/%d) in %.1fs...",
+									sessionRetryCount+1, retries+1, backoffDelay.Seconds())))
 						}
+
+						// Wait before retry
+						time.Sleep(backoffDelay)
+
+						// Start new session with original message
+						if !inline {
+							msgChan, err = client.SendMessageWithRetry(cmd.Context(), agentID, enhancedMessage, "", retries)
+							if err != nil {
+								return fmt.Errorf("failed to start new session after agent error: %w", err)
+							}
+						} else {
+							msgChan, err = client.SendInlineAgentMessage(cmd.Context(), message, "", context, inlineAgent)
+							if err != nil {
+								return fmt.Errorf("failed to start new inline session after agent error: %w", err)
+							}
+						}
+
+						// Reset session ID to start fresh
+						actualSessionID = ""
+
+						// Continue to next session retry iteration
+						continue
 					} else {
-						msgChan, err = client.SendInlineAgentMessage(cmd.Context(), message, "", context, inlineAgent)
-						if err != nil {
-							return fmt.Errorf("failed to start new inline session after agent error: %w", err)
-						}
-					}
-					
-					// Reset session ID to start fresh
-					actualSessionID = ""
-					
-					// Continue to next session retry iteration
-					continue
-				} else {
-					// Exhausted all session retries
-					return fmt.Errorf("agent failed after %d session recoveries", retries)
-				}
-			}
-
-			// If we reach here, the session completed successfully, break out of retry loop
-			break
-		}
-
-		if !stream {
-			fmt.Println(finalResponse.String())
-		}
-
-		// Handle follow-up for non-interactive sessions without tool execution (skip for inline agents)
-		if !interactive && !toolsExecuted && !hasError && completionReason != "error" && !inline {
-			if debug {
-				fmt.Printf("🔄 No tools executed, sending follow-up prompt\n")
-			}
-
-			followUpMsg := "You didn't seem to execute anything. You're running in a non-interactive session and the user confirms to execute read-only operations. EXECUTE RIGHT AWAY!"
-
-			// Send follow-up message
-			followUpChan, err := client.SendMessageWithContext(cmd.Context(), agentID, followUpMsg, actualSessionID, map[string]string{})
-			if err != nil {
-				if debug {
-					fmt.Printf("⚠️ Failed to send follow-up message: %v\n", err)
-				}
-			} else {
-				if !automationMode {
-					fmt.Printf("\n%s\n", style.InfoBoxStyle.Render("🔄 Following up to ensure execution..."))
-				}
-
-				// Process follow-up response
-				for msg := range followUpChan {
-					if msg.Error != "" {
-						fmt.Fprintf(os.Stderr, "%s\n", style.ErrorStyle.Render("❌ Error: "+msg.Error))
-						hasError = true
-						break
-					}
-					if msg.SessionID != "" {
-						actualSessionID = msg.SessionID
-					}
-					// Handle follow-up messages similar to main processing
-					if msg.Type == "tool" {
-						toolsExecuted = true
+						// Exhausted all session retries
+						return fmt.Errorf("agent failed after %d session recoveries", retries)
 					}
 				}
-			}
-		}
 
-		// Show session continuation message (only if not in automation mode)
-		if !interactive && actualSessionID != "" && !automationMode {
-			fmt.Printf("\n%s\n", style.InfoBoxStyle.Render("💬 To continue this conversation, run:"))
-
-			// Include agent name in the continuation command if available
-			var continuationCmd string
-			if agentName != "" {
-				continuationCmd = fmt.Sprintf("kubiya chat -n %s --session %s -m \"your message here\"", agentName, actualSessionID)
-			} else if agentID != "" {
-				continuationCmd = fmt.Sprintf("kubiya chat -t %s --session %s -m \"your message here\"", agentID, actualSessionID)
-			} else {
-				continuationCmd = fmt.Sprintf("kubiya chat --session %s -m \"your message here\"", actualSessionID)
-			}
-
-			fmt.Printf("%s\n", style.HighlightStyle.Render(continuationCmd))
-			fmt.Println()
-		}
-
-		// Show simple debug tip if any output was truncated
-		if anyOutputTruncated && !interactive && !automationMode {
-			fmt.Printf("\n%s\n", style.DimStyle.Render("💡 Use KUBIYA_DEBUG=1 to see full tool outputs"))
-		}
-
-		// Handle completion status and exit codes
-		if debug {
-			fmt.Printf("🔍 Completion reason: %s, hasError: %v, toolsExecuted: %v\n", completionReason, hasError, toolsExecuted)
-			// Debug tool execution states
-			for msgID, te := range toolExecutions {
-				fmt.Printf("🔍 Tool %s (ID: %s): failed=%v, isComplete=%v, status=%s, errorMsg='%s'\n",
-					te.name, msgID[:8], te.failed, te.isComplete, te.status, te.errorMsg)
-			}
-		}
-
-		// Return proper exit code based on completion status
-		// Check if we actually have any failed tools before exiting with error
-		actuallyHasFailures := false
-		for _, te := range toolExecutions {
-			if te.failed && te.isComplete {
-				actuallyHasFailures = true
+				// If we reach here, the session completed successfully, break out of retry loop
 				break
 			}
-		}
 
-		if actuallyHasFailures {
-			if debug {
-				fmt.Printf("🚨 Exiting with error code 1 due to actual tool failures\n")
+			if !stream {
+				fmt.Println(finalResponse.String())
 			}
-			return fmt.Errorf("Some errors occurred during execution")
-		} else if hasError && debug {
-			// Debug: hasError was set but no actual failures
-			fmt.Printf("⚠️  Warning: hasError=true but no actual tool failures detected - ignoring\n")
-		}
 
-		// Check for non-successful completion reasons
-		switch completionReason {
-		case "error":
-			if debug {
-				fmt.Printf("🚨 Exiting with error code 1 due to completion reason: %s\n", completionReason)
+			// Handle follow-up for non-interactive sessions without tool execution (skip for inline agents)
+			if !interactive && !toolsExecuted && !hasError && completionReason != "error" && !inline {
+				if debug {
+					fmt.Printf("🔄 No tools executed, sending follow-up prompt\n")
+				}
+
+				followUpMsg := "You didn't seem to execute anything. You're running in a non-interactive session and the user confirms to execute read-only operations. EXECUTE RIGHT AWAY!"
+
+				// Send follow-up message
+				followUpChan, err := client.SendMessageWithContext(cmd.Context(), agentID, followUpMsg, actualSessionID, map[string]string{})
+				if err != nil {
+					if debug {
+						fmt.Printf("⚠️ Failed to send follow-up message: %v\n", err)
+					}
+				} else {
+					if !automationMode {
+						fmt.Printf("\n%s\n", style.InfoBoxStyle.Render("🔄 Following up to ensure execution..."))
+					}
+
+					// Process follow-up response
+					for msg := range followUpChan {
+						if msg.Error != "" {
+							fmt.Fprintf(os.Stderr, "%s\n", style.ErrorStyle.Render("❌ Error: "+msg.Error))
+							hasError = true
+							break
+						}
+						if msg.SessionID != "" {
+							actualSessionID = msg.SessionID
+						}
+						// Handle follow-up messages similar to main processing
+						if msg.Type == "tool" {
+							toolsExecuted = true
+						}
+					}
+				}
 			}
-			return fmt.Errorf("agent execution failed with reason: %s", completionReason)
-		case "stop", "length", "":
-			// Normal successful completion
-			if debug {
-				fmt.Printf("✅ Exiting with success code 0\n")
+
+			// Show session continuation message (only if not in automation mode)
+			if !interactive && actualSessionID != "" && !automationMode {
+				fmt.Printf("\n%s\n", style.InfoBoxStyle.Render("💬 To continue this conversation, run:"))
+
+				// Include agent name in the continuation command if available
+				var continuationCmd string
+				if agentName != "" {
+					continuationCmd = fmt.Sprintf("kubiya chat -n %s --session %s -m \"your message here\"", agentName, actualSessionID)
+				} else if agentID != "" {
+					continuationCmd = fmt.Sprintf("kubiya chat -t %s --session %s -m \"your message here\"", agentID, actualSessionID)
+				} else {
+					continuationCmd = fmt.Sprintf("kubiya chat --session %s -m \"your message here\"", actualSessionID)
+				}
+
+				fmt.Printf("%s\n", style.HighlightStyle.Render(continuationCmd))
+				fmt.Println()
 			}
-			return nil
-		default:
-			// Unknown completion reason - log but don't fail
-			if debug {
-				fmt.Printf("⚠️ Unknown completion reason: %s, treating as success\n", completionReason)
+
+			// Show simple debug tip if any output was truncated
+			if anyOutputTruncated && !interactive && !automationMode {
+				fmt.Printf("\n%s\n", style.DimStyle.Render("💡 Use KUBIYA_DEBUG=1 to see full tool outputs"))
 			}
-			return nil
-		}
+
+			// Handle completion status and exit codes
+			if debug {
+				fmt.Printf("🔍 Completion reason: %s, hasError: %v, toolsExecuted: %v\n", completionReason, hasError, toolsExecuted)
+				// Debug tool execution states
+				for msgID, te := range toolExecutions {
+					fmt.Printf("🔍 Tool %s (ID: %s): failed=%v, isComplete=%v, status=%s, errorMsg='%s'\n",
+						te.name, msgID[:8], te.failed, te.isComplete, te.status, te.errorMsg)
+				}
+			}
+
+			// Return proper exit code based on completion status
+			// Check if we actually have any failed tools before exiting with error
+			actuallyHasFailures := false
+			for _, te := range toolExecutions {
+				if te.failed && te.isComplete {
+					actuallyHasFailures = true
+					break
+				}
+			}
+
+			if actuallyHasFailures {
+				if debug {
+					fmt.Printf("🚨 Exiting with error code 1 due to actual tool failures\n")
+				}
+				return fmt.Errorf("Some errors occurred during execution")
+			} else if hasError && debug {
+				// Debug: hasError was set but no actual failures
+				fmt.Printf("⚠️  Warning: hasError=true but no actual tool failures detected - ignoring\n")
+			}
+
+			// Check for non-successful completion reasons
+			switch completionReason {
+			case "error":
+				if debug {
+					fmt.Printf("🚨 Exiting with error code 1 due to completion reason: %s\n", completionReason)
+				}
+				return fmt.Errorf("agent execution failed with reason: %s", completionReason)
+			case "stop", "length", "":
+				// Normal successful completion
+				if debug {
+					fmt.Printf("✅ Exiting with success code 0\n")
+				}
+				return nil
+			default:
+				// Unknown completion reason - log but don't fail
+				if debug {
+					fmt.Printf("⚠️ Unknown completion reason: %s, treating as success\n", completionReason)
+				}
+				return nil
+			}
 		},
 	}
 
