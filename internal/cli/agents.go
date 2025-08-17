@@ -13,12 +13,13 @@ import (
 	"strings"
 	"text/tabwriter"
 
+	"github.com/spf13/cobra"
+	"gopkg.in/yaml.v3"
+
 	"github.com/kubiyabot/cli/internal/config"
 	"github.com/kubiyabot/cli/internal/kubiya"
 	"github.com/kubiyabot/cli/internal/style"
 	"github.com/kubiyabot/cli/internal/tui"
-	"github.com/spf13/cobra"
-	"gopkg.in/yaml.v3"
 )
 
 func newAgentCommand(cfg *config.Config) *cobra.Command {
@@ -27,10 +28,6 @@ func newAgentCommand(cfg *config.Config) *cobra.Command {
 		Aliases: []string{"agents", "ag"},
 		Short:   "🤖 Manage agents",
 		Long:    `Create, edit, delete, and list agents in your Kubiya workspace.`,
-		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-			// Check if API key is configured before running any agent command
-			return requireAPIKey(cmd, cfg)
-		},
 	}
 
 	cmd.AddCommand(
@@ -163,18 +160,18 @@ func newCreateAgentCommand(cfg *config.Config) *cobra.Command {
 					Integrations:    integrations,
 					Environment:     parseEnvVars(envVars),
 					// Required fields that were missing
-					Owners:          []string{},                               // Empty - API will set current user
-					AllowedUsers:    []string{},                               // Empty array
-					AllowedGroups:   []string{},                               // Empty array  
-					Runners:         []string{"gke-poc-kubiya"},               // Default runner
-					Image:           "ghcr.io/kubiyabot/kubiya-agent:stable",  // Default image
-					ManagedBy:       "",                                       // Empty string
-					Links:           []string{},                               // Empty array
-					Tools:           []string{},                               // Empty array
-					Tasks:           []string{},                               // Empty array
-					Tags:            []string{},                               // Empty array
-					AIInstructions:  "",                                       // Empty string
-					IsDebugMode:     false,                                    // Default false
+					Owners:         []string{},                              // Empty - API will set current user
+					AllowedUsers:   []string{},                              // Empty array
+					AllowedGroups:  []string{},                              // Empty array
+					Runners:        []string{"gke-poc-kubiya"},              // Default runner
+					Image:          "ghcr.io/kubiyabot/kubiya-agent:stable", // Default image
+					ManagedBy:      "",                                      // Empty string
+					Links:          []string{},                              // Empty array
+					Tools:          []string{},                              // Empty array
+					Tasks:          []string{},                              // Empty array
+					Tags:           []string{},                              // Empty array
+					AIInstructions: "",                                      // Empty string
+					IsDebugMode:    false,                                   // Default false
 					// Metadata is omitted - API will set timestamps automatically
 				}
 			}
@@ -652,60 +649,60 @@ func validateAgent(client *kubiya.Client, ctx context.Context, agent *kubiya.Age
 	if agent.Starters == nil {
 		agent.Starters = []interface{}{}
 	}
-	
+
 	if agent.Tasks == nil {
 		agent.Tasks = []string{}
 	}
-	
+
 	if agent.Tools == nil {
 		agent.Tools = []string{}
 	}
-	
+
 	if agent.Links == nil {
 		agent.Links = []string{}
 	}
-	
+
 	if agent.Tags == nil {
 		agent.Tags = []string{}
 	}
-	
+
 	if agent.AllowedUsers == nil {
 		agent.AllowedUsers = []string{}
 	}
-	
+
 	if agent.AllowedGroups == nil {
 		agent.AllowedGroups = []string{}
 	}
-	
+
 	if agent.Owners == nil {
 		agent.Owners = []string{}
 	}
-	
+
 	if agent.Runners == nil {
 		agent.Runners = []string{}
 	}
-	
+
 	if agent.Environment == nil {
 		agent.Environment = make(map[string]string)
 	}
-	
+
 	if agent.Secrets == nil {
 		agent.Secrets = []string{}
 	}
-	
+
 	if agent.Sources == nil {
 		agent.Sources = []string{}
 	}
-	
+
 	if agent.Integrations == nil {
 		agent.Integrations = []string{}
 	}
-	
+
 	// Set default image if not provided
 	if agent.Image == "" {
 		agent.Image = "ghcr.io/kubiyabot/kubiya-agent:stable"
 	}
-	
+
 	// Set UUID to empty string for creation
 	agent.UUID = ""
 
@@ -959,7 +956,7 @@ func newEditAgentCommand(cfg *config.Config) *cobra.Command {
 				if toolsFile != "" || toolsURL != "" {
 					var toolsData []byte
 					var err error
-					
+
 					if toolsFile != "" {
 						toolsData, err = os.ReadFile(toolsFile)
 						if err != nil {
@@ -979,7 +976,7 @@ func newEditAgentCommand(cfg *config.Config) *cobra.Command {
 
 					// Parse tools (supports both JSON and YAML, handles both tool name arrays and full tool definitions)
 					var newTools []string
-					
+
 					// First try to parse as a simple string array (tool names/UUIDs)
 					if strings.HasSuffix(strings.ToLower(toolsFile), ".yaml") || strings.HasSuffix(strings.ToLower(toolsFile), ".yml") || strings.Contains(string(toolsData), "---") {
 						if err := yaml.Unmarshal(toolsData, &newTools); err != nil {
@@ -1125,28 +1122,28 @@ func newEditAgentCommand(cfg *config.Config) *cobra.Command {
 
 			// Create a map to exclude problematic fields like "id" and "desc"
 			updateData := map[string]interface{}{
-				"name":                    updated.Name,
-				"description":             updated.Description,
-				"instruction_type":        updated.InstructionType,
-				"llm_model":               updated.LLMModel,
-				"sources":                 updated.Sources,
-				"environment_variables":   updated.Environment,
-				"secrets":                 updated.Secrets,
-				"allowed_groups":          updated.AllowedGroups,
-				"allowed_users":           updated.AllowedUsers,
-				"owners":                  updated.Owners,
-				"runners":                 updated.Runners,
-				"is_debug_mode":           updated.IsDebugMode,
-				"ai_instructions":         updated.AIInstructions,
-				"image":                   updated.Image,
-				"managed_by":              updated.ManagedBy,
-				"integrations":            updated.Integrations,
-				"links":                   updated.Links,
-				"tools":                   updated.Tools,
-				"tasks":                   updated.Tasks,
-				"tags":                    updated.Tags,
+				"name":                  updated.Name,
+				"description":           updated.Description,
+				"instruction_type":      updated.InstructionType,
+				"llm_model":             updated.LLMModel,
+				"sources":               updated.Sources,
+				"environment_variables": updated.Environment,
+				"secrets":               updated.Secrets,
+				"allowed_groups":        updated.AllowedGroups,
+				"allowed_users":         updated.AllowedUsers,
+				"owners":                updated.Owners,
+				"runners":               updated.Runners,
+				"is_debug_mode":         updated.IsDebugMode,
+				"ai_instructions":       updated.AIInstructions,
+				"image":                 updated.Image,
+				"managed_by":            updated.ManagedBy,
+				"integrations":          updated.Integrations,
+				"links":                 updated.Links,
+				"tools":                 updated.Tools,
+				"tasks":                 updated.Tasks,
+				"tags":                  updated.Tags,
 			}
-			
+
 			// Update the agent using the map instead of struct
 			result, err := client.UpdateAgentRaw(cmd.Context(), uuid, updateData)
 			if err != nil {
@@ -1385,7 +1382,7 @@ func hasCommandLineChanges(name, description, llmModel, instructions, instructio
 	addTools, removeTools, addAllowedUsers, removeAllowedUsers,
 	addAllowedGroups, removeAllowedGroups []string, toolsFile, toolsURL string) bool {
 
-	if name != "" || description != "" || llmModel != "" || instructions != "" || 
+	if name != "" || description != "" || llmModel != "" || instructions != "" ||
 		instructionsFile != "" || instructionsURL != "" {
 		return true
 	}
@@ -2500,27 +2497,27 @@ func newAgentToolsListCommand(cfg *config.Config) *cobra.Command {
 			case "yaml":
 				return yaml.NewEncoder(os.Stdout).Encode(agent.Tools)
 			default:
-				fmt.Printf("%s Tools for Agent: %s\n\n", 
-					style.TitleStyle.Render("🛠️"), 
+				fmt.Printf("%s Tools for Agent: %s\n\n",
+					style.TitleStyle.Render("🛠️"),
 					style.HighlightStyle.Render(agent.Name))
-				
+
 				if len(agent.Tools) == 0 {
 					fmt.Println("No tools found for this agent.")
 					return nil
 				}
 
 				for i, tool := range agent.Tools {
-					fmt.Printf("%d. %s %s\n", 
+					fmt.Printf("%d. %s %s\n",
 						i+1,
 						style.SuccessStyle.Render("✓"),
 						style.HighlightStyle.Render(tool))
 				}
-				
-				fmt.Printf("\n%s Total: %d tools\n", 
-					style.InfoStyle.Render("📊"), 
+
+				fmt.Printf("\n%s Total: %d tools\n",
+					style.InfoStyle.Render("📊"),
 					len(agent.Tools))
 			}
-			
+
 			return nil
 		},
 	}
@@ -2571,7 +2568,7 @@ For inline tool creation, you can specify:
 		Args: cobra.RangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			agentUUID := args[0]
-			
+
 			// If tool name provided as argument, use it
 			if len(args) > 1 {
 				toolName = args[1]
@@ -2583,7 +2580,7 @@ For inline tool creation, you can specify:
 			}
 
 			client := kubiya.NewClient(cfg)
-			
+
 			// Get current agent
 			agent, err := client.GetAgent(cmd.Context(), agentUUID)
 			if err != nil {
@@ -2591,8 +2588,8 @@ For inline tool creation, you can specify:
 			}
 
 			// Check if it's an inline tool creation or adding existing tool
-			isInlineTool := toolDescription != "" || toolContent != "" || toolImage != "" || 
-							len(toolVolumes) > 0 || len(toolSecrets) > 0 || len(toolEnvVars) > 0 || len(toolArgs) > 0
+			isInlineTool := toolDescription != "" || toolContent != "" || toolImage != "" ||
+				len(toolVolumes) > 0 || len(toolSecrets) > 0 || len(toolEnvVars) > 0 || len(toolArgs) > 0
 
 			if isInlineTool {
 				// Create inline tool structure
@@ -2650,10 +2647,10 @@ For inline tool creation, you can specify:
 					toolDef["requires_secrets"] = toolSecrets
 				}
 
-				fmt.Printf("%s Creating inline tool: %s\n\n", 
-					style.InfoStyle.Render("🔧"), 
+				fmt.Printf("%s Creating inline tool: %s\n\n",
+					style.InfoStyle.Render("🔧"),
 					style.HighlightStyle.Render(toolName))
-				
+
 				// Display tool definition
 				toolJSON, _ := json.MarshalIndent(toolDef, "", "  ")
 				fmt.Printf("Tool Definition:\n%s\n\n", string(toolJSON))
@@ -2662,7 +2659,7 @@ For inline tool creation, you can specify:
 			// Check if tool already exists on agent
 			for _, existingTool := range agent.Tools {
 				if existingTool == toolName {
-					fmt.Printf("Tool %s already exists on agent %s\n", 
+					fmt.Printf("Tool %s already exists on agent %s\n",
 						style.HighlightStyle.Render(toolName),
 						style.HighlightStyle.Render(agent.Name))
 					return nil
@@ -2678,7 +2675,7 @@ For inline tool creation, you can specify:
 
 			// Add tool to agent
 			updatedTools := append(agent.Tools, toolName)
-			
+
 			// Create update payload
 			updateData := map[string]interface{}{
 				"name":                  agent.Name,
@@ -2736,7 +2733,6 @@ For inline tool creation, you can specify:
 	cmd.Flags().StringArrayVar(&toolSecrets, "secret", []string{}, "Required secret name")
 	cmd.Flags().StringArrayVar(&toolEnvVars, "env", []string{}, "Environment variable in KEY=VALUE format")
 
-
 	return cmd
 }
 
@@ -2787,16 +2783,16 @@ func newAgentPromptGetCommand(cfg *config.Config) *cobra.Command {
 			switch outputFormat {
 			case "json":
 				result := map[string]interface{}{
-					"agent_uuid":      agentUUID,
-					"agent_name":      agent.Name,
-					"ai_instructions": agent.AIInstructions,
-					"has_instructions": agent.AIInstructions != "",
+					"agent_uuid":         agentUUID,
+					"agent_name":         agent.Name,
+					"ai_instructions":    agent.AIInstructions,
+					"has_instructions":   agent.AIInstructions != "",
 					"instruction_length": len(agent.AIInstructions),
 				}
 				return json.NewEncoder(os.Stdout).Encode(result)
 			default:
-				fmt.Printf("%s AI Instructions for Agent: %s\n\n", 
-					style.TitleStyle.Render("💭"), 
+				fmt.Printf("%s AI Instructions for Agent: %s\n\n",
+					style.TitleStyle.Render("💭"),
 					style.HighlightStyle.Render(agent.Name))
 
 				if agent.AIInstructions == "" {
@@ -2807,13 +2803,13 @@ func newAgentPromptGetCommand(cfg *config.Config) *cobra.Command {
 					fmt.Printf("  • From file: %s\n", style.CommandStyle.Render(fmt.Sprintf("kubiya agent prompt set %s --file instructions.txt", agentUUID)))
 					fmt.Printf("  • With editor: %s\n", style.CommandStyle.Render(fmt.Sprintf("kubiya agent prompt edit %s", agentUUID)))
 				} else {
-					fmt.Printf("%s %d characters\n", 
-						style.SubtitleStyle.Render("Length:"), 
+					fmt.Printf("%s %d characters\n",
+						style.SubtitleStyle.Render("Length:"),
 						len(agent.AIInstructions))
 					fmt.Println()
 					fmt.Printf("%s\n", style.SubtitleStyle.Render("Instructions:"))
 					fmt.Printf("%s\n\n", agent.AIInstructions)
-					
+
 					fmt.Println("Management commands:")
 					fmt.Printf("  • Edit: %s\n", style.CommandStyle.Render(fmt.Sprintf("kubiya agent prompt edit %s", agentUUID)))
 					fmt.Printf("  • Append: %s\n", style.CommandStyle.Render(fmt.Sprintf("kubiya agent prompt append %s --content \"Additional instructions\"", agentUUID)))
@@ -2911,8 +2907,8 @@ This will completely replace any existing instructions.`,
 			newInstructions = strings.TrimSpace(newInstructions)
 
 			// Show what will change
-			fmt.Printf("%s Setting AI instructions for agent: %s\n", 
-				style.InfoStyle.Render("💭"), 
+			fmt.Printf("%s Setting AI instructions for agent: %s\n",
+				style.InfoStyle.Render("💭"),
 				style.HighlightStyle.Render(agent.Name))
 
 			if agent.AIInstructions != "" {
@@ -2965,7 +2961,7 @@ This will completely replace any existing instructions.`,
 				return fmt.Errorf("failed to update agent: %w", err)
 			}
 
-			fmt.Printf("%s AI instructions updated successfully\n", 
+			fmt.Printf("%s AI instructions updated successfully\n",
 				style.SuccessStyle.Render("✅"))
 			fmt.Printf("New length: %d characters\n", len(newInstructions))
 
@@ -3072,8 +3068,8 @@ This will add new content to the end of existing instructions.`,
 			}
 
 			// Show what will change
-			fmt.Printf("%s Appending to AI instructions for agent: %s\n", 
-				style.InfoStyle.Render("➕"), 
+			fmt.Printf("%s Appending to AI instructions for agent: %s\n",
+				style.InfoStyle.Render("➕"),
 				style.HighlightStyle.Render(agent.Name))
 
 			if agent.AIInstructions != "" {
@@ -3127,7 +3123,7 @@ This will add new content to the end of existing instructions.`,
 				return fmt.Errorf("failed to update agent: %w", err)
 			}
 
-			fmt.Printf("%s AI instructions updated successfully\n", 
+			fmt.Printf("%s AI instructions updated successfully\n",
 				style.SuccessStyle.Render("✅"))
 			fmt.Printf("Final length: %d characters\n", len(finalInstructions))
 
@@ -3192,7 +3188,7 @@ Opens the current instructions in $EDITOR (or nano as fallback).`,
 				editor = "nano" // Default editor
 			}
 
-			fmt.Printf("%s Opening AI instructions in %s...\n", 
+			fmt.Printf("%s Opening AI instructions in %s...\n",
 				style.InfoStyle.Render("✏️"), editor)
 
 			editorCmd := exec.Command(editor, tmpFile.Name())
@@ -3255,7 +3251,7 @@ Opens the current instructions in $EDITOR (or nano as fallback).`,
 				return fmt.Errorf("failed to update agent: %w", err)
 			}
 
-			fmt.Printf("%s AI instructions updated successfully\n", 
+			fmt.Printf("%s AI instructions updated successfully\n",
 				style.SuccessStyle.Render("✅"))
 
 			return nil
@@ -3301,8 +3297,8 @@ func newAgentPromptClearCommand(cfg *config.Config) *cobra.Command {
 			}
 
 			// Show what will be removed
-			fmt.Printf("%s Clearing AI instructions for agent: %s\n", 
-				style.WarningStyle.Render("🗑️"), 
+			fmt.Printf("%s Clearing AI instructions for agent: %s\n",
+				style.WarningStyle.Render("🗑️"),
 				style.HighlightStyle.Render(agent.Name))
 			fmt.Printf("Current instructions length: %d characters\n\n", len(agent.AIInstructions))
 
@@ -3342,7 +3338,7 @@ func newAgentPromptClearCommand(cfg *config.Config) *cobra.Command {
 				return fmt.Errorf("failed to update agent: %w", err)
 			}
 
-			fmt.Printf("%s AI instructions cleared successfully\n", 
+			fmt.Printf("%s AI instructions cleared successfully\n",
 				style.SuccessStyle.Render("✅"))
 
 			return nil
