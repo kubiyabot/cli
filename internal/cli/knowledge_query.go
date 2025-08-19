@@ -5,10 +5,11 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/spf13/cobra"
+
 	"github.com/kubiyabot/cli/internal/config"
 	"github.com/kubiyabot/cli/internal/kubiya"
 	"github.com/kubiyabot/cli/internal/style"
-	"github.com/spf13/cobra"
 )
 
 func newKnowledgeCommand(cfg *config.Config) *cobra.Command {
@@ -71,7 +72,6 @@ Features:
 				Query:          prompt,
 				UserID:         userID,
 				OrgID:          orgID,
-				BearerToken:    cfg.APIKey,
 				ResponseFormat: responseFormat,
 			}
 

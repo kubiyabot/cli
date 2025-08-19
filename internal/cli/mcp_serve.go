@@ -5,12 +5,13 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/spf13/afero"
+	"github.com/spf13/cobra"
+
 	"github.com/kubiyabot/cli/internal/config"
 	"github.com/kubiyabot/cli/internal/kubiya"
 	"github.com/kubiyabot/cli/internal/mcp"
 	sentryutil "github.com/kubiyabot/cli/internal/sentry"
-	"github.com/spf13/afero"
-	"github.com/spf13/cobra"
 )
 
 func NewMCPServeCmd() *cobra.Command {
@@ -38,9 +39,9 @@ func NewMCPServeCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("failed to load config: %w", err)
 			}
-			if cfg.APIKey == "" {
-				return fmt.Errorf("API key not configured. Set KUBIYA_API_KEY environment variable or run 'kubiya init' first")
-			}
+			//if cfg.APIKey == "" {
+			//	return fmt.Errorf("API key not configured. Set KUBIYA_API_KEY environment variable or run 'kubiya init' first")
+			//}
 
 			// Initialize Sentry if configured
 			if err := sentryutil.Initialize("kubiya-cli"); err != nil {

@@ -85,47 +85,47 @@ func (c *Client) SendMessageWithRetry(ctx context.Context, agentID, message stri
 			baseDelay := time.Second
 			maxDelay := 30 * time.Second
 			waitTime := time.Duration(1<<uint(attempt)) * baseDelay
-			
+
 			if waitTime > maxDelay {
 				waitTime = maxDelay
 			}
-			
+
 			// Add jitter (±25% random variation)
 			jitter := time.Duration(float64(waitTime) * 0.25 * (2*rand.Float64() - 1))
 			waitTime = waitTime + jitter
-			
+
 			if waitTime < 0 {
 				waitTime = baseDelay
 			}
-			
+
 			if logger != nil {
 				logger.Printf("Retry attempt %d/%d after %v", attempt+1, maxRetries, waitTime)
 			}
-			
+
 			select {
 			case <-ctx.Done():
 				return nil, ctx.Err()
 			case <-time.After(waitTime):
 			}
 		}
-		
+
 		messagesChan, err := c.SendMessage(ctx, agentID, message, sessionID)
 		if err == nil {
 			return messagesChan, nil
 		}
-		
+
 		lastErr = err
 		if logger != nil {
 			logger.Printf("Attempt %d failed: %v", attempt+1, err)
 		}
-		
+
 		// Use smart error classification - don't retry non-retryable errors
 		errorStr := strings.ToLower(err.Error())
-		
+
 		// Don't retry these permanent errors
 		nonRetryableErrors := []string{
 			"authentication failed",
-			"access forbidden", 
+			"access forbidden",
 			"unauthorized",
 			"permission denied",
 			"invalid api key",
@@ -136,7 +136,7 @@ func (c *Client) SendMessageWithRetry(ctx context.Context, agentID, message stri
 			"bad request",
 			"invalid request",
 		}
-		
+
 		isNonRetryable := false
 		for _, nonRetryable := range nonRetryableErrors {
 			if strings.Contains(errorStr, nonRetryable) {
@@ -144,7 +144,7 @@ func (c *Client) SendMessageWithRetry(ctx context.Context, agentID, message stri
 				break
 			}
 		}
-		
+
 		if isNonRetryable {
 			if logger != nil {
 				logger.Printf("Non-retryable error detected, stopping retries: %v", err)
@@ -152,7 +152,7 @@ func (c *Client) SendMessageWithRetry(ctx context.Context, agentID, message stri
 			break
 		}
 	}
-	
+
 	return nil, fmt.Errorf("failed after %d attempts: %w", maxRetries, lastErr)
 }
 
@@ -179,7 +179,7 @@ func (c *Client) SendMessage(ctx context.Context, agentID, message string, sessi
 	if org == "" {
 		org = c.cfg.Org
 	}
-	
+
 	payload := struct {
 		Message   string `json:"message"`
 		AgentUUID string `json:"agent_uuid"`
@@ -195,17 +195,17 @@ func (c *Client) SendMessage(ctx context.Context, agentID, message string, sessi
 	}
 
 	reqURL := fmt.Sprintf("%s/hb/v4/stream", c.baseURL)
-	
+
 	// Safety check for logger
 	if logger != nil {
 		logger.Printf("=== Starting SendMessage ===")
 		logger.Printf("Payload: %+v", payload)
-		
+
 		// Log the complete request details for debugging
 		if jsonPayload, err := json.MarshalIndent(payload, "", "  "); err == nil {
 			logger.Printf("Complete request payload: %s", string(jsonPayload))
 		}
-		
+
 		logger.Printf("Request URL: %s", reqURL)
 		logger.Printf("User Email: %s", os.Getenv("KUBIYA_USER_EMAIL"))
 		logger.Printf("Organization: %s", os.Getenv("KUBIYA_ORG"))
@@ -230,11 +230,10 @@ func (c *Client) SendMessage(ctx context.Context, agentID, message string, sessi
 
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("x-vercel-ai-data-stream", "v1") // protocol flag
-	req.Header.Set("Authorization", "UserKey "+c.cfg.APIKey)
 	// Remove extra headers to match working Go program
 	// req.Header.Set("Cache-Control", "no-cache")
 	// req.Header.Set("Connection", "keep-alive")
-	
+
 	// Log all request headers for debugging
 	if logger != nil {
 		logger.Printf("=== Request Headers ===")
@@ -270,7 +269,7 @@ func (c *Client) SendMessage(ctx context.Context, agentID, message string, sessi
 		}
 		return nil, fmt.Errorf("failed to execute request: %w", err)
 	}
-	
+
 	// Log successful response details
 	if logger != nil {
 		logger.Printf("=== HTTP Response Success ===")
@@ -303,7 +302,7 @@ func (c *Client) SendMessage(ctx context.Context, agentID, message string, sessi
 			logger.Printf("Response body: %s", string(body))
 			logger.Printf("=== End HTTP Response Error ===")
 		}
-		
+
 		// Provide user-friendly error messages based on status code
 		switch resp.StatusCode {
 		case 401:
@@ -330,24 +329,24 @@ func (c *Client) SendMessage(ctx context.Context, agentID, message string, sessi
 		scanner := bufio.NewScanner(resp.Body)
 		// Increase scanner buffer size for large tool outputs
 		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024) // 1MB max token size
-		
+
 		var textBuilder strings.Builder
 		lineCount := 0
 		lastActivityTime := time.Now()
-		
+
 		// Set up a ticker to check for stream timeout and health - increased to 30 minutes for long-running agents
 		ticker := time.NewTicker(30 * time.Second)
 		defer ticker.Stop()
-		
+
 		// Stream health monitoring
 		var streamHealthStats struct {
-			lastPing      time.Time
-			totalLines    int
-			errorCount    int
+			lastPing          time.Time
+			totalLines        int
+			errorCount        int
 			reconnectAttempts int
 		}
 		streamHealthStats.lastPing = time.Now()
-		
+
 		go func() {
 			for {
 				select {
@@ -356,7 +355,7 @@ func (c *Client) SendMessage(ctx context.Context, agentID, message string, sessi
 				case <-ticker.C:
 					now := time.Now()
 					timeSinceLastActivity := now.Sub(lastActivityTime)
-					
+
 					// Advanced health monitoring
 					if timeSinceLastActivity > 30*time.Minute {
 						if logger != nil {
@@ -373,15 +372,15 @@ func (c *Client) SendMessage(ctx context.Context, agentID, message string, sessi
 						}
 						return
 					}
-					
+
 					// Send periodic health status updates
 					if timeSinceLastActivity > 5*time.Minute {
 						if logger != nil {
-							logger.Printf("Stream health check - %d lines processed, %d errors, %v since last activity", 
+							logger.Printf("Stream health check - %d lines processed, %d errors, %v since last activity",
 								streamHealthStats.totalLines, streamHealthStats.errorCount, timeSinceLastActivity)
 						}
 					}
-					
+
 					// Update ping time
 					streamHealthStats.lastPing = now
 				}
@@ -411,7 +410,7 @@ func (c *Client) SendMessage(ctx context.Context, agentID, message string, sessi
 			if os.Getenv("KUBIYA_DEBUG") == "1" || os.Getenv("DEBUG") == "1" || os.Getenv("KUBIYA_RAW_EVENTS") == "1" {
 				fmt.Printf("[RAW STREAM EVENT] %s\n", line)
 			}
-			
+
 			// Also log to file for detailed debugging
 			if logger != nil {
 				logger.Printf("[STREAM] Line %d: %s", lineCount, line)
@@ -444,7 +443,7 @@ func (c *Client) SendMessage(ctx context.Context, agentID, message string, sessi
 					continue
 				}
 				textBuilder.WriteString(text)
-				
+
 				messagesChan <- ChatMessage{
 					Content:    textBuilder.String(),
 					Type:       "text",
@@ -489,31 +488,31 @@ func (c *Client) SendMessage(ctx context.Context, agentID, message string, sessi
 						logger.Printf("Failed to unmarshal finish message: %v", err)
 					}
 				}
-				
+
 				// Extract finish reason if available
 				finishReason := ""
 				if reason, ok := finishData["finishReason"].(string); ok {
 					finishReason = reason
 				}
-				
+
 				// Print raw finish data for debugging
 				if os.Getenv("KUBIYA_DEBUG") == "1" || os.Getenv("DEBUG") == "1" {
 					fmt.Printf("[FINISH DATA] %+v\n", finishData)
 				}
-				
+
 				messagesChan <- ChatMessage{
-					Content:    textBuilder.String(),
-					Type:       "completion",
-					Timestamp:  time.Now().Format(time.RFC3339),
-					SenderName: "Bot",
-					Final:      true,
-					SessionID:  sessionID,
+					Content:      textBuilder.String(),
+					Type:         "completion",
+					Timestamp:    time.Now().Format(time.RFC3339),
+					SenderName:   "Bot",
+					Final:        true,
+					SessionID:    sessionID,
 					FinishReason: finishReason,
 				}
 				if logger != nil {
 					logger.Printf("Stream finished with reason: %s", finishReason)
 				}
-				
+
 				// Only return if we have a valid finish reason
 				if finishReason != "" {
 					return
@@ -583,14 +582,14 @@ func (c *Client) SendMessage(ctx context.Context, agentID, message string, sessi
 						resultStr = string(resultBytes)
 					}
 				}
-				
+
 				// Handle streaming tool output with proper buffering
 				if resultStr == "" && toolResult["output"] != nil {
 					if output, ok := toolResult["output"].(string); ok {
 						resultStr = output
 					}
 				}
-				
+
 				// Use the toolCallId to match with the corresponding tool call
 				toolCallID := ""
 				if id, ok := toolResult["toolCallId"].(string); ok {
@@ -599,7 +598,7 @@ func (c *Client) SendMessage(ctx context.Context, agentID, message string, sessi
 				if toolCallID == "" {
 					toolCallID = uuid.New().String()
 				}
-				
+
 				// Only send non-empty results
 				if strings.TrimSpace(resultStr) != "" {
 					messagesChan <- ChatMessage{
@@ -624,11 +623,11 @@ func (c *Client) SendMessage(ctx context.Context, agentID, message string, sessi
 			if logger != nil {
 				logger.Printf("Scanner error: %v", err)
 			}
-			
+
 			// Check if we should attempt reconnection
-			if strings.Contains(err.Error(), "connection") || 
-			   strings.Contains(err.Error(), "network") ||
-			   strings.Contains(err.Error(), "timeout") {
+			if strings.Contains(err.Error(), "connection") ||
+				strings.Contains(err.Error(), "network") ||
+				strings.Contains(err.Error(), "timeout") {
 				messagesChan <- ChatMessage{
 					Content:    fmt.Sprintf("Connection lost: %v - Stream may reconnect automatically", err),
 					Timestamp:  time.Now().Format(time.RFC3339),
@@ -681,7 +680,7 @@ func (c *Client) ReceiveMessages(ctx context.Context, agentID string) (<-chan Ch
 func (c *Client) SendMessageWithContext(ctx context.Context, agentID, message, sessionID string, context map[string]string) (<-chan ChatMessage, error) {
 	var contextMsg strings.Builder
 	contextMsg.WriteString(message)
-	
+
 	if len(context) > 0 {
 		contextMsg.WriteString("\n\nHere's some reference files for context:\n")
 		for filename, content := range context {
@@ -715,7 +714,6 @@ func (c *Client) GetConversationMessages(ctx context.Context, agentID, message, 
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Authorization", "UserKey "+c.cfg.APIKey)
 	lines, err := c.doRaw(req)
 	if err != nil {
 		return nil, err
@@ -740,7 +738,7 @@ func (c *Client) GetConversationMessages(ctx context.Context, agentID, message, 
 // SendInlineAgentMessage sends a message to an inline agent with custom tools
 func (c *Client) SendInlineAgentMessage(ctx context.Context, message, sessionID string, context map[string]string, agentDef map[string]interface{}) (<-chan ChatMessage, error) {
 	messagesChan := make(chan ChatMessage, 100)
-	
+
 	// Add context to the message if provided
 	var contextMsg strings.Builder
 	contextMsg.WriteString(message)
@@ -759,17 +757,14 @@ func (c *Client) SendInlineAgentMessage(ctx context.Context, message, sessionID 
 	if sessionID == "" {
 		sessionID = uuid.New().String()
 	}
-	
-	
-	
-	
+
 	// Log session and user details
 	if logger != nil {
 		logger.Printf("Session ID: %s", sessionID)
 		logger.Printf("User Email: %s", os.Getenv("KUBIYA_USER_EMAIL"))
 		logger.Printf("Organization: %s", os.Getenv("KUBIYA_ORG"))
 	}
-	
+
 	// Get user email and org from environment variables with fallback to config
 	userEmail := os.Getenv("KUBIYA_USER_EMAIL")
 	org := os.Getenv("KUBIYA_ORG")
@@ -779,7 +774,7 @@ func (c *Client) SendInlineAgentMessage(ctx context.Context, message, sessionID 
 	if org == "" {
 		org = c.cfg.Org
 	}
-	
+
 	payload := struct {
 		Message   string                 `json:"message"`
 		SessionID string                 `json:"session_id"`
@@ -795,17 +790,17 @@ func (c *Client) SendInlineAgentMessage(ctx context.Context, message, sessionID 
 	}
 
 	reqURL := fmt.Sprintf("%s/hb/v4/stream", c.baseURL)
-	
+
 	// Safety check for logger
 	if logger != nil {
 		logger.Printf("=== Starting SendInlineAgentMessage ===")
 		logger.Printf("Payload: %+v", payload)
-		
+
 		// Log the complete request details for debugging
 		if jsonPayload, err := json.MarshalIndent(payload, "", "  "); err == nil {
 			logger.Printf("Complete request payload: %s", string(jsonPayload))
 		}
-		
+
 		logger.Printf("Request URL: %s", reqURL)
 		logger.Printf("User Email: %s", os.Getenv("KUBIYA_USER_EMAIL"))
 		logger.Printf("Organization: %s", os.Getenv("KUBIYA_ORG"))
@@ -829,11 +824,10 @@ func (c *Client) SendInlineAgentMessage(ctx context.Context, message, sessionID 
 	}
 
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "UserKey "+c.cfg.APIKey)
 	// Remove extra headers to match working Go program
 	// req.Header.Set("Cache-Control", "no-cache")
 	// req.Header.Set("Connection", "keep-alive")
-	
+
 	// Log all request headers for debugging
 	if logger != nil {
 		logger.Printf("=== Request Headers ===")
@@ -881,7 +875,7 @@ func (c *Client) SendInlineAgentMessage(ctx context.Context, message, sessionID 
 		}
 		return nil, fmt.Errorf("unexpected status code: %d, body: %s", resp.StatusCode, string(body))
 	}
-	
+
 	if logger != nil {
 		logger.Printf("=== HTTP Response Success ===")
 		logger.Printf("Status Code: %d", resp.StatusCode)
@@ -903,24 +897,24 @@ func (c *Client) SendInlineAgentMessage(ctx context.Context, message, sessionID 
 		scanner := bufio.NewScanner(resp.Body)
 		// Increase scanner buffer size for large tool outputs
 		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024) // 1MB max token size
-		
+
 		var textBuilder strings.Builder
 		lineCount := 0
 		lastActivityTime := time.Now()
-		
+
 		// Set up a ticker to check for stream timeout and health - increased to 30 minutes for long-running agents
 		ticker := time.NewTicker(30 * time.Second)
 		defer ticker.Stop()
-		
+
 		// Stream health monitoring
 		var streamHealthStats struct {
-			lastPing      time.Time
-			totalLines    int
-			errorCount    int
+			lastPing          time.Time
+			totalLines        int
+			errorCount        int
 			reconnectAttempts int
 		}
 		streamHealthStats.lastPing = time.Now()
-		
+
 		go func() {
 			for {
 				select {
@@ -929,7 +923,7 @@ func (c *Client) SendInlineAgentMessage(ctx context.Context, message, sessionID 
 				case <-ticker.C:
 					now := time.Now()
 					timeSinceLastActivity := now.Sub(lastActivityTime)
-					
+
 					// Advanced health monitoring
 					if timeSinceLastActivity > 30*time.Minute {
 						if logger != nil {
@@ -946,15 +940,15 @@ func (c *Client) SendInlineAgentMessage(ctx context.Context, message, sessionID 
 						}
 						return
 					}
-					
+
 					// Send periodic health status updates
 					if timeSinceLastActivity > 5*time.Minute {
 						if logger != nil {
-							logger.Printf("Stream health check - %d lines processed, %d errors, %v since last activity", 
+							logger.Printf("Stream health check - %d lines processed, %d errors, %v since last activity",
 								streamHealthStats.totalLines, streamHealthStats.errorCount, timeSinceLastActivity)
 						}
 					}
-					
+
 					// Update ping time
 					streamHealthStats.lastPing = now
 				}
@@ -984,7 +978,7 @@ func (c *Client) SendInlineAgentMessage(ctx context.Context, message, sessionID 
 			if os.Getenv("KUBIYA_DEBUG") == "1" || os.Getenv("DEBUG") == "1" || os.Getenv("KUBIYA_RAW_EVENTS") == "1" {
 				fmt.Printf("[RAW STREAM EVENT] %s\n", line)
 			}
-			
+
 			// Also log to file for detailed debugging
 			if logger != nil {
 				logger.Printf("[STREAM] Line %d: %s", lineCount, line)
@@ -1017,7 +1011,7 @@ func (c *Client) SendInlineAgentMessage(ctx context.Context, message, sessionID 
 					continue
 				}
 				textBuilder.WriteString(text)
-				
+
 				messagesChan <- ChatMessage{
 					Content:    textBuilder.String(),
 					Type:       "text",
@@ -1062,31 +1056,31 @@ func (c *Client) SendInlineAgentMessage(ctx context.Context, message, sessionID 
 						logger.Printf("Failed to unmarshal finish message: %v", err)
 					}
 				}
-				
+
 				// Extract finish reason if available
 				finishReason := ""
 				if reason, ok := finishData["finishReason"].(string); ok {
 					finishReason = reason
 				}
-				
+
 				// Print raw finish data for debugging
 				if os.Getenv("KUBIYA_DEBUG") == "1" || os.Getenv("DEBUG") == "1" {
 					fmt.Printf("[FINISH DATA] %+v\n", finishData)
 				}
-				
+
 				messagesChan <- ChatMessage{
-					Content:    textBuilder.String(),
-					Type:       "completion",
-					Timestamp:  time.Now().Format(time.RFC3339),
-					SenderName: "Bot",
-					Final:      true,
-					SessionID:  sessionID,
+					Content:      textBuilder.String(),
+					Type:         "completion",
+					Timestamp:    time.Now().Format(time.RFC3339),
+					SenderName:   "Bot",
+					Final:        true,
+					SessionID:    sessionID,
 					FinishReason: finishReason,
 				}
 				if logger != nil {
 					logger.Printf("Stream finished with reason: %s", finishReason)
 				}
-				
+
 				// Only return if we have a valid finish reason
 				if finishReason != "" {
 					return
@@ -1156,14 +1150,14 @@ func (c *Client) SendInlineAgentMessage(ctx context.Context, message, sessionID 
 						resultStr = string(resultBytes)
 					}
 				}
-				
+
 				// Handle streaming tool output with proper buffering
 				if resultStr == "" && toolResult["output"] != nil {
 					if output, ok := toolResult["output"].(string); ok {
 						resultStr = output
 					}
 				}
-				
+
 				// Use the toolCallId to match with the corresponding tool call
 				toolCallID := ""
 				if id, ok := toolResult["toolCallId"].(string); ok {
@@ -1172,7 +1166,7 @@ func (c *Client) SendInlineAgentMessage(ctx context.Context, message, sessionID 
 				if toolCallID == "" {
 					toolCallID = uuid.New().String()
 				}
-				
+
 				// Only send non-empty results
 				if strings.TrimSpace(resultStr) != "" {
 					messagesChan <- ChatMessage{
@@ -1197,11 +1191,11 @@ func (c *Client) SendInlineAgentMessage(ctx context.Context, message, sessionID 
 			if logger != nil {
 				logger.Printf("Scanner error: %v", err)
 			}
-			
+
 			// Check if we should attempt reconnection
-			if strings.Contains(err.Error(), "connection") || 
-			   strings.Contains(err.Error(), "network") ||
-			   strings.Contains(err.Error(), "timeout") {
+			if strings.Contains(err.Error(), "connection") ||
+				strings.Contains(err.Error(), "network") ||
+				strings.Contains(err.Error(), "timeout") {
 				messagesChan <- ChatMessage{
 					Content:    fmt.Sprintf("Connection lost: %v - Stream may reconnect automatically", err),
 					Timestamp:  time.Now().Format(time.RFC3339),

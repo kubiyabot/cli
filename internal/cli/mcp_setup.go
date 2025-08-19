@@ -6,10 +6,11 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/kubiyabot/cli/internal/config"
-	"github.com/kubiyabot/cli/internal/mcp"
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
+
+	"github.com/kubiyabot/cli/internal/config"
+	"github.com/kubiyabot/cli/internal/mcp"
 )
 
 func newMcpSetupCommand(cfg *config.Config, fs afero.Fs) *cobra.Command {
@@ -25,9 +26,6 @@ This command creates:
 - MCP server configuration file
 - Sample client configurations
 - Environment setup instructions`,
-		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-			return requireAPIKey(cmd, cfg)
-		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			executable, err := os.Executable()
 			if err != nil {
@@ -46,7 +44,7 @@ This command creates:
 			}
 
 			mcpConfigPath := filepath.Join(kubiyaDir, "mcp-server.json")
-			
+
 			// Create default MCP server configuration
 			defaultConfig := &mcp.Configuration{
 				EnableRunners:     true,
@@ -151,6 +149,6 @@ This command creates:
 
 	cmd.Flags().BoolVar(&allowPlatformAPIs, "allow-platform-apis", false, "Enable platform APIs (runners, agents, integrations management)")
 	cmd.Flags().StringVar(&configFile, "config", "", "MCP server config file path")
-	
+
 	return cmd
 }
