@@ -10,16 +10,17 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/spf13/cobra"
+
 	"github.com/kubiyabot/cli/internal/config"
 	"github.com/kubiyabot/cli/internal/kubiya"
 	"github.com/kubiyabot/cli/internal/style"
-	"github.com/spf13/cobra"
 )
 
 func newRunCommand(cfg *config.Config) *cobra.Command {
 	var (
-		agentID   string
-		agentName string
+		agentID      string
+		agentName    string
 		argValues    []string
 		clearSession bool
 		sessionID    string
@@ -83,7 +84,7 @@ func newRunCommand(cfg *config.Config) *cobra.Command {
 
 				// Set headers
 				req.Header.Set("Content-Type", "application/json")
-				req.Header.Set("Authorization", "UserKey "+cfg.APIKey)
+				//req.Header.Set("Authorization", "UserKey "+cfg.APIKey)
 
 				if debug {
 					fmt.Printf("🌐 Sending classification request to: %s\n", classifyURL)

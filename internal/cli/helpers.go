@@ -7,9 +7,10 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/spf13/cobra"
+
 	"github.com/kubiyabot/cli/internal/config"
 	"github.com/kubiyabot/cli/internal/style"
-	"github.com/spf13/cobra"
 )
 
 // requireAPIKey checks if the API key is present in the config.

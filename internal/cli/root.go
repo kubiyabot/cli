@@ -87,6 +87,7 @@ Need help? Visit: https://docs.kubiya.ai`,
 		newTriggerCommand(cfg),
 		newPolicyCommand(cfg),
 		newUsersCommand(cfg),
+		newLoginCommand(cfg),
 	)
 
 	return rootCmd.Execute()

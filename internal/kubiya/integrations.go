@@ -14,8 +14,6 @@ func (c *Client) ListIntegrations(ctx context.Context) ([]Integration, error) {
 		return nil, err
 	}
 
-	req.Header.Set("Authorization", "UserKey "+c.cfg.APIKey)
-
 	resp, err := c.client.Do(req)
 	if err != nil {
 		return nil, err
@@ -40,8 +38,6 @@ func (c *Client) CreateGithubIntegration(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
-
-	req.Header.Set("Authorization", "UserKey "+c.cfg.APIKey)
 
 	resp, err := c.client.Do(req)
 	if err != nil {
@@ -74,8 +70,6 @@ func (c *Client) GetIntegration(ctx context.Context, name string) (*Integration,
 	if err != nil {
 		return nil, err
 	}
-
-	req.Header.Set("Authorization", "UserKey "+c.cfg.APIKey)
 
 	resp, err := c.client.Do(req)
 	if err != nil {

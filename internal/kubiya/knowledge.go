@@ -33,7 +33,6 @@ type KnowledgeQueryRequest struct {
 	Query          string `json:"query"`
 	UserID         string `json:"userID,omitempty"`
 	OrgID          string `json:"orgID,omitempty"`
-	BearerToken    string `json:"bearer_token,omitempty"`
 	ResponseFormat string `json:"response_format,omitempty"`
 }
 
@@ -72,11 +71,6 @@ func (kc *KnowledgeClient) Query(ctx context.Context, req KnowledgeQueryRequest)
 		req.ResponseFormat = "vercel"
 	}
 
-	// Add bearer token from client config if not provided
-	if req.BearerToken == "" {
-		req.BearerToken = kc.client.cfg.APIKey
-	}
-
 	// Create request body
 	body, err := json.Marshal(req)
 	if err != nil {
@@ -99,7 +93,6 @@ func (kc *KnowledgeClient) Query(ctx context.Context, req KnowledgeQueryRequest)
 
 	// Always use UserKey format for API key authentication
 	// The orchestrator expects UserKey format for Kubiya API keys (even if they are JWTs)
-	httpReq.Header.Set("Authorization", "UserKey "+req.BearerToken)
 
 	// Execute request with a custom client with longer timeout
 	queryClient := &http.Client{
@@ -248,8 +241,6 @@ func (c *Client) ListKnowledge(ctx context.Context, query string, limit int) ([]
 		return nil, err
 	}
 
-	req.Header.Set("Authorization", "UserKey "+c.cfg.APIKey)
-
 	resp, err := c.client.Do(req)
 	if err != nil {
 		return nil, err
@@ -279,8 +270,6 @@ func (c *Client) SearchKnowledge(ctx context.Context, query string, limit int) (
 		return nil, err
 	}
 
-	req.Header.Set("Authorization", "UserKey "+c.cfg.APIKey)
-
 	resp, err := c.client.Do(req)
 	if err != nil {
 		return nil, err
@@ -305,8 +294,6 @@ func (c *Client) GetKnowledge(ctx context.Context, uuid string) (*Knowledge, err
 	if err != nil {
 		return nil, err
 	}
-
-	req.Header.Set("Authorization", "UserKey "+c.cfg.APIKey)
 
 	resp, err := c.client.Do(req)
 	if err != nil {
@@ -338,7 +325,7 @@ func (c *Client) CreateKnowledge(ctx context.Context, item Knowledge) (*Knowledg
 		return nil, err
 	}
 
-	req.Header.Set("Authorization", "UserKey "+c.cfg.APIKey)
+	//req.Header.Set("Authorization", "UserKey "+c.cfg.APIKey)
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.client.Do(req)
@@ -371,7 +358,7 @@ func (c *Client) UpdateKnowledge(ctx context.Context, uuid string, item Knowledg
 		return nil, err
 	}
 
-	req.Header.Set("Authorization", "UserKey "+c.cfg.APIKey)
+	//req.Header.Set("Authorization", "UserKey "+c.cfg.APIKey)
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.client.Do(req)
@@ -399,7 +386,7 @@ func (c *Client) DeleteKnowledge(ctx context.Context, uuid string) error {
 		return err
 	}
 
-	req.Header.Set("Authorization", "UserKey "+c.cfg.APIKey)
+	//req.Header.Set("Authorization", "UserKey "+c.cfg.APIKey)
 
 	resp, err := c.client.Do(req)
 	if err != nil {
