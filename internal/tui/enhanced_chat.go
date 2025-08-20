@@ -2,18 +2,11 @@ package tui
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
-	"sort"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/charmbracelet/bubbles/help"
-	"github.com/charmbracelet/bubbles/key"
-	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/viewport"
@@ -23,1062 +16,891 @@ import (
 	"github.com/kubiyabot/cli/internal/kubiya"
 )
 
-// Enhanced chat states
-type enhancedChatState int
+// Enhanced Chat Styles
+var (
+	enhancedHeaderStyle = lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("#7C3AED")).
+		Background(lipgloss.Color("#1F1B24")).
+		Padding(0, 1).
+		MarginBottom(1)
 
-const (
-	agentSelectState enhancedChatState = iota
-	chatState
-	settingsState
-	historyState
+	enhancedAgentHeaderStyle = lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("#10B981")).
+		Background(lipgloss.Color("#064E3B")).
+		Padding(0, 2).
+		MarginBottom(1)
+
+	enhancedMessageStyle = lipgloss.NewStyle().
+		Padding(0, 1).
+		MarginBottom(1)
+
+	enhancedUserMessageStyle = enhancedMessageStyle.Copy().
+		Foreground(lipgloss.Color("#3B82F6")).
+		Bold(true)
+
+	enhancedAgentMessageStyle = enhancedMessageStyle.Copy().
+		Foreground(lipgloss.Color("#10B981"))
+
+	enhancedToolCallStyle = lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#F59E0B")).
+		Background(lipgloss.Color("#78350F")).
+		Padding(0, 1).
+		MarginLeft(2).
+		MarginBottom(1)
+
+	enhancedToolSuccessStyle = lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#10B981")).
+		Background(lipgloss.Color("#064E3B")).
+		Padding(0, 1).
+		MarginLeft(2)
+
+	enhancedToolErrorStyle = lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#EF4444")).
+		Background(lipgloss.Color("#7F1D1D")).
+		Padding(0, 1).
+		MarginLeft(2)
+
+	enhancedInputStyle = lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("#7C3AED")).
+		Padding(1).
+		MarginTop(1)
+
+	enhancedStatusStyle = lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#6B7280")).
+		Italic(true)
+
+	enhancedErrorStyle = lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#EF4444")).
+		Bold(true)
+
+	enhancedSuccessStyle = lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#10B981")).
+		Bold(true)
 )
 
-// Connection states
-type connectionState int
-
-const (
-	connected connectionState = iota
-	connecting
-	disconnected
-	reconnecting
-)
-
-// Enhanced chat message with additional metadata
-type EnhancedChatMessage struct {
-	kubiya.ChatMessage
-	ID          string                 `json:"id"`
-	LocalTime   time.Time              `json:"local_time"`
-	Status      string                 `json:"status"` // "sent", "delivered", "failed", "retry"
-	Metadata    map[string]interface{} `json:"metadata,omitempty"`
-	RetryCount  int                    `json:"retry_count"`
-	IsLocal     bool                   `json:"is_local"`
-	FormattedAt string                 `json:"formatted_at"`
+// Message buffer for differential updates (like CLI)
+type chatBuffer struct {
+	content     string
+	sentence    strings.Builder
+	codeBlock   strings.Builder
+	inCodeBlock bool
 }
 
-// Chat session with persistence
-type EnhancedChatSession struct {
-	ID               string                 `json:"id"`
-	AgentID          string                 `json:"agent_id"`
-	AgentName        string                 `json:"agent_name"`
-	Messages         []EnhancedChatMessage  `json:"messages"`
-	CreatedAt        time.Time              `json:"created_at"`
-	LastActive       time.Time              `json:"last_active"`
-	Context          map[string]string      `json:"context,omitempty"`
-	Settings         map[string]interface{} `json:"settings,omitempty"`
-	TotalMessages    int                    `json:"total_messages"`
-	TotalToolsUsed   int                    `json:"total_tools_used"`
-	AverageResponse  time.Duration          `json:"average_response"`
-}
-
-// Enhanced tool execution tracking
-type EnhancedToolExecution struct {
-	ID            string                 `json:"id"`
-	Name          string                 `json:"name"`
-	Args          string                 `json:"args"`
-	StartTime     time.Time              `json:"start_time"`
-	EndTime       time.Time              `json:"end_time"`
-	Duration      time.Duration          `json:"duration"`
-	Status        string                 `json:"status"` // "waiting", "running", "completed", "failed"
-	Output        string                 `json:"output"`
-	Error         string                 `json:"error,omitempty"`
-	MessageID     string                 `json:"message_id"`
-	RetryCount    int                    `json:"retry_count"`
-	MaxRetries    int                    `json:"max_retries"`
-	Metadata      map[string]interface{} `json:"metadata,omitempty"`
-}
-
-// Key bindings for enhanced chat
-type enhancedChatKeyMap struct {
-	Send           key.Binding
-	Quit           key.Binding
-	Back           key.Binding
-	Clear          key.Binding
-	History        key.Binding
-	Settings       key.Binding
-	Reconnect      key.Binding
-	SaveSession    key.Binding
-	LoadSession    key.Binding
-	NextAgent      key.Binding
-	PrevAgent      key.Binding
-	ToggleDebug    key.Binding
-	ExportChat     key.Binding
-	Help           key.Binding
-}
-
-// Enhanced chat UI with better stability and features
-type EnhancedChatUI struct {
+// Enhanced Chat Model
+type EnhancedChatModel struct {
 	cfg    *config.Config
 	client *kubiya.Client
 
-	// State management
-	state           enhancedChatState
-	connectionState connectionState
-	width           int
-	height          int
-	ready           bool
-	err             error
+	// UI State
+	width, height int
+	ready         bool
+	err           error
 
-	// UI components
-	viewport        viewport.Model
-	textarea        textarea.Model
-	spinner         spinner.Model
-	list            list.Model
-	help            help.Model
-	keyMap          enhancedChatKeyMap
-	agentSelection  *EnhancedAgentSelection
+	// Current state
+	state enhancedChatState
 
-	// Agent management
-	agents        []kubiya.Agent
-	selectedAgent kubiya.Agent
-	agentIndex    int
+	// Components
+	agentList   []kubiya.Agent
+	viewport    viewport.Model
+	textarea    textarea.Model
+	spinner     spinner.Model
 
-	// Session management
-	currentSession    *EnhancedChatSession
-	sessionHistory    []EnhancedChatSession
-	sessionFile       string
-	autoSave          bool
-	sessionMutex      sync.RWMutex
-
-	// Tool execution tracking
-	toolExecutions map[string]*EnhancedToolExecution
-	toolMutex      sync.RWMutex
-
-	// Connection management
-	connectionRetries int
-	maxRetries        int
-	retryDelay        time.Duration
-	isReconnecting    bool
-	lastPing          time.Time
-	pingInterval      time.Duration
-
-	// Enhanced features
-	debugMode       bool
-	messageHistory  []string
-	historyIndex    int
-	isTyping        bool
-	typingTimeout   time.Duration
-	lastActivity    time.Time
-	messageBuffer   strings.Builder
-	pendingMessages []EnhancedChatMessage
-
-	// Context and cancel functions
+	// Chat state
+	selectedAgent      *kubiya.Agent
+	messages           []ChatDisplayMessage
+	sessionID          string
+	isStreaming        bool
+	streamingContent   string
+	toolExecutions     map[string]*ToolExecutionState
+	toolStats          *ToolStatistics
+	showToolCalls      bool
+	
+	// Message buffering (like CLI)
+	messageBuffer      map[string]*chatBuffer
+	messageMutex       sync.RWMutex
+	
+	// Context
 	ctx         context.Context
 	cancel      context.CancelFunc
-	cancelFuncs []context.CancelFunc
-
-	// Program reference for sending messages
-	program *tea.Program
 }
 
-// Initialize enhanced chat UI
-func NewEnhancedChatUI(cfg *config.Config) *EnhancedChatUI {
-	s := spinner.New()
-	s.Spinner = spinner.Points
-	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("69"))
+type enhancedChatState int
 
-	ta := textarea.New()
-	ta.Placeholder = "Type your message here..."
-	ta.Focus()
-	ta.SetWidth(60)
-	ta.SetHeight(3)
-	ta.ShowLineNumbers = false
-	ta.KeyMap.InsertNewline.SetEnabled(false)
+const (
+	enhancedStateLoading enhancedChatState = iota
+	enhancedStateAgentSelect
+	enhancedStateChat
+	enhancedStateError
+)
 
-	vp := viewport.New(0, 0)
-	vp.SetContent("Welcome to Enhanced Kubiya Chat!\n\nSelect an agent to start chatting.")
+type ChatDisplayMessage struct {
+	Content   string
+	IsUser    bool
+	Timestamp time.Time
+	Type      string
+}
 
-	// Create enhanced key map
-	keyMap := enhancedChatKeyMap{
-		Send: key.NewBinding(
-			key.WithKeys("enter"),
-			key.WithHelp("enter", "send message"),
-		),
-		Quit: key.NewBinding(
-			key.WithKeys("ctrl+c", "q"),
-			key.WithHelp("ctrl+c/q", "quit"),
-		),
-		Back: key.NewBinding(
-			key.WithKeys("esc"),
-			key.WithHelp("esc", "back"),
-		),
-		Clear: key.NewBinding(
-			key.WithKeys("ctrl+l"),
-			key.WithHelp("ctrl+l", "clear chat"),
-		),
-		History: key.NewBinding(
-			key.WithKeys("ctrl+h"),
-			key.WithHelp("ctrl+h", "history"),
-		),
-		Settings: key.NewBinding(
-			key.WithKeys("ctrl+s"),
-			key.WithHelp("ctrl+s", "settings"),
-		),
-		Reconnect: key.NewBinding(
-			key.WithKeys("ctrl+r"),
-			key.WithHelp("ctrl+r", "reconnect"),
-		),
-		SaveSession: key.NewBinding(
-			key.WithKeys("ctrl+w"),
-			key.WithHelp("ctrl+w", "save session"),
-		),
-		LoadSession: key.NewBinding(
-			key.WithKeys("ctrl+o"),
-			key.WithHelp("ctrl+o", "load session"),
-		),
-		NextAgent: key.NewBinding(
-			key.WithKeys("ctrl+n"),
-			key.WithHelp("ctrl+n", "next agent"),
-		),
-		PrevAgent: key.NewBinding(
-			key.WithKeys("ctrl+p"),
-			key.WithHelp("ctrl+p", "prev agent"),
-		),
-		ToggleDebug: key.NewBinding(
-			key.WithKeys("ctrl+d"),
-			key.WithHelp("ctrl+d", "toggle debug"),
-		),
-		ExportChat: key.NewBinding(
-			key.WithKeys("ctrl+e"),
-			key.WithHelp("ctrl+e", "export chat"),
-		),
-		Help: key.NewBinding(
-			key.WithKeys("?"),
-			key.WithHelp("?", "help"),
-		),
-	}
+type ToolExecutionState struct {
+	Name           string
+	Status         string // "starting", "running", "completed", "failed"
+	StartTime      time.Time
+	EndTime        time.Time
+	Output         string
+	Error          string
+	Args           string
+	Duration       time.Duration
+	OutputTruncated bool
+}
 
-	delegate := list.NewDefaultDelegate()
-	delegate.Styles.SelectedTitle = lipgloss.NewStyle().Foreground(lipgloss.Color("170")).Bold(true)
-	delegate.Styles.SelectedDesc = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+type ToolStatistics struct {
+	mu             sync.RWMutex
+	TotalCalls     int
+	ActiveCalls    int
+	CompletedCalls int
+	FailedCalls    int
+}
 
-	agentList := list.New([]list.Item{}, delegate, 0, 0)
-	agentList.Title = "📱 Select Agent"
-	agentList.SetShowStatusBar(false)
-	agentList.SetFilteringEnabled(true)
-	agentList.Styles.Title = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("170"))
+// Messages for Bubble Tea - Enhanced Chat
+type enhancedAgentsLoadedMsg []kubiya.Agent
+type enhancedStreamingMsg kubiya.ChatMessage
+type enhancedStreamCompleteMsg struct{}
+type enhancedErrorMsg error
 
+// NewEnhancedChatModel creates a new enhanced chat model
+func NewEnhancedChatModel(cfg *config.Config) *EnhancedChatModel {
 	ctx, cancel := context.WithCancel(context.Background())
 
-	// Create session file path
-	homeDir, _ := os.UserHomeDir()
-	sessionFile := filepath.Join(homeDir, ".kubiya", "chat_sessions.json")
+	// Create spinner
+	s := spinner.New()
+	s.Spinner = spinner.Dot
+	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#7C3AED"))
 
-	// Initialize enhanced agent selection
-	agentSelection := NewEnhancedAgentSelection(cfg)
+	// Create textarea
+	ta := textarea.New()
+	ta.Placeholder = "💭 Type your message here... (Press Enter to send, Esc to go back)"
+	ta.ShowLineNumbers = false
+	ta.CharLimit = 2000
+	ta.SetWidth(50)
+	ta.SetHeight(3)
+	ta.KeyMap.InsertNewline.SetEnabled(false)  // Disable multi-line, Enter sends message
+	ta.Focus()
 
-	ui := &EnhancedChatUI{
-		cfg:             cfg,
-		client:          kubiya.NewClient(cfg),
-		state:           agentSelectState,
-		connectionState: disconnected,
-		viewport:        vp,
-		textarea:        ta,
-		spinner:         s,
-		list:            agentList,
-		help:            help.New(),
-		keyMap:          keyMap,
-		agentSelection:  agentSelection,
-		toolExecutions:  make(map[string]*EnhancedToolExecution),
-		maxRetries:      3,
-		retryDelay:      time.Second * 2,
-		pingInterval:    time.Second * 30,
-		typingTimeout:   time.Second * 2,
-		autoSave:        true,
-		sessionFile:     sessionFile,
-		ctx:             ctx,
-		cancel:          cancel,
-		messageHistory:  make([]string, 0, 100),
-		historyIndex:    -1,
-		pendingMessages: make([]EnhancedChatMessage, 0),
+	// Create viewport
+	vp := viewport.New(0, 0)
+
+	return &EnhancedChatModel{
+		cfg:            cfg,
+		client:         kubiya.NewClient(cfg),
+		state:          enhancedStateLoading,
+		spinner:        s,
+		textarea:       ta,
+		viewport:       vp,
+		ctx:            ctx,
+		cancel:         cancel,
+		messages:       make([]ChatDisplayMessage, 0),
+		toolExecutions: make(map[string]*ToolExecutionState),
+		toolStats:      &ToolStatistics{},
+		showToolCalls:  true,
+		messageBuffer:  make(map[string]*chatBuffer),
 	}
-
-	// Set up agent selection callbacks
-	agentSelection.OnAgentSelected(func(agent kubiya.Agent) {
-		ui.selectedAgent = agent
-		ui.state = chatState
-		ui.initializeSession(agent)
-	})
-
-	agentSelection.OnBack(func() {
-		ui.cleanup()
-	})
-
-	agentSelection.OnError(func(err error) {
-		ui.err = err
-	})
-
-	// Load session history
-	ui.loadSessionHistory()
-
-	return ui
 }
 
-// Initialize the enhanced chat UI
-func (ui *EnhancedChatUI) Init() tea.Cmd {
+// Init initializes the model
+func (m *EnhancedChatModel) Init() tea.Cmd {
 	return tea.Batch(
-		ui.spinner.Tick,
-		ui.fetchAgents(),
-		ui.startPingMonitor(),
-		textarea.Blink,
+		m.spinner.Tick,
+		m.loadAgents(),
 	)
 }
 
-// Update handles all UI updates with enhanced error handling
-func (ui *EnhancedChatUI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	var cmds []tea.Cmd
+// Update handles all state updates
+func (m *EnhancedChatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
+	var cmds []tea.Cmd
 
-	// Handle window resize
-	if msg, ok := msg.(tea.WindowSizeMsg); ok {
-		ui.width = msg.Width
-		ui.height = msg.Height
-		ui.updateLayout()
-	}
-
-	// Handle different message types
 	switch msg := msg.(type) {
-	case []kubiya.Agent:
-		ui.agents = msg
-		ui.updateAgentList()
-		ui.ready = true
-		ui.connectionState = connected
-		return ui, nil
+	case tea.WindowSizeMsg:
+		m.width = msg.Width
+		m.height = msg.Height
+		m.updateComponentSizes()
 
-	case kubiya.ChatMessage:
-		return ui, ui.handleChatMessage(msg)
+	case enhancedAgentsLoadedMsg:
+		m.agentList = []kubiya.Agent(msg)
+		m.ready = true
+		m.state = enhancedStateAgentSelect
 
-	case connectionMsg:
-		ui.connectionState = msg.state
-		return ui, nil
-
-	case error:
-		ui.err = msg
-		ui.connectionState = disconnected
-		if ui.connectionRetries < ui.maxRetries {
-			return ui, ui.scheduleReconnect()
+	// Handle UI refresh during streaming
+	case struct{ refreshUI bool }:
+		// Just refresh the UI - streaming updates happen in the goroutine
+		if m.isStreaming {
+			return m, tea.Tick(100*time.Millisecond, func(t time.Time) tea.Msg {
+				if m.isStreaming {
+					return struct{ refreshUI bool }{true}
+				}
+				return nil
+			})
 		}
-		return ui, nil
-
-	case reconnectMsg:
-		return ui, ui.attemptReconnect()
-
-	case pingMsg:
-		ui.lastPing = time.Now()
-		return ui, ui.scheduleNextPing()
-
-	case toolExecutionMsg:
-		ui.handleToolExecution(msg)
-		return ui, nil
-
-	case sessionSavedMsg:
-		ui.updateStatusBar("Session saved successfully")
-		return ui, nil
+		
+	case enhancedErrorMsg:
+		m.err = error(msg)
+		m.state = enhancedStateError
 
 	case tea.KeyMsg:
-		return ui.handleKeyPress(msg)
+		return m.handleKeyMsg(msg)
+
+	case spinner.TickMsg:
+		m.spinner, cmd = m.spinner.Update(msg)
+		cmds = append(cmds, cmd)
+		
+	default:
+		// No additional default handling needed
 	}
 
-	// Update UI components
-	switch ui.state {
-	case agentSelectState:
-		if ui.agentSelection != nil {
-			model, cmd := ui.agentSelection.Update(msg)
-			if agentSel, ok := model.(*EnhancedAgentSelection); ok {
-				ui.agentSelection = agentSel
-			}
-			cmds = append(cmds, cmd)
-		} else {
-			ui.list, cmd = ui.list.Update(msg)
-			cmds = append(cmds, cmd)
-		}
+	// Update viewport component (always safe)
+	m.viewport, cmd = m.viewport.Update(msg)
+	cmds = append(cmds, cmd)
 
-	case chatState:
-		ui.textarea, cmd = ui.textarea.Update(msg)
-		cmds = append(cmds, cmd)
-		ui.viewport, cmd = ui.viewport.Update(msg)
-		cmds = append(cmds, cmd)
-	}
-
-	// Update spinner if connecting
-	if ui.connectionState == connecting || ui.connectionState == reconnecting {
-		ui.spinner, cmd = ui.spinner.Update(msg)
-		cmds = append(cmds, cmd)
-	}
-
-	return ui, tea.Batch(cmds...)
+	return m, tea.Batch(cmds...)
 }
 
-// Enhanced view rendering with better styling
-func (ui *EnhancedChatUI) View() string {
-	if ui.err != nil {
-		return ui.renderError()
+// View renders the model
+func (m *EnhancedChatModel) View() string {
+	if m.width == 0 || m.height == 0 {
+		return "Loading..."
 	}
 
-	if !ui.ready {
-		return ui.renderLoading()
+	switch m.state {
+	case enhancedStateLoading:
+		return m.renderLoading()
+	case enhancedStateError:
+		return m.renderError()
+	case enhancedStateAgentSelect:
+		return m.renderAgentSelection()
+	case enhancedStateChat:
+		return m.renderChat()
 	}
 
-	switch ui.state {
-	case agentSelectState:
-		if ui.agentSelection != nil {
-			return ui.agentSelection.View()
-		}
-		return ui.renderAgentSelect()
-	case chatState:
-		return ui.renderChat()
-	case settingsState:
-		return ui.renderSettings()
-	case historyState:
-		return ui.renderHistory()
-	}
-
-	return ""
+	return "Unknown state"
 }
 
-// Render different UI states
-func (ui *EnhancedChatUI) renderAgentSelect() string {
-	var b strings.Builder
+// Render functions
+func (m *EnhancedChatModel) renderLoading() string {
+	content := fmt.Sprintf("Loading agents... %s", m.spinner.View())
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, content)
+}
 
+func (m *EnhancedChatModel) renderError() string {
+	content := enhancedErrorStyle.Render(fmt.Sprintf("Error: %v\n\nPress 'r' to retry or 'q' to quit", m.err))
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, content)
+}
+
+func (m *EnhancedChatModel) renderAgentSelection() string {
+	var content strings.Builder
+	
 	// Header
-	header := lipgloss.NewStyle().
-		Bold(true).
-		Foreground(lipgloss.Color("170")).
-		Border(lipgloss.RoundedBorder()).
-		Padding(1).
-		Width(ui.width - 4).
-		Align(lipgloss.Center).
-		Render("🤖 Kubiya Enhanced Chat")
+	header := enhancedHeaderStyle.Width(m.width).Render("🤖 Select a Kubiya Agent")
+	content.WriteString(header + "\n\n")
 
-	b.WriteString(header + "\n\n")
+	// Agent list with rich information
+	for i, agent := range m.agentList {
+		// Agent name and basic info
+		agentHeader := fmt.Sprintf("%2d. %s", i+1, agent.Name)
+		content.WriteString(enhancedAgentHeaderStyle.Render(agentHeader) + "\n")
+		
+		// Description
+		desc := agent.Description
+		if desc == "" {
+			desc = agent.Desc
+		}
+		if desc != "" {
+			if len(desc) > 100 {
+				desc = desc[:97] + "..."
+			}
+			content.WriteString("   " + enhancedStatusStyle.Render("📝 "+desc) + "\n")
+		}
+		
+		// Runner information with icons
+		if len(agent.Runners) > 0 {
+			runner := agent.Runners[0]
+			runnerIcon := m.getRunnerIcon(runner)
+			content.WriteString("   " + enhancedStatusStyle.Render(fmt.Sprintf("%s Runner: %s", runnerIcon, runner)) + "\n")
+		}
+		
+		// Integrations with icons
+		if len(agent.Integrations) > 0 {
+			integrationsList := make([]string, 0)
+			for _, integration := range agent.Integrations {
+				if len(integrationsList) < 5 { // Show max 5 integrations
+					icon := m.getIntegrationIcon(integration)
+					integrationsList = append(integrationsList, icon+integration)
+				}
+			}
+			if len(integrationsList) > 0 {
+				content.WriteString("   " + enhancedStatusStyle.Render("🔌 Integrations: "+strings.Join(integrationsList, ", ")) + "\n")
+			}
+		}
+		
+		// Tools preview
+		if len(agent.Tools) > 0 {
+			toolCount := len(agent.Tools)
+			toolPreview := fmt.Sprintf("🛠️  %d tools available", toolCount)
+			if toolCount <= 3 {
+				// Show tool names if few tools
+				toolNames := make([]string, 0)
+				for _, toolName := range agent.Tools {
+					if toolName != "" {
+						toolNames = append(toolNames, toolName)
+					}
+				}
+				if len(toolNames) > 0 {
+					toolPreview = "🛠️  Tools: " + strings.Join(toolNames, ", ")
+				}
+			}
+			content.WriteString("   " + enhancedStatusStyle.Render(toolPreview) + "\n")
+		}
+		
+		// Separator between agents
+		content.WriteString("\n")
+	}
 
-	// Connection status
-	b.WriteString(ui.renderConnectionStatus() + "\n\n")
+	// Instructions
+	instructions := enhancedStatusStyle.Render("Press 1-9 to select agent, Enter for first agent, or 'q' to quit")
+	content.WriteString(instructions)
 
-	// Agent list
-	b.WriteString(ui.list.View() + "\n\n")
-
-	// Help
-	b.WriteString(ui.renderHelp())
-
-	return b.String()
+	return content.String()
 }
 
-func (ui *EnhancedChatUI) renderChat() string {
-	var b strings.Builder
-
-	// Header with agent info
-	header := ui.renderChatHeader()
-	b.WriteString(header + "\n")
-
-	// Connection status
-	b.WriteString(ui.renderConnectionStatus() + "\n")
-
-	// Chat messages
-	b.WriteString(ui.viewport.View() + "\n")
-
-	// Tool execution status
-	if len(ui.toolExecutions) > 0 {
-		b.WriteString(ui.renderToolExecutions() + "\n")
+// Helper functions for icons
+func (m *EnhancedChatModel) getRunnerIcon(runner string) string {
+	switch strings.ToLower(runner) {
+	case "kubiyamanaged", "managed":
+		return "☁️ "
+	case "kubernetes", "k8s":
+		return "🚢 "
+	case "docker":
+		return "🐳 "
+	case "local":
+		return "💻 "
+	default:
+		return "⚙️ "
 	}
+}
+
+func (m *EnhancedChatModel) getIntegrationIcon(integration string) string {
+	switch strings.ToLower(integration) {
+	case "aws":
+		return "🟠"
+	case "azure":
+		return "🔵"
+	case "gcp", "google":
+		return "🟡"
+	case "kubernetes", "k8s":
+		return "🚢"
+	case "jira":
+		return "🎯"
+	case "slack":
+		return "💬"
+	case "github":
+		return "🐙"
+	case "gitlab":
+		return "🦊"
+	case "jenkins":
+		return "🔨"
+	case "terraform":
+		return "🏗️"
+	case "ansible":
+		return "🎭"
+	case "docker":
+		return "🐳"
+	case "prometheus":
+		return "📊"
+	case "grafana":
+		return "📈"
+	case "datadog":
+		return "🐕"
+	default:
+		return "🔧"
+	}
+}
+
+func (m *EnhancedChatModel) renderChat() string {
+	var content strings.Builder
+
+	// Agent header
+	if m.selectedAgent != nil {
+		header := enhancedAgentHeaderStyle.Width(m.width).Render(fmt.Sprintf("💬 Chatting with %s", m.selectedAgent.Name))
+		content.WriteString(header + "\n")
+	}
+
+	// Messages area
+	m.viewport.SetContent(m.renderMessages())
+	content.WriteString(m.viewport.View())
+	content.WriteString("\n")
 
 	// Input area
-	b.WriteString(ui.renderInput())
+	inputArea := enhancedInputStyle.Width(m.width - 4).Render(m.textarea.View())
+	content.WriteString(inputArea)
 
-	// Help
-	b.WriteString(ui.renderHelp())
+	// Status line
+	statusLine := m.renderStatusLine()
+	content.WriteString("\n" + statusLine)
 
-	return b.String()
+	return content.String()
 }
 
-func (ui *EnhancedChatUI) renderConnectionStatus() string {
-	var status, color string
-	var emoji string
+func (m *EnhancedChatModel) renderMessages() string {
+	var content strings.Builder
 
-	switch ui.connectionState {
-	case connected:
-		status = "Connected"
-		color = "46"
-		emoji = "🟢"
-	case connecting:
-		status = "Connecting..."
-		color = "226"
-		emoji = "🟡"
-	case disconnected:
-		status = "Disconnected"
-		color = "196"
-		emoji = "🔴"
-	case reconnecting:
-		status = fmt.Sprintf("Reconnecting... (attempt %d/%d)", ui.connectionRetries+1, ui.maxRetries)
-		color = "208"
-		emoji = "🟠"
+	// Show conversation history with better formatting
+	for i, msg := range m.messages {
+		timestamp := msg.Timestamp.Format("15:04")
+		
+		if msg.IsUser {
+			userHeader := enhancedUserMessageStyle.Render(fmt.Sprintf("👤 [%s] You", timestamp))
+			content.WriteString(userHeader + "\n")
+			messageContent := enhancedMessageStyle.Render(fmt.Sprintf("   %s", msg.Content))
+			content.WriteString(messageContent + "\n\n")
+		} else {
+			agentName := "Agent"
+			if m.selectedAgent != nil {
+				agentName = m.selectedAgent.Name
+			}
+			agentHeader := enhancedAgentMessageStyle.Render(fmt.Sprintf("🤖 [%s] %s", timestamp, agentName))
+			content.WriteString(agentHeader + "\n")
+			messageContent := enhancedMessageStyle.Render(fmt.Sprintf("   %s", msg.Content))
+			content.WriteString(messageContent)
+			
+			// Add spacing between messages, but not after the last one
+			if i < len(m.messages)-1 {
+				content.WriteString("\n\n")
+			}
+		}
 	}
 
-	style := lipgloss.NewStyle().
-		Foreground(lipgloss.Color(color)).
-		Bold(true)
-
-	return style.Render(fmt.Sprintf("%s %s", emoji, status))
-}
-
-func (ui *EnhancedChatUI) renderChatHeader() string {
-	if ui.selectedAgent.UUID == "" {
-		return ""
+	// Show streaming content if active
+	if m.isStreaming {
+		// Add spacing before streaming content if there are previous messages
+		if len(m.messages) > 0 {
+			content.WriteString("\n\n")
+		}
+		
+		agentName := "Agent"
+		if m.selectedAgent != nil {
+			agentName = m.selectedAgent.Name
+		}
+		timestamp := time.Now().Format("15:04")
+		
+		if m.streamingContent != "" {
+			agentHeader := enhancedAgentMessageStyle.Render(fmt.Sprintf("🤖 [%s] %s", timestamp, agentName))
+			content.WriteString(agentHeader + "\n")
+			streamContent := enhancedMessageStyle.Render(fmt.Sprintf("   %s", m.streamingContent))
+			content.WriteString(streamContent)
+			content.WriteString(enhancedStatusStyle.Render(" ●")) // Streaming indicator
+		} else {
+			// Show thinking indicator when no content yet
+			agentHeader := enhancedAgentMessageStyle.Render(fmt.Sprintf("🤖 [%s] %s", timestamp, agentName))
+			content.WriteString(agentHeader + "\n")
+			thinkingContent := enhancedStatusStyle.Render("   💭 Thinking...")
+			content.WriteString(thinkingContent)
+		}
+		content.WriteString("\n")
 	}
 
-	style := lipgloss.NewStyle().
-		Bold(true).
-		Foreground(lipgloss.Color("170")).
-		Border(lipgloss.RoundedBorder()).
-		Padding(0, 1).
-		Width(ui.width - 4)
-
-	info := fmt.Sprintf("💬 %s", ui.selectedAgent.Name)
-	if ui.currentSession != nil {
-		info += fmt.Sprintf(" | Messages: %d | Tools: %d", 
-			ui.currentSession.TotalMessages, 
-			ui.currentSession.TotalToolsUsed)
+	// Show tool executions
+	if m.showToolCalls {
+		content.WriteString(m.renderToolExecutions())
 	}
 
-	return style.Render(info)
+	return content.String()
 }
 
-func (ui *EnhancedChatUI) renderInput() string {
-	var b strings.Builder
+func (m *EnhancedChatModel) renderToolExecutions() string {
+	var content strings.Builder
 
-	// Input prompt
-	prompt := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("245")).
-		Render("💭 Message:")
-
-	b.WriteString(prompt + "\n")
-	b.WriteString(ui.textarea.View() + "\n")
-
-	// Show typing indicator
-	if ui.isTyping {
-		typing := lipgloss.NewStyle().
-			Foreground(lipgloss.Color("245")).
-			Italic(true).
-			Render("💭 Typing...")
-		b.WriteString(typing + "\n")
-	}
-
-	return b.String()
-}
-
-func (ui *EnhancedChatUI) renderHelp() string {
-	keys := []key.Binding{
-		ui.keyMap.Send,
-		ui.keyMap.Back,
-		ui.keyMap.Clear,
-		ui.keyMap.Reconnect,
-		ui.keyMap.Help,
-		ui.keyMap.Quit,
-	}
-
-	return ui.help.ShortHelpView(keys)
-}
-
-func (ui *EnhancedChatUI) renderError() string {
-	style := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("196")).
-		Bold(true).
-		Border(lipgloss.RoundedBorder()).
-		Padding(1)
-
-	return style.Render(fmt.Sprintf("❌ Error: %v\n\nPress 'r' to retry or 'q' to quit", ui.err))
-}
-
-func (ui *EnhancedChatUI) renderLoading() string {
-	style := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("69")).
-		Bold(true)
-
-	return style.Render(fmt.Sprintf("Loading... %s", ui.spinner.View()))
-}
-
-func (ui *EnhancedChatUI) renderToolExecutions() string {
-	var b strings.Builder
-
-	ui.toolMutex.RLock()
-	defer ui.toolMutex.RUnlock()
-
-	if len(ui.toolExecutions) == 0 {
-		return ""
-	}
-
-	style := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("226")).
-		Bold(true).
-		Border(lipgloss.RoundedBorder()).
-		Padding(1)
-
-	b.WriteString("🔧 Tool Executions:\n")
-
-	for _, tool := range ui.toolExecutions {
+	for _, te := range m.toolExecutions {
+		var style lipgloss.Style
 		var statusEmoji string
-		switch tool.Status {
-		case "waiting":
-			statusEmoji = "⏳"
-		case "running":
+
+		switch te.Status {
+		case "starting":
+			style = enhancedToolCallStyle
 			statusEmoji = "🔄"
+		case "running":
+			style = enhancedToolCallStyle
+			statusEmoji = "⚡"
 		case "completed":
+			style = enhancedToolSuccessStyle
 			statusEmoji = "✅"
 		case "failed":
+			style = enhancedToolErrorStyle
 			statusEmoji = "❌"
+		default:
+			style = enhancedToolCallStyle
+			statusEmoji = "🔧"
 		}
 
-		duration := ""
-		if tool.Status == "completed" || tool.Status == "failed" {
-			duration = fmt.Sprintf(" (%.1fs)", tool.Duration.Seconds())
+		line := style.Render(fmt.Sprintf("%s %s", statusEmoji, te.Name))
+		if te.Status == "completed" || te.Status == "failed" {
+			line += fmt.Sprintf(" (%.1fs)", te.Duration.Seconds())
+		}
+		content.WriteString(line + "\n")
+
+		// Show args if available
+		if te.Args != "" && len(te.Args) < 100 {
+			argsLine := enhancedStatusStyle.Render(fmt.Sprintf("   Args: %s", te.Args))
+			content.WriteString(argsLine + "\n")
 		}
 
-		b.WriteString(fmt.Sprintf("%s %s%s\n", statusEmoji, tool.Name, duration))
-	}
-
-	return style.Render(b.String())
-}
-
-// Enhanced message types
-type connectionMsg struct {
-	state connectionState
-}
-
-type reconnectMsg struct{}
-
-type pingMsg struct{}
-
-type toolExecutionMsg struct {
-	execution *EnhancedToolExecution
-}
-
-type sessionSavedMsg struct{}
-
-// Helper functions for enhanced functionality
-func (ui *EnhancedChatUI) updateLayout() {
-	ui.list.SetSize(ui.width-4, ui.height-10)
-	ui.textarea.SetWidth(ui.width - 20)
-	ui.viewport.Width = ui.width - 4
-	ui.viewport.Height = ui.height - 15
-}
-
-func (ui *EnhancedChatUI) updateAgentList() {
-	items := make([]list.Item, len(ui.agents))
-	for i, agent := range ui.agents {
-		items[i] = agentItem{agent: agent}
-	}
-	ui.list.SetItems(items)
-}
-
-func (ui *EnhancedChatUI) updateStatusBar(message string) {
-	// Implementation for status bar updates
-	// This would be displayed in the UI
-}
-
-// Enhanced error handling and reconnection
-func (ui *EnhancedChatUI) scheduleReconnect() tea.Cmd {
-	return tea.Tick(ui.retryDelay, func(time.Time) tea.Msg {
-		return reconnectMsg{}
-	})
-}
-
-func (ui *EnhancedChatUI) attemptReconnect() tea.Cmd {
-	ui.connectionRetries++
-	ui.connectionState = reconnecting
-	ui.isReconnecting = true
-
-	return func() tea.Msg {
-		// Attempt to reconnect
-		ui.client = kubiya.NewClient(ui.cfg)
-		agents, err := ui.client.ListAgents(ui.ctx)
-		if err != nil {
-			return err
+		// Show error if failed
+		if te.Status == "failed" && te.Error != "" {
+			errorLine := enhancedToolErrorStyle.Render(fmt.Sprintf("   Error: %s", te.Error))
+			content.WriteString(errorLine + "\n")
 		}
-		ui.isReconnecting = false
-		ui.connectionRetries = 0
-		return agents
 	}
+
+	return content.String()
 }
 
-func (ui *EnhancedChatUI) startPingMonitor() tea.Cmd {
-	return tea.Tick(ui.pingInterval, func(time.Time) tea.Msg {
-		return pingMsg{}
-	})
-}
+func (m *EnhancedChatModel) renderStatusLine() string {
+	var status strings.Builder
 
-func (ui *EnhancedChatUI) scheduleNextPing() tea.Cmd {
-	return tea.Tick(ui.pingInterval, func(time.Time) tea.Msg {
-		return pingMsg{}
-	})
-}
-
-// Enhanced session management
-func (ui *EnhancedChatUI) loadSessionHistory() {
-	ui.sessionMutex.Lock()
-	defer ui.sessionMutex.Unlock()
-
-	if _, err := os.Stat(ui.sessionFile); os.IsNotExist(err) {
-		return
+	// Streaming status
+	if m.isStreaming {
+		status.WriteString(enhancedStatusStyle.Render("🔄 Streaming... "))
 	}
 
-	data, err := os.ReadFile(ui.sessionFile)
-	if err != nil {
-		return
+	// Tool stats
+	if m.showToolCalls {
+		m.toolStats.mu.RLock()
+		stats := fmt.Sprintf("Tools: %d total, %d active, %d completed, %d failed", 
+			m.toolStats.TotalCalls, m.toolStats.ActiveCalls, 
+			m.toolStats.CompletedCalls, m.toolStats.FailedCalls)
+		m.toolStats.mu.RUnlock()
+		status.WriteString(enhancedStatusStyle.Render(stats))
 	}
 
-	var sessions []EnhancedChatSession
-	if err := json.Unmarshal(data, &sessions); err != nil {
-		return
-	}
-
-	ui.sessionHistory = sessions
-}
-
-func (ui *EnhancedChatUI) saveSessionHistory() error {
-	ui.sessionMutex.Lock()
-	defer ui.sessionMutex.Unlock()
-
-	// Ensure directory exists
-	if err := os.MkdirAll(filepath.Dir(ui.sessionFile), 0755); err != nil {
-		return err
-	}
-
-	data, err := json.MarshalIndent(ui.sessionHistory, "", "  ")
-	if err != nil {
-		return err
-	}
-
-	return os.WriteFile(ui.sessionFile, data, 0644)
-}
-
-// Enhanced message handling
-func (ui *EnhancedChatUI) handleChatMessage(msg kubiya.ChatMessage) tea.Cmd {
-	// Convert to enhanced message
-	enhancedMsg := EnhancedChatMessage{
-		ChatMessage: msg,
-		ID:          fmt.Sprintf("%d_%s", time.Now().UnixNano(), msg.MessageID),
-		LocalTime:   time.Now(),
-		Status:      "delivered",
-		IsLocal:     false,
-		FormattedAt: time.Now().Format("15:04:05"),
-	}
-
-	// Add to current session
-	if ui.currentSession != nil {
-		ui.currentSession.Messages = append(ui.currentSession.Messages, enhancedMsg)
-		ui.currentSession.TotalMessages++
-		ui.currentSession.LastActive = time.Now()
-	}
-
-	// Update viewport with new message
-	ui.updateChatView()
-
-	// Auto-save if enabled
-	if ui.autoSave {
-		return ui.saveSession()
-	}
-
-	return nil
-}
-
-func (ui *EnhancedChatUI) handleToolExecution(msg toolExecutionMsg) {
-	ui.toolMutex.Lock()
-	defer ui.toolMutex.Unlock()
-
-	tool := msg.execution
-	ui.toolExecutions[tool.ID] = tool
-
-	if ui.currentSession != nil && tool.Status == "completed" {
-		ui.currentSession.TotalToolsUsed++
-	}
-
-	// Clean up completed tools after some time
-	if tool.Status == "completed" || tool.Status == "failed" {
-		go func() {
-			time.Sleep(time.Second * 30)
-			ui.toolMutex.Lock()
-			delete(ui.toolExecutions, tool.ID)
-			ui.toolMutex.Unlock()
-		}()
-	}
-}
-
-func (ui *EnhancedChatUI) updateChatView() {
-	if ui.currentSession == nil {
-		return
-	}
-
-	var b strings.Builder
-
-	// Render all messages
-	for _, msg := range ui.currentSession.Messages {
-		b.WriteString(ui.formatMessage(msg))
-		b.WriteString("\n")
-	}
-
-	ui.viewport.SetContent(b.String())
-	ui.viewport.GotoBottom()
-}
-
-func (ui *EnhancedChatUI) formatMessage(msg EnhancedChatMessage) string {
-	var style lipgloss.Style
-	var prefix string
-
-	if msg.SenderName == "You" {
-		style = lipgloss.NewStyle().Foreground(lipgloss.Color("46"))
-		prefix = "👤"
+	// Commands
+	status.WriteString(enhancedStatusStyle.Render(" | "))
+	if m.isStreaming {
+		status.WriteString(enhancedStatusStyle.Render("Streaming response... • Esc: agents • Ctrl+C: quit"))
 	} else {
-		style = lipgloss.NewStyle().Foreground(lipgloss.Color("69"))
-		prefix = "🤖"
+		status.WriteString(enhancedStatusStyle.Render("Enter: send • Esc: agents • Ctrl+C: quit"))
 	}
 
-	timestamp := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("245")).
-		Render(fmt.Sprintf("[%s]", msg.FormattedAt))
-
-	sender := style.Bold(true).Render(msg.SenderName)
-	content := style.Render(msg.Content)
-
-	return fmt.Sprintf("%s %s %s: %s", timestamp, prefix, sender, content)
+	return status.String()
 }
 
-// Enhanced key handling
-func (ui *EnhancedChatUI) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch {
-	case key.Matches(msg, ui.keyMap.Quit):
-		ui.cleanup()
-		return ui, tea.Quit
-
-	case key.Matches(msg, ui.keyMap.Back):
-		if ui.state == chatState {
-			ui.state = agentSelectState
-			return ui, nil
+// Event handlers
+func (m *EnhancedChatModel) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	var cmd tea.Cmd
+	
+	switch m.state {
+	case enhancedStateError:
+		switch msg.String() {
+		case "r":
+			m.err = nil
+			m.state = enhancedStateLoading
+			return m, m.loadAgents()
+		case "q", "ctrl+c":
+			return m, tea.Quit
 		}
 
-	case key.Matches(msg, ui.keyMap.Clear):
-		if ui.state == chatState {
-			ui.clearChat()
-			return ui, nil
+	case enhancedStateAgentSelect:
+		switch msg.String() {
+		case "q", "ctrl+c":
+			return m, tea.Quit
+		case "1", "2", "3", "4", "5", "6", "7", "8", "9":
+			idx := int(msg.String()[0] - '1')
+			if idx < len(m.agentList) {
+				m.selectedAgent = &m.agentList[idx]
+				m.state = enhancedStateChat
+				m.textarea.Focus()
+				m.textarea.SetValue("") // Clear any previous content
+				return m, nil
+			}
+		case "enter":
+			// Handle enter on first agent
+			if len(m.agentList) > 0 {
+				m.selectedAgent = &m.agentList[0]
+				m.state = enhancedStateChat
+				m.textarea.Focus()
+				m.textarea.SetValue("") // Clear any previous content
+				return m, nil
+			}
 		}
 
-	case key.Matches(msg, ui.keyMap.Reconnect):
-		return ui, ui.attemptReconnect()
-
-	case key.Matches(msg, ui.keyMap.SaveSession):
-		if ui.state == chatState {
-			return ui, ui.saveSession()
+	case enhancedStateChat:
+		// Ensure textarea is focused when we're in chat state
+		if !m.textarea.Focused() {
+			m.textarea.Focus()
 		}
-
-	case key.Matches(msg, ui.keyMap.ToggleDebug):
-		ui.debugMode = !ui.debugMode
-		return ui, nil
-
-	case key.Matches(msg, ui.keyMap.Send):
-		if ui.state == chatState {
-			return ui, ui.sendMessage()
-		} else if ui.state == agentSelectState {
-			return ui, ui.selectAgent()
+		
+		// Handle special keys first
+		switch msg.String() {
+		case "esc":
+			m.state = enhancedStateAgentSelect
+			m.textarea.Blur()
+			return m, nil
+		case "ctrl+c":
+			return m, tea.Quit
 		}
+		
+		// Handle textarea input - always process if we're in chat state
+		m.textarea, cmd = m.textarea.Update(msg)
+		
+		// Check if user pressed enter to send message
+		if msg.Type == tea.KeyEnter && !m.isStreaming {
+			return m, tea.Batch(cmd, m.sendMessage())
+		}
+		
+		return m, cmd
 	}
 
-	return ui, nil
+	return m, nil
 }
 
-// Enhanced utility functions
-func (ui *EnhancedChatUI) clearChat() {
-	if ui.currentSession != nil {
-		ui.currentSession.Messages = []EnhancedChatMessage{}
-		ui.currentSession.TotalMessages = 0
-		ui.updateChatView()
+// Helper functions
+func (m *EnhancedChatModel) updateComponentSizes() {
+	if m.width > 0 && m.height > 0 {
+		m.viewport.Width = m.width - 4
+		m.viewport.Height = m.height - 12 // Leave space for input and status
+		m.textarea.SetWidth(m.width - 8)
+		m.textarea.SetHeight(3)
 	}
 }
 
-func (ui *EnhancedChatUI) saveSession() tea.Cmd {
+func (m *EnhancedChatModel) loadAgents() tea.Cmd {
 	return func() tea.Msg {
-		if ui.currentSession != nil {
-			// Add or update session in history
-			found := false
-			for i, session := range ui.sessionHistory {
-				if session.ID == ui.currentSession.ID {
-					ui.sessionHistory[i] = *ui.currentSession
-					found = true
-					break
-				}
-			}
-			if !found {
-				ui.sessionHistory = append(ui.sessionHistory, *ui.currentSession)
-			}
-
-			// Keep only last 50 sessions
-			if len(ui.sessionHistory) > 50 {
-				ui.sessionHistory = ui.sessionHistory[len(ui.sessionHistory)-50:]
-			}
-
-			// Sort by last active
-			sort.Slice(ui.sessionHistory, func(i, j int) bool {
-				return ui.sessionHistory[i].LastActive.After(ui.sessionHistory[j].LastActive)
-			})
-
-			if err := ui.saveSessionHistory(); err != nil {
-				return err
+		// Try main endpoint first
+		agents, err := m.client.ListAgents(m.ctx)
+		if err != nil {
+			// Fallback to legacy endpoint
+			if legacyAgents, legacyErr := m.client.ListAgentsLegacy(m.ctx); legacyErr == nil {
+				agents = legacyAgents
+			} else {
+				return enhancedErrorMsg(fmt.Errorf("failed to load agents: %w", err))
 			}
 		}
-		return sessionSavedMsg{}
+
+		// Filter valid agents
+		validAgents := make([]kubiya.Agent, 0, len(agents))
+		for _, agent := range agents {
+			if agent.UUID != "" && agent.Name != "" {
+				validAgents = append(validAgents, agent)
+			}
+		}
+
+		if len(validAgents) == 0 {
+			return enhancedErrorMsg(fmt.Errorf("no valid agents found"))
+		}
+
+		return enhancedAgentsLoadedMsg(validAgents)
 	}
 }
 
-func (ui *EnhancedChatUI) selectAgent() tea.Cmd {
-	if item, ok := ui.list.SelectedItem().(agentItem); ok {
-		ui.selectedAgent = item.agent
-		ui.state = chatState
-
-		// Create new session
-		ui.currentSession = &EnhancedChatSession{
-			ID:          fmt.Sprintf("%d_%s", time.Now().UnixNano(), ui.selectedAgent.UUID),
-			AgentID:     ui.selectedAgent.UUID,
-			AgentName:   ui.selectedAgent.Name,
-			Messages:    []EnhancedChatMessage{},
-			CreatedAt:   time.Now(),
-			LastActive:  time.Now(),
-			Settings:    make(map[string]interface{}),
-		}
-
-		ui.updateChatView()
-		ui.textarea.Focus()
-	}
-	return nil
-}
-
-func (ui *EnhancedChatUI) sendMessage() tea.Cmd {
-	message := strings.TrimSpace(ui.textarea.Value())
-	if message == "" {
+func (m *EnhancedChatModel) sendMessage() tea.Cmd {
+	message := strings.TrimSpace(m.textarea.Value())
+	if message == "" || m.selectedAgent == nil {
 		return nil
 	}
 
-	// Add to message history
-	ui.messageHistory = append(ui.messageHistory, message)
-	if len(ui.messageHistory) > 100 {
-		ui.messageHistory = ui.messageHistory[1:]
-	}
-	ui.historyIndex = len(ui.messageHistory)
+	// Add user message
+	m.addMessage(message, true)
 
 	// Clear textarea
-	ui.textarea.SetValue("")
+	m.textarea.SetValue("")
 
-	// Add user message to session
-	userMsg := EnhancedChatMessage{
-		ChatMessage: kubiya.ChatMessage{
-			Content:    message,
-			SenderName: "You",
-			Timestamp:  time.Now().Format(time.RFC3339),
-			Final:      true,
-		},
-		ID:          fmt.Sprintf("%d_user", time.Now().UnixNano()),
-		LocalTime:   time.Now(),
-		Status:      "sent",
-		IsLocal:     true,
-		FormattedAt: time.Now().Format("15:04:05"),
-	}
+	// Start streaming
+	m.isStreaming = true
+	m.streamingContent = ""
 
-	if ui.currentSession != nil {
-		ui.currentSession.Messages = append(ui.currentSession.Messages, userMsg)
-		ui.currentSession.TotalMessages++
-		ui.currentSession.LastActive = time.Now()
-	}
-
-	ui.updateChatView()
-
-	// Send message to agent
-	return ui.sendToAgent(message)
+	// Ensure textarea stays focused during streaming
+	
+	return m.startStreaming(message)
 }
 
-func (ui *EnhancedChatUI) sendToAgent(message string) tea.Cmd {
-	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(ui.ctx, time.Minute*5)
-		ui.cancelFuncs = append(ui.cancelFuncs, cancel)
+func (m *EnhancedChatModel) startStreaming(message string) tea.Cmd {
+	return tea.Batch(
+		func() tea.Msg {
+			// Start streaming in goroutine and use tick to update UI
+			go func() {
+				ctx, cancel := context.WithTimeout(m.ctx, 120*time.Second)
+				defer cancel()
 
-		sessionID := ""
-		if ui.currentSession != nil {
-			sessionID = ui.currentSession.ID
-		}
-
-		msgChan, err := ui.client.SendMessage(ctx, ui.selectedAgent.UUID, message, sessionID)
-		if err != nil {
-			return err
-		}
-
-		// Handle incoming messages
-		go func() {
-			for {
-				select {
-				case <-ctx.Done():
+				// Get the stream channel directly
+				msgChan, err := m.client.SendMessageWithRetry(ctx, m.selectedAgent.UUID, message, m.sessionID, 3)
+				if err != nil {
 					return
-				case msg, ok := <-msgChan:
-					if !ok {
+				}
+
+				// Process messages directly and update model state
+				for msg := range msgChan {
+					// Update session ID
+					if msg.SessionID != "" {
+						m.sessionID = msg.SessionID
+					}
+
+					// Handle errors
+					if msg.Error != "" {
+						m.isStreaming = false
 						return
 					}
-					msg.SenderName = ui.selectedAgent.Name
-					if ui.program != nil {
-						ui.program.Send(msg)
+
+					// Process regular messages (like CLI)
+					if msg.SenderName != "You" {
+						m.messageMutex.Lock()
+						buf, exists := m.messageBuffer[msg.MessageID]
+						if !exists {
+							buf = &chatBuffer{}
+							m.messageBuffer[msg.MessageID] = buf
+						}
+
+						// Differential content updates
+						if len(msg.Content) > len(buf.content) {
+							m.streamingContent = msg.Content
+							buf.content = msg.Content
+						}
+						m.messageMutex.Unlock()
+
+						// Check if this is the final message
+						if msg.Final {
+							// Add the final content and stop streaming
+							if m.streamingContent != "" {
+								m.addMessage(m.streamingContent, false)
+							}
+							m.isStreaming = false
+							m.streamingContent = ""
+							return
+						}
 					}
 				}
+
+				// Stream ended
+				if m.streamingContent != "" {
+					m.addMessage(m.streamingContent, false)
+				}
+				m.isStreaming = false
+			}()
+			
+			return nil
+		},
+		// Start ticker to refresh UI during streaming
+		tea.Tick(100*time.Millisecond, func(t time.Time) tea.Msg {
+			if m.isStreaming {
+				return struct{ refreshUI bool }{true}
 			}
-		}()
-
-		return nil
-	}
+			return nil
+		}),
+	)
 }
 
-func (ui *EnhancedChatUI) fetchAgents() tea.Cmd {
-	return func() tea.Msg {
-		agents, err := ui.client.ListAgents(ui.ctx)
-		if err != nil {
-			return err
+
+
+
+func (m *EnhancedChatModel) handleToolCall(msg kubiya.ChatMessage) {
+	if !m.showToolCalls {
+		return
+	}
+
+	// Parse tool name from content
+	toolName := "unknown"
+	toolArgs := ""
+
+	if msg.Content != "" {
+		parts := strings.SplitN(msg.Content, ":", 2)
+		if len(parts) > 0 {
+			toolName = strings.TrimSpace(parts[0])
 		}
-		return agents
+		if len(parts) > 1 {
+			toolArgs = strings.TrimSpace(parts[1])
+		}
+	}
+
+	// Create or update tool execution
+	if _, exists := m.toolExecutions[msg.MessageID]; !exists {
+		m.toolExecutions[msg.MessageID] = &ToolExecutionState{
+			Name:      toolName,
+			Status:    "starting",
+			StartTime: time.Now(),
+			Args:      toolArgs,
+		}
+
+		// Update stats
+		m.toolStats.mu.Lock()
+		m.toolStats.TotalCalls++
+		m.toolStats.ActiveCalls++
+		m.toolStats.mu.Unlock()
 	}
 }
 
-func (ui *EnhancedChatUI) initializeSession(agent kubiya.Agent) {
-	// Create new session
-	ui.currentSession = &EnhancedChatSession{
-		ID:          fmt.Sprintf("%d_%s", time.Now().UnixNano(), agent.UUID),
-		AgentID:     agent.UUID,
-		AgentName:   agent.Name,
-		Messages:    []EnhancedChatMessage{},
-		CreatedAt:   time.Now(),
-		LastActive:  time.Now(),
-		Settings:    make(map[string]interface{}),
+func (m *EnhancedChatModel) handleToolOutput(msg kubiya.ChatMessage) {
+	te, exists := m.toolExecutions[msg.MessageID]
+	if !exists || !m.showToolCalls {
+		return
 	}
 
-	ui.updateChatView()
-	ui.textarea.Focus()
-}
-
-func (ui *EnhancedChatUI) cleanup() {
-	ui.cancel()
-	for _, cancel := range ui.cancelFuncs {
-		cancel()
+	// Update status
+	if te.Status == "starting" {
+		te.Status = "running"
 	}
-	if ui.autoSave && ui.currentSession != nil {
-		ui.saveSession()
+
+	// Process output content
+	if msg.Content != "" {
+		te.Output = msg.Content
+
+		// Check for errors
+		if strings.Contains(strings.ToLower(msg.Content), "error") ||
+			strings.Contains(strings.ToLower(msg.Content), "failed") {
+			te.Status = "failed"
+			te.Error = msg.Content
+		}
 	}
-	if ui.agentSelection != nil {
-		ui.agentSelection.Cleanup()
+
+	// Check if complete
+	if msg.Final {
+		te.EndTime = time.Now()
+		te.Duration = te.EndTime.Sub(te.StartTime)
+
+		if te.Status != "failed" {
+			te.Status = "completed"
+		}
+
+		// Update stats
+		m.toolStats.mu.Lock()
+		m.toolStats.ActiveCalls--
+		if te.Status == "failed" {
+			m.toolStats.FailedCalls++
+		} else {
+			m.toolStats.CompletedCalls++
+		}
+		m.toolStats.mu.Unlock()
 	}
 }
 
-func (ui *EnhancedChatUI) renderSettings() string {
-	return "Settings view - coming soon!"
+func (m *EnhancedChatModel) addMessage(content string, isUser bool) {
+	msg := ChatDisplayMessage{
+		Content:   content,
+		IsUser:    isUser,
+		Timestamp: time.Now(),
+	}
+	m.messages = append(m.messages, msg)
+	m.viewport.GotoBottom()
 }
 
-func (ui *EnhancedChatUI) renderHistory() string {
-	return "History view - coming soon!"
+// Cleanup releases resources
+func (m *EnhancedChatModel) Cleanup() {
+	m.cancel()
 }
 
-// Run the enhanced chat UI
-func (ui *EnhancedChatUI) Run() error {
-	p := tea.NewProgram(ui, tea.WithAltScreen())
-	ui.program = p
+// Run starts the enhanced chat UI
+func RunEnhancedChat(cfg *config.Config) error {
+	model := NewEnhancedChatModel(cfg)
+	defer model.Cleanup()
+
+	p := tea.NewProgram(model, tea.WithAltScreen())
 	_, err := p.Run()
 	return err
 }
