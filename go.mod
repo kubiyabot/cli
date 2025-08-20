@@ -17,7 +17,7 @@ require (
 	github.com/golang-jwt/jwt/v4 v4.5.2
 	github.com/google/uuid v1.6.0
 	github.com/manifoldco/promptui v0.9.0
-	github.com/mark3labs/mcp-go v0.22.0
+	github.com/mark3labs/mcp-go v0.28.0
 	github.com/mattn/go-isatty v0.0.20
 	github.com/spf13/afero v1.14.0
 	github.com/spf13/cobra v1.9.1
