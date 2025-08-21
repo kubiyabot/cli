@@ -251,9 +251,13 @@ func (c *Client) SendMessage(ctx context.Context, agentID, message string, sessi
 		logger.Printf("Request body length: %d bytes", len(jsonData))
 	}
 
-	client := &http.Client{Timeout: 0} // No timeout for streaming
+	// Use the authenticated client with no timeout for streaming
+	streamClient := &http.Client{
+		Timeout:   0, // No timeout for streaming
+		Transport: c.client.Transport, // Use the same auth transport
+	}
 
-	resp, err := client.Do(req)
+	resp, err := streamClient.Do(req)
 	if err != nil {
 		if logger != nil {
 			logger.Printf("Error executing request: %v", err)
