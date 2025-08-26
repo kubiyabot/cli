@@ -300,7 +300,7 @@ func (s *Server) addKnowledgeBaseTools() error {
 
 	// Search knowledge base
 	s.server.AddTool(mcp.NewTool("search_kb",
-		mcp.WithDescription("Search knowledge base entries"),
+		mcp.WithDescription("Search organizational knowledge bases to answer general organizational questions like team information, policies, procedures, and other company knowledge"),
 		mcp.WithString("query", mcp.Required(), mcp.Description("Search query")),
 		mcp.WithNumber("limit", mcp.Description("Maximum number of results to return (default: 10)")),
 	), s.searchKnowledgeHandler)
@@ -389,13 +389,13 @@ func (s *Server) executeToolHandler(ctx context.Context, request mcp.CallToolReq
 
 		// Execute with timeout (30 minutes for long-running operations)
 		timeout := 30 * time.Minute
-		
+
 		// Add breadcrumb for tool execution start
 		sentryutil.AddBreadcrumb("mcp.tool_execution", "Executing tool with timeout", map[string]interface{}{
-			"tool_name":    toolName,
-			"runner":       runner,
-			"timeout_sec":  timeout.Seconds(),
-			"args_count":   len(toolArgs),
+			"tool_name":   toolName,
+			"runner":      runner,
+			"timeout_sec": timeout.Seconds(),
+			"args_count":  len(toolArgs),
 		})
 
 		eventChan, err := s.client.ExecuteToolWithTimeout(ctx, toolName, toolDef, runner, timeout, argVals)
@@ -420,21 +420,21 @@ func (s *Server) executeToolHandler(ctx context.Context, request mcp.CallToolReq
 
 		eventCount := 0
 		errorCount := 0
-		
+
 		for event := range eventChan {
 			eventCount++
 			switch event.Type {
 			case "error":
 				errorCount++
 				output.WriteString(fmt.Sprintf("❌ Error: %s\n", event.Data))
-				
+
 				// Add breadcrumb for execution error
 				sentryutil.AddBreadcrumb("mcp.tool_execution", "Tool execution error", map[string]interface{}{
 					"tool_name":   toolName,
 					"error_data":  event.Data,
 					"event_count": eventCount,
 				})
-				
+
 				return mcp.NewToolResultText(output.String()), nil
 			case "stdout":
 				output.WriteString(event.Data)
@@ -442,12 +442,12 @@ func (s *Server) executeToolHandler(ctx context.Context, request mcp.CallToolReq
 				output.WriteString(fmt.Sprintf("⚠️ %s", event.Data))
 			case "done":
 				output.WriteString("\n✅ Tool execution completed\n")
-				
+
 				// Add successful completion breadcrumb
 				sentryutil.AddBreadcrumb("mcp.tool_execution", "Tool execution completed successfully", map[string]interface{}{
-					"tool_name":    toolName,
-					"event_count":  eventCount,
-					"error_count":  errorCount,
+					"tool_name":   toolName,
+					"event_count": eventCount,
+					"error_count": errorCount,
 				})
 			default:
 				output.WriteString(fmt.Sprintf("📝 %s: %s\n", event.Type, event.Data))
@@ -480,7 +480,6 @@ func (s *Server) listKnowledgeHandler(ctx context.Context, request mcp.CallToolR
 
 	return mcp.NewToolResultText(string(data)), nil
 }
-
 
 func (s *Server) searchKnowledgeHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	args := request.Params.Arguments
@@ -546,7 +545,6 @@ func (s *Server) getKnowledgeHandler(ctx context.Context, request mcp.CallToolRe
 	return mcp.NewToolResultText(string(data)), nil
 }
 
-
 // Workflow DSL WASM execution
 
 func (s *Server) workflowDslWasmHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -605,23 +603,22 @@ func (s *Server) SearchDocumentationHandler(ctx context.Context, request mcp.Cal
 	return mcp.NewToolResultText(string(data)), nil
 }
 
-
 // wrapMCPHandler wraps MCP handlers with comprehensive Sentry tracing
 func (s *Server) wrapMCPHandler(ctx context.Context, operation string, toolName string, handler func(context.Context) (*mcp.CallToolResult, error)) (*mcp.CallToolResult, error) {
 	var result *mcp.CallToolResult
 	var handlerErr error
-	
+
 	err := sentryutil.WithMCPTransaction(ctx, operation, toolName, func(ctx context.Context) error {
 		result, handlerErr = handler(ctx)
 		return handlerErr
 	})
-	
+
 	if err != nil {
 		if result != nil {
 			return result, nil
 		}
 		return mcp.NewToolResultError(fmt.Sprintf("MCP operation failed: %v", err)), nil
 	}
-	
+
 	return result, handlerErr
 }

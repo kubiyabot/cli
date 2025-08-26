@@ -89,21 +89,21 @@ func NewProductionServer(kubiyaClient *kubiya.Client, config *Config) (*Producti
 	// Timeout middleware with extended defaults for long-running tools
 	defaultTimeout := 20 * time.Minute // Increased from 5 to 20 minutes
 	timeoutMW := middleware.NewTimeoutMiddleware(defaultTimeout)
-	
+
 	// Set extended timeouts for known long-running tools
 	longRunningTools := map[string]time.Duration{
-		"execute_tool":            30 * time.Minute, // Tool execution can be very long
-		"execute_workflow":        45 * time.Minute, // Workflows can be complex
-		"create_on_demand_tool":   25 * time.Minute, // Dynamic tool creation + execution
+		"execute_tool":             30 * time.Minute, // Tool execution can be very long
+		"execute_workflow":         45 * time.Minute, // Workflows can be complex
+		"create_on_demand_tool":    25 * time.Minute, // Dynamic tool creation + execution
 		"execute_whitelisted_tool": 30 * time.Minute, // Whitelisted tools may be complex
-		"workflow_dsl_wasm":       15 * time.Minute, // WASM execution can be slow
-		"chat_with_agent":         10 * time.Minute, // Agent conversations can be lengthy
+		"workflow_dsl_wasm":        15 * time.Minute, // WASM execution can be slow
+		"chat_with_agent":          10 * time.Minute, // Agent conversations can be lengthy
 	}
-	
+
 	for tool, timeout := range longRunningTools {
 		timeoutMW.SetToolTimeout(tool, timeout)
 	}
-	
+
 	// Apply user-configured timeouts (override defaults)
 	if config.ToolTimeouts != nil {
 		for tool, timeout := range config.ToolTimeouts {
@@ -612,7 +612,7 @@ func (ps *ProductionServer) handleListRunners(ctx context.Context, req mcp.CallT
 
 func (ps *ProductionServer) handleListSources(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	args := req.Params.Arguments
-	
+
 	// Parse pagination parameters
 	page := 1
 	if pageStr, ok := args["page"].(string); ok {
@@ -622,7 +622,7 @@ func (ps *ProductionServer) handleListSources(ctx context.Context, req mcp.CallT
 	} else if pageFloat, ok := args["page"].(float64); ok && pageFloat > 0 {
 		page = int(pageFloat)
 	}
-	
+
 	// Set default page size with fallback
 	pageSize := ps.config.DefaultPageSize
 	if pageSize <= 0 {
@@ -636,7 +636,7 @@ func (ps *ProductionServer) handleListSources(ctx context.Context, req mcp.CallT
 	if maxToolsInResponse <= 0 {
 		maxToolsInResponse = 50 // Default max tools
 	}
-	
+
 	if pageSizeStr, ok := args["page_size"].(string); ok {
 		if ps, err := strconv.Atoi(pageSizeStr); err == nil && ps > 0 {
 			pageSize = ps
@@ -644,7 +644,7 @@ func (ps *ProductionServer) handleListSources(ctx context.Context, req mcp.CallT
 	} else if pageSizeFloat, ok := args["page_size"].(float64); ok && pageSizeFloat > 0 {
 		pageSize = int(pageSizeFloat)
 	}
-	
+
 	// Limit page size to maximum configured
 	if pageSize > maxToolsInResponse {
 		pageSize = maxToolsInResponse
@@ -670,9 +670,9 @@ func (ps *ProductionServer) handleListSources(ctx context.Context, req mcp.CallT
 			"updated_at":  source.UpdatedAt,
 			"status":      "active", // Default status
 		}
-		
+
 		// Note: Git metadata would need to be fetched separately if needed
-		
+
 		sourceMetadata = append(sourceMetadata, metadata)
 	}
 
@@ -703,19 +703,19 @@ func (ps *ProductionServer) handleListSources(ctx context.Context, req mcp.CallT
 		truncated = append(truncated, []byte("\n\n... Response truncated due to size limit ...")...)
 		data = truncated
 	}
-	
+
 	return mcp.NewToolResultText(string(data)), nil
 }
 
 func (ps *ProductionServer) handleSearchTools(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	args := req.Params.Arguments
-	
+
 	// Get required query parameter
 	query, ok := args["query"].(string)
 	if !ok || query == "" {
 		return mcp.NewToolResultError("query parameter is required"), nil
 	}
-	
+
 	// Parse pagination parameters
 	page := 1
 	if pageStr, ok := args["page"].(string); ok {
@@ -725,7 +725,7 @@ func (ps *ProductionServer) handleSearchTools(ctx context.Context, req mcp.CallT
 	} else if pageFloat, ok := args["page"].(float64); ok && pageFloat > 0 {
 		page = int(pageFloat)
 	}
-	
+
 	// Set default page size with fallback
 	pageSize := ps.config.DefaultPageSize
 	if pageSize <= 0 {
@@ -739,7 +739,7 @@ func (ps *ProductionServer) handleSearchTools(ctx context.Context, req mcp.CallT
 	if maxToolsInResponse <= 0 {
 		maxToolsInResponse = 50 // Default max tools
 	}
-	
+
 	if pageSizeStr, ok := args["page_size"].(string); ok {
 		if ps, err := strconv.Atoi(pageSizeStr); err == nil && ps > 0 {
 			pageSize = ps
@@ -747,12 +747,12 @@ func (ps *ProductionServer) handleSearchTools(ctx context.Context, req mcp.CallT
 	} else if pageSizeFloat, ok := args["page_size"].(float64); ok && pageSizeFloat > 0 {
 		pageSize = int(pageSizeFloat)
 	}
-	
+
 	// Limit page size to maximum configured
 	if pageSize > maxToolsInResponse {
 		pageSize = maxToolsInResponse
 	}
-	
+
 	// Get optional filter parameters
 	sourceUUID, _ := args["source_uuid"].(string)
 	toolType, _ := args["tool_type"].(string)
@@ -859,7 +859,7 @@ func (ps *ProductionServer) handleSearchTools(ctx context.Context, req mcp.CallT
 		truncated = append(truncated, []byte("\n\n... Response truncated due to size limit ...")...)
 		data = truncated
 	}
-	
+
 	return mcp.NewToolResultText(string(data)), nil
 }
 
@@ -871,17 +871,17 @@ func matchesToolCriteria(tool kubiya.Tool, queryLower, toolType string, longRunn
 	if !strings.Contains(toolNameLower, queryLower) && !strings.Contains(toolDescLower, queryLower) {
 		return false
 	}
-	
+
 	// Check tool type filter
 	if toolType != "" && strings.ToLower(tool.Type) != strings.ToLower(toolType) {
 		return false
 	}
-	
+
 	// Check long running filter
 	if longRunningOnly && !tool.LongRunning {
 		return false
 	}
-	
+
 	return true
 }
 
@@ -1729,7 +1729,7 @@ func (ps *ProductionServer) handleSourceExplorationPrompt(ctx context.Context, r
 	if args == nil {
 		args = make(map[string]string)
 	}
-	
+
 	sourceUUID := ""
 	if val, exists := args["source_uuid"]; exists {
 		sourceUUID = val
@@ -1791,7 +1791,7 @@ func (ps *ProductionServer) handleBestPracticesPrompt(ctx context.Context, req m
 	if args == nil {
 		args = make(map[string]string)
 	}
-	
+
 	topic := "general"
 	if val, exists := args["topic"]; exists {
 		topic = val
@@ -1949,7 +1949,7 @@ func (ps *ProductionServer) handleWorkflowExamplesPrompt(ctx context.Context, re
 	if args == nil {
 		args = make(map[string]string)
 	}
-	
+
 	pattern := "simple"
 	if val, exists := args["pattern"]; exists {
 		pattern = val
@@ -2075,7 +2075,7 @@ func (ps *ProductionServer) handleWorkflowExamplesPrompt(ctx context.Context, re
 		prompt.WriteString("8. **WASM compilation with dependencies** - Compile workflows with complete tool specifications\n")
 		prompt.WriteString("9. **Source type flexibility** - Support git, inline, and custom tool sources\n")
 		prompt.WriteString("10. **Production-ready reliability** - Handle all edge cases and tool requirements\n\n")
-		
+
 		prompt.WriteString("Include a complete example for: ")
 		if useCase != "" {
 			prompt.WriteString(fmt.Sprintf("%s\n\n", useCase))
@@ -2091,7 +2091,7 @@ func (ps *ProductionServer) handleWorkflowExamplesPrompt(ctx context.Context, re
 		prompt.WriteString("3. Result evaluation and decision making\n")
 		prompt.WriteString("4. Default fallback behaviors\n")
 		prompt.WriteString("5. State management across conditions\n\n")
-		
+
 		prompt.WriteString("Include examples of:\n")
 		prompt.WriteString("- Environment-based execution paths\n")
 		prompt.WriteString("- Health check results triggering different actions\n")
@@ -2180,7 +2180,7 @@ func (ps *ProductionServer) handleWorkflowExamplesPrompt(ctx context.Context, re
 		prompt.WriteString("3. Rollback procedures for failed operations\n")
 		prompt.WriteString("4. Error notification and alerting\n")
 		prompt.WriteString("5. Graceful degradation strategies\n\n")
-		
+
 		prompt.WriteString("Include examples of:\n")
 		prompt.WriteString("- Database migration with rollback\n")
 		prompt.WriteString("- Service deployment with health checks\n")
@@ -2194,7 +2194,7 @@ func (ps *ProductionServer) handleWorkflowExamplesPrompt(ctx context.Context, re
 		prompt.WriteString("3. Security scanning and compliance checks\n")
 		prompt.WriteString("4. Multi-environment deployment strategy\n")
 		prompt.WriteString("5. Monitoring and rollback capabilities\n\n")
-		
+
 		prompt.WriteString("Include integration with:\n")
 		prompt.WriteString("- Git repositories and webhooks\n")
 		prompt.WriteString("- Container registries\n")
@@ -2209,7 +2209,7 @@ func (ps *ProductionServer) handleWorkflowExamplesPrompt(ctx context.Context, re
 		prompt.WriteString("3. Compliance and security validation\n")
 		prompt.WriteString("4. Cost optimization and resource cleanup\n")
 		prompt.WriteString("5. Disaster recovery procedures\n\n")
-		
+
 		prompt.WriteString("Include examples for:\n")
 		prompt.WriteString("- Cloud resource provisioning (AWS, Azure, GCP)\n")
 		prompt.WriteString("- Kubernetes cluster management\n")
@@ -2320,7 +2320,7 @@ func (ps *ProductionServer) getAllTools() []mcp.Tool {
 			mcp.WithNumber("timeout", mcp.Description("Timeout in seconds (default: 300)")),
 		),
 		mcp.NewTool("search_kb",
-			mcp.WithDescription("Search the knowledge base"),
+			mcp.WithDescription("Search organizational knowledge bases to answer general organizational questions like team information, policies, procedures, and other company knowledge"),
 			mcp.WithString("query", mcp.Required(), mcp.Description("Search query")),
 			mcp.WithNumber("limit", mcp.Description("Maximum results to return")),
 		),
