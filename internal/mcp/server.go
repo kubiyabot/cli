@@ -6,16 +6,18 @@ import (
 
 	"github.com/mark3labs/mcp-go/server"
 
+	"github.com/kubiyabot/cli/internal/composer"
 	"github.com/kubiyabot/cli/internal/config"
 	"github.com/kubiyabot/cli/internal/kubiya"
 )
 
 // Server wraps the Kubiya client and provides MCP tools
 type Server struct {
-	client       *kubiya.Client
-	config       *config.Config
-	server       *server.MCPServer
-	serverConfig *Configuration
+	client         *kubiya.Client
+	composerClient *composer.Client
+	config         *config.Config
+	server         *server.MCPServer
+	serverConfig   *Configuration
 }
 
 // NewServer creates a new MCP server instance
@@ -24,9 +26,10 @@ func NewServer(cfg *config.Config, serverConfig *Configuration) *Server {
 	_ = newWFDslWasmPlugin()
 
 	return &Server{
-		client:       kubiya.NewClient(cfg),
-		config:       cfg,
-		serverConfig: serverConfig,
+		client:         kubiya.NewClient(cfg),
+		composerClient: composer.NewClient(cfg),
+		config:         cfg,
+		serverConfig:   serverConfig,
 	}
 }
 
@@ -114,7 +117,7 @@ func (s *Server) addPrompts() error {
 
 // addResources registers MCP resources
 func (s *Server) addResources() error {
-	resources := NewResources(s.client)
+	resources := NewResources(s.client, s.composerClient)
 	return resources.Register(s.server)
 }
 
