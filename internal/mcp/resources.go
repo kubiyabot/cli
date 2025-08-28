@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
+	"github.com/kubiyabot/cli/internal/composer"
 	"github.com/kubiyabot/cli/internal/kubiya"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -12,13 +14,15 @@ import (
 
 // Resources manages MCP resources
 type Resources struct {
-	client *kubiya.Client
+	client         *kubiya.Client
+	composerClient *composer.Client
 }
 
 // NewResources creates a new resources manager
-func NewResources(client *kubiya.Client) *Resources {
+func NewResources(client *kubiya.Client, composerClient *composer.Client) *Resources {
 	return &Resources{
-		client: client,
+		client:         client,
+		composerClient: composerClient,
 	}
 }
 
@@ -53,6 +57,12 @@ func (r *Resources) Register(s *server.MCPServer) error {
 		mcp.WithResourceDescription("Knowledge base entries"),
 		mcp.WithMIMEType("application/json"),
 	), r.knowledgeHandler)
+
+	// Python DSL examples resource
+	s.AddResourceTemplate(mcp.NewResourceTemplate("composer://examples/{query}/{limit}", "Python DSL examples",
+		mcp.WithTemplateDescription("Python DSL examples"),
+		mcp.WithTemplateMIMEType("application/json"),
+	), r.examplesHandler)
 
 	return nil
 }
@@ -144,6 +154,68 @@ func (r *Resources) knowledgeHandler(ctx context.Context, request mcp.ReadResour
 	}
 
 	data, err := json.MarshalIndent(knowledge, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal knowledge: %w", err)
+	}
+
+	return []mcp.ResourceContents{
+		mcp.TextResourceContents{
+			URI:      request.Params.URI,
+			MIMEType: "application/json",
+			Text:     string(data),
+		},
+	}, nil
+}
+
+// examplesHandler handles requests for Python DSL examples from the vector database
+func (r *Resources) examplesHandler(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+	// For path-based resource templates, the MCP library might send arrays
+	// Let's use a simpler approach: just get string representations without brackets
+
+	query := ""
+	if q := request.Params.Arguments["query"]; q != nil {
+		str := fmt.Sprintf("%v", q)
+		// If it looks like an array (starts with [ and ends with ]), extract the content
+		if strings.HasPrefix(str, "[") && strings.HasSuffix(str, "]") {
+			// Remove brackets and get first item if multiple (space-separated)
+			content := strings.TrimPrefix(strings.TrimSuffix(str, "]"), "[")
+			// If there are multiple space-separated items, take the first
+			parts := strings.Fields(content)
+			if len(parts) > 0 {
+				query = parts[0]
+			} else {
+				query = content
+			}
+		} else {
+			query = str
+		}
+	}
+
+	limit := ""
+	if l := request.Params.Arguments["limit"]; l != nil {
+		str := fmt.Sprintf("%v", l)
+		// If it looks like an array (starts with [ and ends with ]), extract the content
+		if strings.HasPrefix(str, "[") && strings.HasSuffix(str, "]") {
+			// Remove brackets and get first item if multiple (space-separated)
+			content := strings.TrimPrefix(strings.TrimSuffix(str, "]"), "[")
+			// If there are multiple space-separated items, take the first
+			parts := strings.Fields(content)
+			if len(parts) > 0 {
+				limit = parts[0]
+			} else {
+				limit = content
+			}
+		} else {
+			limit = str
+		}
+	}
+
+	examples, err := r.composerClient.GetExamples(ctx, query, limit)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get examples: %w", err)
+	}
+
+	data, err := json.MarshalIndent(examples, "", "  ")
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal knowledge: %w", err)
 	}
