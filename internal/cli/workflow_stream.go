@@ -362,6 +362,8 @@ func newWorkflowExecutionListCommand(cfg *config.Config) *cobra.Command {
         limit      int
         status     string
         jsonOutput bool
+        runnerID   string
+        workflowID string
     )
 
     cmd := &cobra.Command{
@@ -391,7 +393,7 @@ func newWorkflowExecutionListCommand(cfg *config.Config) *cobra.Command {
             var rows []Row
 
             for collected < limit {
-                resp, err := comp.ListExecutions(ctx, page, pageSize, status, "")
+                resp, err := comp.ListExecutions(ctx, page, pageSize, status, workflowID)
                 if err != nil {
                     return fmt.Errorf("failed to list executions: %w", err)
                 }
@@ -430,6 +432,11 @@ func newWorkflowExecutionListCommand(cfg *config.Config) *cobra.Command {
                                 stepsDone++
                             }
                         }
+                    }
+
+                    // Filter by runner if requested
+                    if runnerID != "" && !strings.EqualFold(runner, runnerID) {
+                        continue
                     }
 
                     // Duration
@@ -494,8 +501,10 @@ func newWorkflowExecutionListCommand(cfg *config.Config) *cobra.Command {
     }
 
     cmd.Flags().IntVar(&limit, "limit", 100, "Max number of executions to return")
-    cmd.Flags().StringVar(&status, "status", "", "Filter by status (running|completed|failed)")
+    cmd.Flags().StringVar(&status, "status", "", "Filter by status (running|canceled|pending|completed|failed)")
     cmd.Flags().BoolVar(&jsonOutput, "json", false, "Output as JSON")
+    cmd.Flags().StringVar(&runnerID, "runner", "", "Filter by runner ID")
+    cmd.Flags().StringVar(&workflowID, "id", "", "Filter by workflow ID")
 
     return cmd
 }
