@@ -51,7 +51,6 @@ This command provides comprehensive workflow management capabilities:
 		// Enhanced streaming and management commands
 		newWorkflowStreamCommand(cfg),
 		newWorkflowRetryCommand(cfg),
-		newWorkflowStatusCommand(cfg),
 		newWorkflowListCommand(cfg),
 	)
 
