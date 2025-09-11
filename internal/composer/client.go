@@ -191,3 +191,32 @@ func (c *Client) CountWorkflowExecutions(ctx context.Context, workflowID string)
     }
     return out.Total, nil
 }
+
+// GetWorkflow retrieves a specific workflow by ID from the Composer UI API
+// Endpoint: GET /api/workflows/{id}
+func (c *Client) GetWorkflow(ctx context.Context, workflowID string) (*Workflow, error) {
+    if workflowID == "" {
+        return nil, fmt.Errorf("workflow id is required")
+    }
+
+    savedBase := c.httpClient.GetBaseURL()
+    uiBase := savedBase
+    if i := strings.Index(savedBase, "/api/"); i != -1 {
+        uiBase = savedBase[:i]
+    }
+    c.httpClient.SetBaseURL(uiBase)
+    defer c.httpClient.SetBaseURL(savedBase)
+
+    path := "/api/workflows/" + workflowID
+    resp, err := c.httpClient.GET(ctx, path)
+    if err != nil {
+        return nil, err
+    }
+    defer resp.Body.Close()
+
+    var out Workflow
+    if err := util.DecodeJSONResponse(resp, &out); err != nil {
+        return nil, err
+    }
+    return &out, nil
+}

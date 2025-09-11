@@ -185,6 +185,7 @@ func newWorkflowListCommand(cfg *config.Config) *cobra.Command {
         sortBy     string
         sortOrder  string
         jsonOutput bool
+        workflowID string
     )
 
     cmd := &cobra.Command{
@@ -208,6 +209,48 @@ func newWorkflowListCommand(cfg *config.Config) *cobra.Command {
             if limit <= 0 { limit = 12 }
             if sortBy == "" { sortBy = "updated_at" }
             if sortOrder == "" { sortOrder = "desc" }
+
+            // If --id provided, fetch a specific workflow and present it
+            if workflowID != "" {
+                wf, err := comp.GetWorkflow(ctx, workflowID)
+                if err != nil {
+                    return fmt.Errorf("failed to get workflow: %w", err)
+                }
+
+                // Assemble single row and print
+                lastExec := ""
+                if len(wf.RecentExecutions) > 0 {
+                    if wf.RecentExecutions[0].FinishedAt != "" {
+                        lastExec = wf.RecentExecutions[0].FinishedAt
+                    } else {
+                        lastExec = wf.RecentExecutions[0].StartedAt
+                    }
+                }
+                totalExecs, _ := comp.CountWorkflowExecutions(ctx, wf.ID)
+
+                if jsonOutput {
+                    out := map[string]interface{}{
+                        "name": wf.Name,
+                        "description": wf.Description,
+                        "status": wf.Status,
+                        "last_execution": lastExec,
+                        "created_by": wf.UserName,
+                        "created_at": wf.CreatedAt,
+                        "updated_at": wf.UpdatedAt,
+                        "execution_count": totalExecs,
+                    }
+                    enc := json.NewEncoder(os.Stdout)
+                    enc.SetIndent("", "  ")
+                    return enc.Encode(out)
+                }
+
+                w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+                fmt.Fprintln(w, style.TitleStyle.Render("📋 WORKFLOW"))
+                fmt.Fprintln(w, "NAME\tSTATUS\tLAST EXECUTION\tCREATED BY\tCREATED AT\tUPDATED AT\tEXECUTIONS\tDESCRIPTION")
+                fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%d\t%s\n",
+                    style.HighlightStyle.Render(wf.Name), wf.Status, lastExec, wf.UserName, wf.CreatedAt, wf.UpdatedAt, totalExecs, wf.Description)
+                return w.Flush()
+            }
 
             resp, err := comp.ListWorkflows(ctx, page, limit, status, search, "", sortBy, sortOrder)
             if err != nil {
@@ -308,6 +351,7 @@ func newWorkflowListCommand(cfg *config.Config) *cobra.Command {
     cmd.Flags().StringVar(&sortBy, "sort-by", "updated_at", "Sort by field")
     cmd.Flags().StringVar(&sortOrder, "sort-order", "desc", "Sort order (asc|desc)")
     cmd.Flags().BoolVar(&jsonOutput, "json", false, "Output as JSON")
+    cmd.Flags().StringVar(&workflowID, "id", "", "Workflow ID to fetch a single workflow")
 
     return cmd
 }
