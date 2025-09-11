@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -173,55 +172,7 @@ the context and variables from the previous execution:
 	return cmd
 }
 
-func newWorkflowStatusCommand(cfg *config.Config) *cobra.Command {
-	var (
-		runner     string
-		jsonOutput bool
-		watch      bool
-	)
-
-	cmd := &cobra.Command{
-		Use:   "status <workflow-id>",
-		Short: "Get detailed status of a workflow execution",
-		Long: `Get comprehensive status information about a workflow execution.
-
-This command provides detailed information about workflow status including:
-• Current execution state and progress
-• Individual step statuses and outputs
-• Error details and stack traces
-• Execution timeline and duration
-• Variables and context information`,
-		Example: `  # Get workflow status
-  kubiya workflow status abc123-def456-789
-
-  # Get status in JSON format
-  kubiya workflow status abc123-def456-789 --json
-
-  # Watch status changes
-  kubiya workflow status abc123-def456-789 --watch
-
-  # Get status from specific runner
-  kubiya workflow status abc123-def456-789 --runner prod-runner`,
-		Args: cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			workflowID := args[0]
-			client := kubiya.NewClient(cfg)
-			ctx := context.Background()
-
-			if watch {
-				return watchWorkflowStatus(ctx, client, workflowID, runner, jsonOutput)
-			}
-
-			return getWorkflowStatus(ctx, client, workflowID, runner, jsonOutput)
-		},
-	}
-
-	cmd.Flags().StringVar(&runner, "runner", "", "Runner to query")
-	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Output in JSON format")
-	cmd.Flags().BoolVarP(&watch, "watch", "w", false, "Watch for status changes")
-
-	return cmd
-}
+// Removed: workflow status command
 
 func newWorkflowListCommand(cfg *config.Config) *cobra.Command {
 	var (
@@ -674,58 +625,9 @@ func retryWorkflow(ctx context.Context, client *kubiya.Client, workflowID, runne
 	return streamWorkflowLogs(ctx, client, workflowID, runner, StreamOptions{Follow: true})
 }
 
-func getWorkflowStatus(ctx context.Context, client *kubiya.Client, workflowID, runner string, jsonOutput bool) error {
-	enhancedClient := client.WorkflowEnhanced()
-	status, err := enhancedClient.GetDetailedStatus(ctx, workflowID, runner)
-	if err != nil {
-		fmt.Printf("%s Failed to get workflow status: %v\n", 
-			style.ErrorStyle.Render("❌"), err)
-		fmt.Printf("%s Use: POST /api/v1/workflow?runner=%s&operation=get_status\n", 
-			style.DimStyle.Render("API:"), runner)
-		fmt.Printf("%s Body: {\"workflowId\": \"%s\"}\n", 
-			style.DimStyle.Render("Request:"), workflowID)
-		return err
-	}
+// Removed: getWorkflowStatus helper
 
-	if jsonOutput {
-		statusJSON, _ := json.MarshalIndent(status, "", "  ")
-		fmt.Println(string(statusJSON))
-	} else {
-		// Display formatted status
-		fmt.Printf("%s Workflow Status\n", style.HeaderStyle.Render("📊"))
-		fmt.Printf("%s %s\n", style.DimStyle.Render("ID:"), workflowID)
-		fmt.Printf("%s %s\n", style.DimStyle.Render("Status:"), status.Status.StatusText)
-		fmt.Printf("%s %s\n", style.DimStyle.Render("Active:"), strconv.FormatBool(status.IsActive))
-		if status.Status.StartedAt != "" {
-			fmt.Printf("%s %s\n", style.DimStyle.Render("Started:"), status.Status.StartedAt)
-		}
-		if status.Status.FinishedAt != "" {
-			fmt.Printf("%s %s\n", style.DimStyle.Render("Finished:"), status.Status.FinishedAt)
-		}
-		
-		// Show step statuses
-		if len(status.Status.Nodes) > 0 {
-			fmt.Printf("\n%s Steps:\n", style.HeaderStyle.Render("📋"))
-			for stepName, stepStatus := range status.Status.Nodes {
-				statusEmoji := "⏳"
-				if stepStatus.Status == "SUCCESS" {
-					statusEmoji = "✅"
-				} else if stepStatus.Status == "FAILED" {
-					statusEmoji = "❌"
-				}
-				fmt.Printf("  %s %s [%s]\n", statusEmoji, stepName, stepStatus.Status)
-			}
-		}
-	}
-	return nil
-}
-
-func watchWorkflowStatus(ctx context.Context, client *kubiya.Client, workflowID, runner string, jsonOutput bool) error {
-	return streamWorkflowLogs(ctx, client, workflowID, runner, StreamOptions{
-		Follow:     true,
-		JSONOutput: jsonOutput,
-	})
-}
+// Removed: watchWorkflowStatus helper
 
 func listWorkflows(ctx context.Context, client *kubiya.Client, opts ListOptions) error {
 	enhancedClient := client.WorkflowEnhanced()
