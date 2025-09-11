@@ -6,12 +6,13 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"strconv"
 	"strings"
 	"syscall"
+	"text/tabwriter"
 	"time"
 
 	"github.com/kubiyabot/cli/internal/config"
+	"github.com/kubiyabot/cli/internal/composer"
 	"github.com/kubiyabot/cli/internal/kubiya"
 	"github.com/kubiyabot/cli/internal/style"
 	"github.com/spf13/cobra"
@@ -173,110 +174,339 @@ the context and variables from the previous execution:
 	return cmd
 }
 
-func newWorkflowStatusCommand(cfg *config.Config) *cobra.Command {
-	var (
-		runner     string
-		jsonOutput bool
-		watch      bool
-	)
-
-	cmd := &cobra.Command{
-		Use:   "status <workflow-id>",
-		Short: "Get detailed status of a workflow execution",
-		Long: `Get comprehensive status information about a workflow execution.
-
-This command provides detailed information about workflow status including:
-• Current execution state and progress
-• Individual step statuses and outputs
-• Error details and stack traces
-• Execution timeline and duration
-• Variables and context information`,
-		Example: `  # Get workflow status
-  kubiya workflow status abc123-def456-789
-
-  # Get status in JSON format
-  kubiya workflow status abc123-def456-789 --json
-
-  # Watch status changes
-  kubiya workflow status abc123-def456-789 --watch
-
-  # Get status from specific runner
-  kubiya workflow status abc123-def456-789 --runner prod-runner`,
-		Args: cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			workflowID := args[0]
-			client := kubiya.NewClient(cfg)
-			ctx := context.Background()
-
-			if watch {
-				return watchWorkflowStatus(ctx, client, workflowID, runner, jsonOutput)
-			}
-
-			return getWorkflowStatus(ctx, client, workflowID, runner, jsonOutput)
-		},
-	}
-
-	cmd.Flags().StringVar(&runner, "runner", "", "Runner to query")
-	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Output in JSON format")
-	cmd.Flags().BoolVarP(&watch, "watch", "w", false, "Watch for status changes")
-
-	return cmd
-}
+// Removed: workflow status command
 
 func newWorkflowListCommand(cfg *config.Config) *cobra.Command {
-	var (
-		runner     string
-		filter     string
-		limit      int
-		jsonOutput bool
-		allRunners bool
-	)
+    var (
+        page       int
+        limit      int
+        status     string
+        search     string
+        sortBy     string
+        sortOrder  string
+        jsonOutput bool
+        workflowID string
+    )
 
-	cmd := &cobra.Command{
-		Use:   "list",
-		Short: "List workflow executions across runners",
-		Long: `List workflow executions with filtering and pagination support.
-
-This command provides comprehensive listing of workflows across all runners:
-• Filter by status (running, completed, failed)
-• Cross-runner visibility
-• Pagination support
-• Detailed execution information`,
-		Example: `  # List all workflows
+    cmd := &cobra.Command{
+        Use:   "list",
+        Short: "List organization workflows (Composer)",
+        Long:  "List all workflows in your organization using the Composer API.",
+        Example: `  # List workflows as a table
   kubiya workflow list
 
-  # List running workflows
-  kubiya workflow list --filter running
+  # Output JSON with more items
+  kubiya workflow list --json --limit 50
 
-  # List workflows from specific runner
-  kubiya workflow list --runner prod-runner
+  # Filter by status or search by name
+  kubiya workflow list --status published --search deploy`,
+        RunE: func(cmd *cobra.Command, args []string) error {
+            ctx := context.Background()
+            comp := composer.NewClient(cfg)
 
-  # List workflows across all runners
-  kubiya workflow list --all-runners
+            // Defaults per API docs
+            if page <= 0 { page = 1 }
+            if limit <= 0 { limit = 12 }
+            if sortBy == "" { sortBy = "updated_at" }
+            if sortOrder == "" { sortOrder = "desc" }
 
-  # List with JSON output
-  kubiya workflow list --json --limit 50`,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			client := kubiya.NewClient(cfg)
-			ctx := context.Background()
+            // If --id provided, fetch a specific workflow and present it
+            if workflowID != "" {
+                wf, err := comp.GetWorkflow(ctx, workflowID)
+                if err != nil {
+                    return fmt.Errorf("failed to get workflow: %w", err)
+                }
 
-			return listWorkflows(ctx, client, ListOptions{
-				Runner:     runner,
-				Filter:     filter,
-				Limit:      limit,
-				JSONOutput: jsonOutput,
-				AllRunners: allRunners,
-			})
-		},
-	}
+                // Assemble single row and print
+                lastExec := ""
+                if len(wf.RecentExecutions) > 0 {
+                    if wf.RecentExecutions[0].FinishedAt != "" {
+                        lastExec = wf.RecentExecutions[0].FinishedAt
+                    } else {
+                        lastExec = wf.RecentExecutions[0].StartedAt
+                    }
+                }
+                totalExecs, _ := comp.CountWorkflowExecutions(ctx, wf.ID)
 
-	cmd.Flags().StringVar(&runner, "runner", "", "Runner to query")
-	cmd.Flags().StringVar(&filter, "filter", "all", "Filter workflows (all|running|completed|failed)")
-	cmd.Flags().IntVar(&limit, "limit", 10, "Limit number of results")
-	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Output in JSON format")
-	cmd.Flags().BoolVar(&allRunners, "all-runners", false, "Query all available runners")
+                if jsonOutput {
+                    out := map[string]interface{}{
+                        "name": wf.Name,
+                        "description": wf.Description,
+                        "status": wf.Status,
+                        "last_execution": lastExec,
+                        "created_by": wf.UserName,
+                        "created_at": wf.CreatedAt,
+                        "updated_at": wf.UpdatedAt,
+                        "execution_count": totalExecs,
+                    }
+                    enc := json.NewEncoder(os.Stdout)
+                    enc.SetIndent("", "  ")
+                    return enc.Encode(out)
+                }
 
-	return cmd
+                w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+                fmt.Fprintln(w, style.TitleStyle.Render("📋 WORKFLOW"))
+                fmt.Fprintln(w, "NAME\tSTATUS\tLAST EXECUTION\tCREATED BY\tCREATED AT\tUPDATED AT\tEXECUTIONS\tDESCRIPTION")
+                fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%d\t%s\n",
+                    style.HighlightStyle.Render(wf.Name), wf.Status, lastExec, wf.UserName, wf.CreatedAt, wf.UpdatedAt, totalExecs, wf.Description)
+                return w.Flush()
+            }
+
+            resp, err := comp.ListWorkflows(ctx, page, limit, status, search, "", sortBy, sortOrder)
+            if err != nil {
+                return fmt.Errorf("failed to list workflows: %w", err)
+            }
+
+            // Build rows with execution count and last execution
+            type Row struct {
+                Name        string
+                Description string
+                Status      string
+                LastExec    string
+                CreatedBy   string
+                CreatedAt   string
+                UpdatedAt   string
+                ExecCount   int
+            }
+            rows := make([]Row, 0, len(resp.Workflows))
+
+            for _, wf := range resp.Workflows {
+                lastExec := ""
+                if len(wf.RecentExecutions) > 0 {
+                    if wf.RecentExecutions[0].FinishedAt != "" {
+                        lastExec = wf.RecentExecutions[0].FinishedAt
+                    } else {
+                        lastExec = wf.RecentExecutions[0].StartedAt
+                    }
+                }
+
+                totalExecs, _ := comp.CountWorkflowExecutions(ctx, wf.ID)
+
+                rows = append(rows, Row{
+                    Name:        wf.Name,
+                    Description: wf.Description,
+                    Status:      wf.Status,
+                    LastExec:    lastExec,
+                    CreatedBy:   wf.UserName,
+                    CreatedAt:   wf.CreatedAt,
+                    UpdatedAt:   wf.UpdatedAt,
+                    ExecCount:   totalExecs,
+                })
+            }
+
+            if jsonOutput {
+                type OutItem struct {
+                    Name           string `json:"name"`
+                    Description    string `json:"description"`
+                    Status         string `json:"status"`
+                    LastExecution  string `json:"last_execution"`
+                    CreatedBy      string `json:"created_by"`
+                    CreatedAt      string `json:"created_at"`
+                    UpdatedAt      string `json:"updated_at"`
+                    ExecutionCount int    `json:"execution_count"`
+                }
+                out := struct {
+                    Workflows []OutItem `json:"workflows"`
+                    Total     int       `json:"total"`
+                    Page      int       `json:"page"`
+                    PageSize  int       `json:"page_size"`
+                }{Total: resp.Total, Page: resp.Page, PageSize: resp.PageSize}
+                out.Workflows = make([]OutItem, 0, len(rows))
+                for _, r := range rows {
+                    out.Workflows = append(out.Workflows, OutItem{
+                        Name: r.Name, Description: r.Description, Status: r.Status,
+                        LastExecution: r.LastExec, CreatedBy: r.CreatedBy,
+                        CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
+                        ExecutionCount: r.ExecCount,
+                    })
+                }
+                enc := json.NewEncoder(os.Stdout)
+                enc.SetIndent("", "  ")
+                return enc.Encode(out)
+            }
+
+            // Table output by default
+            w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+            fmt.Fprintln(w, style.TitleStyle.Render("📋 WORKFLOWS"))
+            fmt.Fprintln(w, "NAME\tSTATUS\tLAST EXECUTION\tCREATED BY\tCREATED AT\tUPDATED AT\tEXECUTIONS\tDESCRIPTION")
+            for _, r := range rows {
+                name := style.HighlightStyle.Render(r.Name)
+                statusText := r.Status
+                if strings.EqualFold(statusText, "published") {
+                    statusText = style.SuccessStyle.Render("published")
+                } else if strings.EqualFold(statusText, "draft") {
+                    statusText = style.DimStyle.Render("draft")
+                }
+                fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%d\t%s\n",
+                    name, statusText, r.LastExec, r.CreatedBy, r.CreatedAt, r.UpdatedAt, r.ExecCount, r.Description)
+            }
+            return w.Flush()
+        },
+    }
+
+    cmd.Flags().IntVar(&page, "page", 1, "Page number")
+    cmd.Flags().IntVar(&limit, "limit", 12, "Items per page")
+    cmd.Flags().StringVar(&status, "status", "all", "Filter by status (all|draft|published)")
+    cmd.Flags().StringVar(&search, "search", "", "Search by workflow name")
+    cmd.Flags().StringVar(&sortBy, "sort-by", "updated_at", "Sort by field")
+    cmd.Flags().StringVar(&sortOrder, "sort-order", "desc", "Sort order (asc|desc)")
+    cmd.Flags().BoolVar(&jsonOutput, "json", false, "Output as JSON")
+    cmd.Flags().StringVar(&workflowID, "id", "", "Workflow ID to fetch a single workflow")
+
+    return cmd
+}
+
+// newWorkflowExecutionListCommand lists executions from the last 24 hours
+func newWorkflowExecutionListCommand(cfg *config.Config) *cobra.Command {
+    var (
+        limit      int
+        status     string
+        jsonOutput bool
+        runnerID   string
+        workflowID string
+    )
+
+    cmd := &cobra.Command{
+        Use:   "execution list",
+        Short: "List workflow executions from the last 24 hours",
+        RunE: func(cmd *cobra.Command, args []string) error {
+            ctx := context.Background()
+            comp := composer.NewClient(cfg)
+
+            if limit <= 0 { limit = 100 }
+
+            // We will page through executions until we either run out or hit older than 24h
+            const pageSize = 50
+            page := 1
+            collected := 0
+            cutoff := time.Now().Add(-24 * time.Hour)
+
+            type Row struct {
+                Name        string
+                Status      string
+                Runner      string
+                StartedAt   time.Time
+                Duration    time.Duration
+                StepsDone   int
+                StepsTotal  int
+            }
+            var rows []Row
+
+            for collected < limit {
+                resp, err := comp.ListExecutions(ctx, page, pageSize, status, workflowID)
+                if err != nil {
+                    return fmt.Errorf("failed to list executions: %w", err)
+                }
+                if len(resp.Executions) == 0 {
+                    break
+                }
+
+                for _, ex := range resp.Executions {
+                    // Parse start time
+                    started, err := time.Parse(time.RFC3339, ex.StartedAt)
+                    if err != nil {
+                        continue
+                    }
+                    if started.Before(cutoff) {
+                        // Since API is sorted by recency, we can stop
+                        collected = limit
+                        break
+                    }
+
+                    // Fetch details for step counts and workflow name when needed
+                    details, _ := comp.GetExecution(ctx, ex.ID)
+                    name := ""
+                    stepsTotal := 0
+                    stepsDone := 0
+                    runner := ex.Runner
+                    if details != nil {
+                        if details.Workflow != nil {
+                            name = details.Workflow.Name
+                        }
+                        if details.Runner != "" {
+                            runner = details.Runner
+                        }
+                        stepsTotal = len(details.Steps)
+                        for _, st := range details.Steps {
+                            if strings.EqualFold(st.Status, "completed") || strings.EqualFold(st.Status, "success") {
+                                stepsDone++
+                            }
+                        }
+                    }
+
+                    // Filter by runner if requested
+                    if runnerID != "" && !strings.EqualFold(runner, runnerID) {
+                        continue
+                    }
+
+                    // Duration
+                    dur := time.Duration(ex.DurationMs) * time.Millisecond
+
+                    rows = append(rows, Row{
+                        Name:       name,
+                        Status:     ex.Status,
+                        Runner:     runner,
+                        StartedAt:  started,
+                        Duration:   dur,
+                        StepsDone:  stepsDone,
+                        StepsTotal: stepsTotal,
+                    })
+                    collected++
+                    if collected >= limit {
+                        break
+                    }
+                }
+
+                if collected >= limit {
+                    break
+                }
+                page++
+            }
+
+            if jsonOutput {
+                type OutItem struct {
+                    Name        string `json:"name"`
+                    Status      string `json:"status"`
+                    Runner      string `json:"runner"`
+                    StartedAt   string `json:"started_at"`
+                    Duration    string `json:"duration"`
+                    StepsDone   int    `json:"steps_completed"`
+                    StepsTotal  int    `json:"steps_total"`
+                }
+                out := make([]OutItem, 0, len(rows))
+                for _, r := range rows {
+                    out = append(out, OutItem{
+                        Name: r.Name, Status: r.Status, Runner: r.Runner,
+                        StartedAt: r.StartedAt.Format(time.RFC3339),
+                        Duration: r.Duration.String(),
+                        StepsDone: r.StepsDone, StepsTotal: r.StepsTotal,
+                    })
+                }
+                enc := json.NewEncoder(os.Stdout)
+                enc.SetIndent("", "  ")
+                return enc.Encode(out)
+            }
+
+            // Table output by default
+            w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+            fmt.Fprintln(w, style.TitleStyle.Render("🕒 EXECUTIONS (last 24h)"))
+            fmt.Fprintln(w, "NAME\tSTATUS\tRUNNER\tSTARTED AT\tDURATION\tSTEPS (DONE/TOTAL)")
+            for _, r := range rows {
+                started := r.StartedAt.Format(time.RFC3339)
+                fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%d/%d\n",
+                    style.HighlightStyle.Render(r.Name), r.Status, r.Runner, started, r.Duration.String(), r.StepsDone, r.StepsTotal)
+            }
+            return w.Flush()
+        },
+    }
+
+    cmd.Flags().IntVar(&limit, "limit", 100, "Max number of executions to return")
+    cmd.Flags().StringVar(&status, "status", "", "Filter by status (running|canceled|pending|completed|failed)")
+    cmd.Flags().BoolVar(&jsonOutput, "json", false, "Output as JSON")
+    cmd.Flags().StringVar(&runnerID, "runner", "", "Filter by runner ID")
+    cmd.Flags().StringVar(&workflowID, "id", "", "Filter by workflow ID")
+
+    return cmd
 }
 
 // StreamOptions defines options for streaming workflow logs
@@ -674,95 +904,8 @@ func retryWorkflow(ctx context.Context, client *kubiya.Client, workflowID, runne
 	return streamWorkflowLogs(ctx, client, workflowID, runner, StreamOptions{Follow: true})
 }
 
-func getWorkflowStatus(ctx context.Context, client *kubiya.Client, workflowID, runner string, jsonOutput bool) error {
-	enhancedClient := client.WorkflowEnhanced()
-	status, err := enhancedClient.GetDetailedStatus(ctx, workflowID, runner)
-	if err != nil {
-		fmt.Printf("%s Failed to get workflow status: %v\n", 
-			style.ErrorStyle.Render("❌"), err)
-		fmt.Printf("%s Use: POST /api/v1/workflow?runner=%s&operation=get_status\n", 
-			style.DimStyle.Render("API:"), runner)
-		fmt.Printf("%s Body: {\"workflowId\": \"%s\"}\n", 
-			style.DimStyle.Render("Request:"), workflowID)
-		return err
-	}
+// Removed: getWorkflowStatus helper
 
-	if jsonOutput {
-		statusJSON, _ := json.MarshalIndent(status, "", "  ")
-		fmt.Println(string(statusJSON))
-	} else {
-		// Display formatted status
-		fmt.Printf("%s Workflow Status\n", style.HeaderStyle.Render("📊"))
-		fmt.Printf("%s %s\n", style.DimStyle.Render("ID:"), workflowID)
-		fmt.Printf("%s %s\n", style.DimStyle.Render("Status:"), status.Status.StatusText)
-		fmt.Printf("%s %s\n", style.DimStyle.Render("Active:"), strconv.FormatBool(status.IsActive))
-		if status.Status.StartedAt != "" {
-			fmt.Printf("%s %s\n", style.DimStyle.Render("Started:"), status.Status.StartedAt)
-		}
-		if status.Status.FinishedAt != "" {
-			fmt.Printf("%s %s\n", style.DimStyle.Render("Finished:"), status.Status.FinishedAt)
-		}
-		
-		// Show step statuses
-		if len(status.Status.Nodes) > 0 {
-			fmt.Printf("\n%s Steps:\n", style.HeaderStyle.Render("📋"))
-			for stepName, stepStatus := range status.Status.Nodes {
-				statusEmoji := "⏳"
-				if stepStatus.Status == "SUCCESS" {
-					statusEmoji = "✅"
-				} else if stepStatus.Status == "FAILED" {
-					statusEmoji = "❌"
-				}
-				fmt.Printf("  %s %s [%s]\n", statusEmoji, stepName, stepStatus.Status)
-			}
-		}
-	}
-	return nil
-}
+// Removed: watchWorkflowStatus helper
 
-func watchWorkflowStatus(ctx context.Context, client *kubiya.Client, workflowID, runner string, jsonOutput bool) error {
-	return streamWorkflowLogs(ctx, client, workflowID, runner, StreamOptions{
-		Follow:     true,
-		JSONOutput: jsonOutput,
-	})
-}
-
-func listWorkflows(ctx context.Context, client *kubiya.Client, opts ListOptions) error {
-	enhancedClient := client.WorkflowEnhanced()
-	workflows, err := enhancedClient.ListWorkflows(ctx, opts.Filter, opts.Runner, opts.Limit, 0)
-	if err != nil {
-		fmt.Printf("%s Failed to list workflows: %v\n", 
-			style.ErrorStyle.Render("❌"), err)
-		fmt.Printf("%s Use: POST /api/v1/workflow?runner=%s&operation=list_workflows\n", 
-			style.DimStyle.Render("API:"), opts.Runner)
-		fmt.Printf("%s Body: {\"filter\": \"%s\", \"limit\": %d}\n", 
-			style.DimStyle.Render("Request:"), opts.Filter, opts.Limit)
-		return err
-	}
-
-	if opts.JSONOutput {
-		workflowsJSON, _ := json.MarshalIndent(workflows, "", "  ")
-		fmt.Println(string(workflowsJSON))
-	} else {
-		// Display formatted list
-		fmt.Printf("%s Workflows\n", style.HeaderStyle.Render("📋"))
-		for _, workflow := range workflows.Workflows {
-			statusEmoji := "⏳"
-			if workflow.Status == "SUCCESS" {
-				statusEmoji = "✅"
-			} else if workflow.Status == "FAILED" {
-				statusEmoji = "❌"
-			}
-			fmt.Printf("  %s %s [%s] - %s\n", 
-				statusEmoji, workflow.ID, workflow.Status, workflow.Name)
-		}
-		
-		if workflows.Pagination != nil {
-			fmt.Printf("\n%s Showing %d workflows (Page %d)\n", 
-				style.DimStyle.Render("📄"), 
-				len(workflows.Workflows), 
-				workflows.Pagination.Page)
-		}
-	}
-	return nil
-}
+// Deprecated: listWorkflows (runner-based) removed in favor of Composer API implementation
