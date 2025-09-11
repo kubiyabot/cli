@@ -52,6 +52,7 @@ This command provides comprehensive workflow management capabilities:
 		newWorkflowStreamCommand(cfg),
 		newWorkflowRetryCommand(cfg),
 		newWorkflowListCommand(cfg),
+		newWorkflowExecutionListCommand(cfg),
 	)
 
 	return cmd

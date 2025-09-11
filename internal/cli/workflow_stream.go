@@ -356,6 +356,150 @@ func newWorkflowListCommand(cfg *config.Config) *cobra.Command {
     return cmd
 }
 
+// newWorkflowExecutionListCommand lists executions from the last 24 hours
+func newWorkflowExecutionListCommand(cfg *config.Config) *cobra.Command {
+    var (
+        limit      int
+        status     string
+        jsonOutput bool
+    )
+
+    cmd := &cobra.Command{
+        Use:   "execution list",
+        Short: "List workflow executions from the last 24 hours",
+        RunE: func(cmd *cobra.Command, args []string) error {
+            ctx := context.Background()
+            comp := composer.NewClient(cfg)
+
+            if limit <= 0 { limit = 100 }
+
+            // We will page through executions until we either run out or hit older than 24h
+            const pageSize = 50
+            page := 1
+            collected := 0
+            cutoff := time.Now().Add(-24 * time.Hour)
+
+            type Row struct {
+                Name        string
+                Status      string
+                Runner      string
+                StartedAt   time.Time
+                Duration    time.Duration
+                StepsDone   int
+                StepsTotal  int
+            }
+            var rows []Row
+
+            for collected < limit {
+                resp, err := comp.ListExecutions(ctx, page, pageSize, status, "")
+                if err != nil {
+                    return fmt.Errorf("failed to list executions: %w", err)
+                }
+                if len(resp.Executions) == 0 {
+                    break
+                }
+
+                for _, ex := range resp.Executions {
+                    // Parse start time
+                    started, err := time.Parse(time.RFC3339, ex.StartedAt)
+                    if err != nil {
+                        continue
+                    }
+                    if started.Before(cutoff) {
+                        // Since API is sorted by recency, we can stop
+                        collected = limit
+                        break
+                    }
+
+                    // Fetch details for step counts and workflow name when needed
+                    details, _ := comp.GetExecution(ctx, ex.ID)
+                    name := ""
+                    stepsTotal := 0
+                    stepsDone := 0
+                    runner := ex.Runner
+                    if details != nil {
+                        if details.Workflow != nil {
+                            name = details.Workflow.Name
+                        }
+                        if details.Runner != "" {
+                            runner = details.Runner
+                        }
+                        stepsTotal = len(details.Steps)
+                        for _, st := range details.Steps {
+                            if strings.EqualFold(st.Status, "completed") || strings.EqualFold(st.Status, "success") {
+                                stepsDone++
+                            }
+                        }
+                    }
+
+                    // Duration
+                    dur := time.Duration(ex.DurationMs) * time.Millisecond
+
+                    rows = append(rows, Row{
+                        Name:       name,
+                        Status:     ex.Status,
+                        Runner:     runner,
+                        StartedAt:  started,
+                        Duration:   dur,
+                        StepsDone:  stepsDone,
+                        StepsTotal: stepsTotal,
+                    })
+                    collected++
+                    if collected >= limit {
+                        break
+                    }
+                }
+
+                if collected >= limit {
+                    break
+                }
+                page++
+            }
+
+            if jsonOutput {
+                type OutItem struct {
+                    Name        string `json:"name"`
+                    Status      string `json:"status"`
+                    Runner      string `json:"runner"`
+                    StartedAt   string `json:"started_at"`
+                    Duration    string `json:"duration"`
+                    StepsDone   int    `json:"steps_completed"`
+                    StepsTotal  int    `json:"steps_total"`
+                }
+                out := make([]OutItem, 0, len(rows))
+                for _, r := range rows {
+                    out = append(out, OutItem{
+                        Name: r.Name, Status: r.Status, Runner: r.Runner,
+                        StartedAt: r.StartedAt.Format(time.RFC3339),
+                        Duration: r.Duration.String(),
+                        StepsDone: r.StepsDone, StepsTotal: r.StepsTotal,
+                    })
+                }
+                enc := json.NewEncoder(os.Stdout)
+                enc.SetIndent("", "  ")
+                return enc.Encode(out)
+            }
+
+            // Table output by default
+            w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+            fmt.Fprintln(w, style.TitleStyle.Render("🕒 EXECUTIONS (last 24h)"))
+            fmt.Fprintln(w, "NAME\tSTATUS\tRUNNER\tSTARTED AT\tDURATION\tSTEPS (DONE/TOTAL)")
+            for _, r := range rows {
+                started := r.StartedAt.Format(time.RFC3339)
+                fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%d/%d\n",
+                    style.HighlightStyle.Render(r.Name), r.Status, r.Runner, started, r.Duration.String(), r.StepsDone, r.StepsTotal)
+            }
+            return w.Flush()
+        },
+    }
+
+    cmd.Flags().IntVar(&limit, "limit", 100, "Max number of executions to return")
+    cmd.Flags().StringVar(&status, "status", "", "Filter by status (running|completed|failed)")
+    cmd.Flags().BoolVar(&jsonOutput, "json", false, "Output as JSON")
+
+    return cmd
+}
+
 // StreamOptions defines options for streaming workflow logs
 type StreamOptions struct {
 	Follow     bool
