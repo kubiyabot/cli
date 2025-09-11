@@ -87,6 +87,7 @@ type WorkflowExecution struct {
     StartedAt  string  `json:"started_at"`
     FinishedAt string  `json:"finished_at"`
     CreatedAt  string  `json:"created_at"`
+    Runner     string  `json:"runner,omitempty"`
 }
 
 // ExecutionsResponse represents the response from GET /api/workflows/executions
@@ -96,6 +97,22 @@ type ExecutionsResponse struct {
     Page       int                 `json:"page"`
     TotalPages int                 `json:"totalPages"`
     PageSize   int                 `json:"pageSize"`
+}
+
+// ExecutionDetails represents detailed execution info (if available)
+type ExecutionDetails struct {
+    ID        string              `json:"id"`
+    Status    string              `json:"status"`
+    StartedAt string              `json:"started_at"`
+    FinishedAt string             `json:"finished_at"`
+    Runner    string              `json:"runner,omitempty"`
+    Workflow  *struct{ Name string `json:"name"` } `json:"workflow,omitempty"`
+    Steps     []ExecutionStep     `json:"steps,omitempty"`
+}
+
+type ExecutionStep struct {
+    Name   string `json:"name"`
+    Status string `json:"status"`
 }
 
 // ListWorkflows retrieves a page of workflows from the Composer UI API.
@@ -190,6 +207,74 @@ func (c *Client) CountWorkflowExecutions(ctx context.Context, workflowID string)
         return 0, err
     }
     return out.Total, nil
+}
+
+// ListExecutions retrieves a page of workflow executions from the Composer UI API
+func (c *Client) ListExecutions(ctx context.Context, page, limit int, status, workflowID string) (*ExecutionsResponse, error) {
+    params := map[string]string{}
+    if page > 0 {
+        params["page"] = fmt.Sprintf("%d", page)
+    }
+    if limit > 0 {
+        params["limit"] = fmt.Sprintf("%d", limit)
+    }
+    if status != "" {
+        params["status"] = status
+    }
+    if workflowID != "" {
+        params["workflow_id"] = workflowID
+    }
+
+    savedBase := c.httpClient.GetBaseURL()
+    uiBase := savedBase
+    if i := strings.Index(savedBase, "/api/"); i != -1 {
+        uiBase = savedBase[:i]
+    }
+    c.httpClient.SetBaseURL(uiBase)
+    defer c.httpClient.SetBaseURL(savedBase)
+
+    pathWithParams, err := c.httpClient.BuildPathWithParams("/api/workflows/executions", params)
+    if err != nil {
+        return nil, err
+    }
+    resp, err := c.httpClient.GET(ctx, pathWithParams)
+    if err != nil {
+        return nil, err
+    }
+    defer resp.Body.Close()
+
+    var out ExecutionsResponse
+    if err := util.DecodeJSONResponse(resp, &out); err != nil {
+        return nil, err
+    }
+    return &out, nil
+}
+
+// GetExecution retrieves detailed information for a specific execution (if supported)
+func (c *Client) GetExecution(ctx context.Context, executionID string) (*ExecutionDetails, error) {
+    if executionID == "" {
+        return nil, fmt.Errorf("execution id is required")
+    }
+
+    savedBase := c.httpClient.GetBaseURL()
+    uiBase := savedBase
+    if i := strings.Index(savedBase, "/api/"); i != -1 {
+        uiBase = savedBase[:i]
+    }
+    c.httpClient.SetBaseURL(uiBase)
+    defer c.httpClient.SetBaseURL(savedBase)
+
+    resp, err := c.httpClient.GET(ctx, "/api/workflows/executions/"+executionID)
+    if err != nil {
+        return nil, err
+    }
+    defer resp.Body.Close()
+
+    var out ExecutionDetails
+    if err := util.DecodeJSONResponse(resp, &out); err != nil {
+        return nil, err
+    }
+    return &out, nil
 }
 
 // GetWorkflow retrieves a specific workflow by ID from the Composer UI API
