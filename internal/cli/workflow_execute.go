@@ -929,8 +929,8 @@ The format will be auto-detected and you can provide variables and choose the ru
 					if hasError && workflowID != "" && !automationMode {
 						fmt.Printf("\n%s To retry this workflow, use: kubiya workflow retry %s\n",
 							style.InfoStyle.Render("💡"), workflowID)
-						fmt.Printf("%s To check status: kubiya workflow status %s\n",
-							style.InfoStyle.Render("ℹ️"), workflowID)
+                        fmt.Printf("%s To view logs again: kubiya workflow stream %s\n",
+                            style.InfoStyle.Render("ℹ️"), workflowID)
 					}
 					
 					return nil
@@ -996,10 +996,10 @@ The format will be auto-detected and you can provide variables and choose the ru
 
 			// If we reach here, the stream ended without explicit completion
 			// This could mean the workflow completed successfully but didn't send the completion event
-			if !automationMode {
-				fmt.Printf("\n%s Stream ended - checking workflow status...\n", 
-					style.InfoStyle.Render("ℹ️"))
-			}
+            if !automationMode {
+                fmt.Printf("\n%s Stream ended.\n", 
+                    style.InfoStyle.Render("ℹ️"))
+            }
 			
 			if completedSteps >= stepCount && stepCount > 0 {
 				workflowTrace.Complete("completed")
@@ -1572,10 +1572,10 @@ func processRegularWorkflowEvents(ctx context.Context, events <-chan kubiya.Work
 	}
 
 	// If we reach here, the stream ended without explicit completion
-	if !automationMode {
-		fmt.Printf("\n%s Stream ended - checking workflow status...\n", 
-			style.InfoStyle.Render("ℹ️"))
-	}
+    if !automationMode {
+        fmt.Printf("\n%s Stream ended.\n", 
+            style.InfoStyle.Render("ℹ️"))
+    }
 	
 	if completedSteps >= stepCount && stepCount > 0 {
 		workflowTrace.Complete("completed")

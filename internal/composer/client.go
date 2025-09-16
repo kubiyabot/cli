@@ -1,6 +1,8 @@
 package composer
 
 import (
+	"os"
+	"strings"
 	"time"
 
 	"github.com/kubiyabot/cli/internal/config"
@@ -9,36 +11,41 @@ import (
 
 // Client represents a Composer API client
 type Client struct {
-	cfg        *config.Config
 	httpClient *util.HTTPClient
-	baseURL    string
-	debug      bool
 }
 
 // NewClient creates a new Composer API client
 func NewClient(cfg *config.Config) *Client {
-	// Use the new idiomatic functional options pattern
-	httpClient := util.NewHTTPClient(
-		cfg.BaseURL,
-		util.WithDebug(cfg.Debug),
-		util.WithTimeout(30*time.Second),
-	)
+	// Composer API always uses the compose.kubiya.ai domain
+	composerBaseURL := getComposerBaseURL(cfg.BaseURL)
 
-	client := &Client{
-		cfg:        cfg,
-		httpClient: httpClient,
-		baseURL:    cfg.BaseURL,
-		debug:      cfg.Debug,
+	return &Client{
+		httpClient: util.NewHTTPClient(
+			composerBaseURL,
+			util.WithDebug(cfg.Debug),
+			util.WithAPIKey(cfg.APIKey),
+			util.WithTimeout(30*time.Second),
+		),
 	}
-	return client
 }
 
-// GetBaseURL returns the client's base URL
-func (c *Client) GetBaseURL() string {
-	return c.baseURL
-}
+// getComposerBaseURL determines the correct composer API base URL
+func getComposerBaseURL(configBaseURL string) string {
+	// Check if a specific composer URL is set via environment variable
+	if composerURL := os.Getenv("KUBIYA_COMPOSER_URL"); composerURL != "" {
+		return composerURL
+	}
 
-// SetBaseURL sets the client's base URL
-func (c *Client) SetBaseURL(url string) {
-	c.baseURL = url
+	// If the config base URL is already pointing to composer, use it as-is
+	if strings.Contains(configBaseURL, "compose.kubiya.ai") {
+		return configBaseURL
+	}
+
+	// For testing: preserve localhost/127.0.0.1 URLs
+	if strings.Contains(configBaseURL, "localhost") || strings.Contains(configBaseURL, "127.0.0.1") {
+		return configBaseURL
+	}
+
+	// Default composer API URL
+	return "https://compose.kubiya.ai/api"
 }
