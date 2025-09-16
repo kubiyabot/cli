@@ -22,14 +22,13 @@ type WorkflowListParams struct {
 }
 
 type WorkflowDetailsOutput struct {
-	Name           string `json:"name"`
-	Description    string `json:"description"`
-	Status         string `json:"status"`
-	LastExecution  string `json:"last_execution"`
-	CreatedBy      string `json:"created_by"`
-	CreatedAt      string `json:"created_at"`
-	UpdatedAt      string `json:"updated_at"`
-	ExecutionCount int    `json:"execution_count"`
+	Name          string `json:"name"`
+	Description   string `json:"description"`
+	Status        string `json:"status"`
+	LastExecution string `json:"last_execution"`
+	CreatedBy     string `json:"created_by"`
+	CreatedAt     string `json:"created_at"`
+	UpdatedAt     string `json:"updated_at"`
 }
 
 func (o *WorkflowDetailsOutput) PrintJSON() error {
@@ -41,10 +40,10 @@ func (o *WorkflowDetailsOutput) PrintJSON() error {
 func (o *WorkflowDetailsOutput) PrintTable() error {
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(w, style.TitleStyle.Render("📋 WORKFLOW"))
-	fmt.Fprintln(w, "NAME\tSTATUS\tLAST EXECUTION\tCREATED BY\tCREATED AT\tUPDATED AT\tEXECUTIONS\tDESCRIPTION")
-	fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%d\t%s\n",
+	fmt.Fprintln(w, "NAME\tSTATUS\tLAST EXECUTION\tCREATED BY\tCREATED AT\tUPDATED AT\tDESCRIPTION")
+	fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 		style.HighlightStyle.Render(o.Name),
-		o.Status, o.LastExecution, o.CreatedBy, o.CreatedAt, o.UpdatedAt, o.ExecutionCount, o.Description)
+		o.Status, o.LastExecution, o.CreatedBy, o.CreatedAt, o.UpdatedAt, o.Description)
 	return w.Flush()
 }
 
@@ -64,7 +63,7 @@ func (o *WorkflowListOutput) PrintJSON() error {
 func (o *WorkflowListOutput) PrintTable() error {
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(w, style.TitleStyle.Render("📋 WORKFLOWS"))
-	fmt.Fprintln(w, "NAME\tSTATUS\tLAST EXECUTION\tCREATED BY\tCREATED AT\tUPDATED AT\tEXECUTIONS\tDESCRIPTION")
+	fmt.Fprintln(w, "NAME\tSTATUS\tLAST EXECUTION\tCREATED BY\tCREATED AT\tUPDATED AT\tDESCRIPTION")
 	for _, wf := range o.Workflows {
 		statusText := wf.Status
 		if strings.EqualFold(statusText, "published") {
@@ -72,9 +71,9 @@ func (o *WorkflowListOutput) PrintTable() error {
 		} else if strings.EqualFold(statusText, "draft") {
 			statusText = style.DimStyle.Render("draft")
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%d\t%s\n",
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 			style.HighlightStyle.Render(wf.Name),
-			statusText, wf.LastExecution, wf.CreatedBy, wf.CreatedAt, wf.UpdatedAt, wf.ExecutionCount, wf.Description)
+			statusText, wf.LastExecution, wf.CreatedBy, wf.CreatedAt, wf.UpdatedAt, wf.Description)
 	}
 	return w.Flush()
 }
@@ -131,21 +130,14 @@ func listWorkflows(ctx context.Context, comp *composer.Client, params *WorkflowL
 		PageSize:  resp.PageSize,
 	}
 	for i, wf := range resp.Workflows {
-		// TODO: optimize requests
-		totalExecs, err := comp.CountWorkflowExecutions(ctx, wf.ID)
-		if err != nil {
-			return fmt.Errorf("failed to count workflow executions: %w", err)
-		}
-
 		output.Workflows[i] = WorkflowDetailsOutput{
-			Name:           wf.Name,
-			Description:    wf.Description,
-			Status:         wf.Status,
-			LastExecution:  wf.LastExecution(),
-			CreatedBy:      wf.UserName,
-			CreatedAt:      wf.CreatedAt,
-			UpdatedAt:      wf.UpdatedAt,
-			ExecutionCount: totalExecs,
+			Name:          wf.Name,
+			Description:   wf.Description,
+			Status:        wf.Status,
+			LastExecution: wf.LastExecution(),
+			CreatedBy:     wf.UserName,
+			CreatedAt:     wf.CreatedAt,
+			UpdatedAt:     wf.UpdatedAt,
 		}
 	}
 
@@ -162,20 +154,14 @@ func getWorkflow(ctx context.Context, comp *composer.Client, params *WorkflowLis
 		return fmt.Errorf("failed to get workflow: %w", err)
 	}
 
-	totalExecs, err := comp.CountWorkflowExecutions(ctx, wf.ID)
-	if err != nil {
-		return fmt.Errorf("failed to count workflows: %w", err)
-	}
-
 	output := WorkflowDetailsOutput{
-		Name:           wf.Name,
-		Description:    wf.Description,
-		Status:         wf.Status,
-		LastExecution:  wf.LastExecution(),
-		CreatedBy:      wf.UserName,
-		CreatedAt:      wf.CreatedAt,
-		UpdatedAt:      wf.UpdatedAt,
-		ExecutionCount: totalExecs,
+		Name:          wf.Name,
+		Description:   wf.Description,
+		Status:        wf.Status,
+		LastExecution: wf.LastExecution(),
+		CreatedBy:     wf.UserName,
+		CreatedAt:     wf.CreatedAt,
+		UpdatedAt:     wf.UpdatedAt,
 	}
 
 	if params.JsonOutput {

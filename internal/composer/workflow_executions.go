@@ -84,35 +84,6 @@ type WorkflowExecutionStep struct {
 	Status string `json:"status"`
 }
 
-// CountWorkflowExecutions retrieves the total number of executions for a workflow
-// by querying GET /api/workflows/executions with workflow_id filter and limit=1
-func (c *Client) CountWorkflowExecutions(ctx context.Context, workflowID string) (int, error) {
-	if workflowID == "" {
-		return 0, nil
-	}
-
-	pathWithParams, err := c.httpClient.BuildPathWithParams("/workflows/executions", WorkflowExecutionParams{
-		WorkflowID: workflowID,
-		Page:       1,
-		Limit:      1,
-	}.Map())
-	if err != nil {
-		return 0, err
-	}
-
-	resp, err := c.httpClient.GET(ctx, pathWithParams)
-	if err != nil {
-		return 0, err
-	}
-	defer resp.Body.Close()
-
-	var out WorkflowExecutions
-	if err := util.DecodeJSONResponse(resp, &out); err != nil {
-		return 0, err
-	}
-	return out.Total, nil
-}
-
 // ListWorkflowExecutions retrieves a page of workflow executions from the Composer UI API
 func (c *Client) ListWorkflowExecutions(ctx context.Context, params WorkflowExecutionParams) (*WorkflowExecutions, error) {
 	pathWithParams, err := c.httpClient.BuildPathWithParams("/workflows/executions", params.Map())
