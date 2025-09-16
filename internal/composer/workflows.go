@@ -136,3 +136,51 @@ func (c *Client) GetWorkflow(ctx context.Context, workflowID string) (*Workflow,
 	}
 	return &out, nil
 }
+
+// WorkflowExecuteParams represents the parameters for executing a workflow
+type WorkflowExecuteParams struct {
+	Input  map[string]interface{} `json:"input,omitempty"`
+	Runner string                 `json:"runner,omitempty"`
+}
+
+// WorkflowExecuteResponse represents the response from executing a workflow
+type WorkflowExecuteResponse struct {
+	ExecutionID         string `json:"executionId"`
+	RequestID          string `json:"requestId"`
+	SupabaseExecutionID string `json:"supabaseExecutionId"`
+	WorkflowID         string `json:"workflowId"`
+	Status             string `json:"status"`
+	Message            string `json:"message"`
+	StreamURL          string `json:"streamUrl"`
+	StatusURL          string `json:"statusUrl"`
+}
+
+// ExecuteWorkflow executes a workflow by ID using the Composer UI API
+// This matches the composer-ui "test" button functionality
+// Endpoint: POST /api/workflows/{id}/execute
+func (c *Client) ExecuteWorkflow(ctx context.Context, workflowID string, params WorkflowExecuteParams) (*WorkflowExecuteResponse, error) {
+	if workflowID == "" {
+		return nil, fmt.Errorf("workflow id is required")
+	}
+
+	// Set mandatory runner - always kubiya-hosted
+	params.Runner = "kubiya-hosted"
+
+	// Prepare the payload matching the composer-ui format
+	payload := map[string]interface{}{
+		"input":  params.Input,
+		"runner": params.Runner,
+	}
+
+	resp, err := c.httpClient.POST(ctx, "/workflows/"+workflowID+"/execute", payload)
+	if err != nil {
+		return nil, fmt.Errorf("failed to execute workflow: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var out WorkflowExecuteResponse
+	if err := util.DecodeJSONResponse(resp, &out); err != nil {
+		return nil, fmt.Errorf("failed to decode execution response: %w", err)
+	}
+	return &out, nil
+}
