@@ -274,26 +274,19 @@ func listWorkflowExecutions(ctx context.Context, comp *composer.Client, params *
 				break
 			}
 
-			// TODO: check if this is required
-			// Fetch details for step counts and workflow name when needed
-			details, err := comp.GetWorkflowExecution(ctx, ex.ID)
-			if err != nil {
-				return fmt.Errorf("failed to get execution details: %w", err)
-			}
-
 			var (
 				name                  string
 				stepsTotal, stepsDone int
 				runner                = ex.Runner
 			)
-			if details.Workflow != nil {
-				name = details.Workflow.Name
+			if ex.Workflow != nil {
+				name = ex.Workflow.Name
 			}
-			if details.Runner != "" {
-				runner = details.Runner
+			if ex.Runner != "" {
+				runner = ex.Runner
 			}
-			stepsTotal = len(details.Steps)
-			for _, st := range details.Steps {
+			stepsTotal = len(ex.Steps)
+			for _, st := range ex.Steps {
 				if strings.EqualFold(st.Status, "completed") || strings.EqualFold(st.Status, "success") {
 					stepsDone++
 				}
