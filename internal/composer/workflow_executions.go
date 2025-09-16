@@ -2,7 +2,6 @@ package composer
 
 import (
 	"context"
-	"fmt"
 	"strconv"
 
 	"github.com/kubiyabot/cli/internal/util"
@@ -52,6 +51,11 @@ type WorkflowExecution struct {
 	FinishedAt string  `json:"finished_at"`
 	CreatedAt  string  `json:"created_at"`
 	Runner     string  `json:"runner,omitempty"`
+	Workflow   *struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	} `json:"workflow,omitempty"`
+	Steps []WorkflowExecutionStep `json:"steps,omitempty"`
 }
 
 // WorkflowExecutions represents the response from GET /api/workflows/executions
@@ -63,21 +67,8 @@ type WorkflowExecutions struct {
 	PageSize   int                 `json:"pageSize"`
 }
 
-// WorkflowExecutionDetails represents detailed execution info (if available)
-type WorkflowExecutionDetails struct {
-	ID         string `json:"id"`
-	Status     string `json:"status"`
-	StartedAt  string `json:"started_at"`
-	FinishedAt string `json:"finished_at"`
-	Runner     string `json:"runner,omitempty"`
-	Workflow   *struct {
-		Name string `json:"name"`
-	} `json:"workflow,omitempty"`
-	Steps []WorkflowExecutionStep `json:"steps,omitempty"`
-}
-
 type WorkflowExecutionStep struct {
-	Name   string `json:"name"`
+	Name   string `json:"step_name"`
 	Status string `json:"status"`
 }
 
@@ -123,25 +114,6 @@ func (c *Client) ListWorkflowExecutions(ctx context.Context, params WorkflowExec
 	defer resp.Body.Close()
 
 	var out WorkflowExecutions
-	if err := util.DecodeJSONResponse(resp, &out); err != nil {
-		return nil, err
-	}
-	return &out, nil
-}
-
-// GetWorkflowExecution retrieves detailed information for a specific execution (if supported)
-func (c *Client) GetWorkflowExecution(ctx context.Context, executionID string) (*WorkflowExecutionDetails, error) {
-	if executionID == "" {
-		return nil, fmt.Errorf("execution id is required")
-	}
-
-	resp, err := c.httpClient.GET(ctx, "/workflows/executions/"+executionID)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	var out WorkflowExecutionDetails
 	if err := util.DecodeJSONResponse(resp, &out); err != nil {
 		return nil, err
 	}
