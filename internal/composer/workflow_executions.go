@@ -3,6 +3,7 @@ package composer
 import (
 	"context"
 	"strconv"
+	"time"
 
 	"github.com/kubiyabot/cli/internal/util"
 )
@@ -42,20 +43,31 @@ func (p WorkflowExecutionParams) Map() map[string]string {
 
 // WorkflowExecution represents a single execution entry in recent_executions
 type WorkflowExecution struct {
-	ID         string  `json:"id"`
-	WorkflowID string  `json:"workflow_id"`
-	Status     string  `json:"status"`
-	DurationMs float64 `json:"duration_ms"`
-	Trigger    string  `json:"trigger_type"`
-	StartedAt  string  `json:"started_at"`
-	FinishedAt string  `json:"finished_at"`
-	CreatedAt  string  `json:"created_at"`
-	Runner     string  `json:"runner,omitempty"`
-	Workflow   *struct {
+	ID          string `json:"id"`
+	WorkflowID  string `json:"workflow_id"`
+	Status      string `json:"status"`
+	Trigger     string `json:"trigger_type"`
+	CreatedAt   string `json:"created_at"`
+	StartedAt   string `json:"started_at"`
+	CompletedAt string `json:"completed_at"`
+	Runner      string `json:"runner,omitempty"`
+	Workflow    *struct {
 		ID   string `json:"id"`
 		Name string `json:"name"`
 	} `json:"workflow,omitempty"`
 	Steps []WorkflowExecutionStep `json:"steps,omitempty"`
+}
+
+func (we *WorkflowExecution) Duration() string {
+	start, err := time.Parse(time.RFC3339, we.StartedAt)
+	if err != nil {
+		return "N/A"
+	}
+	end, err := time.Parse(time.RFC3339, we.CompletedAt)
+	if err != nil {
+		return "N/A"
+	}
+	return end.Sub(start).Truncate(time.Millisecond).String()
 }
 
 // WorkflowExecutions represents the response from GET /api/workflows/executions
