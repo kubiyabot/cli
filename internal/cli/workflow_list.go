@@ -302,7 +302,7 @@ func listWorkflowExecutions(ctx context.Context, comp *composer.Client, params *
 				Status:     ex.Status,
 				Runner:     runner,
 				StartedAt:  ex.StartedAt,
-				Duration:   (time.Duration(ex.DurationMs) * time.Millisecond).String(),
+				Duration:   ex.Duration(),
 				StepsDone:  stepsDone,
 				StepsTotal: stepsTotal,
 			})

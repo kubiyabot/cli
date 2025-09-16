@@ -87,8 +87,8 @@ type Workflow struct {
 func (wf Workflow) LastExecution() string {
 	var lastExec string
 	if len(wf.RecentExecutions) > 0 {
-		if wf.RecentExecutions[0].FinishedAt != "" {
-			lastExec = wf.RecentExecutions[0].FinishedAt
+		if wf.RecentExecutions[0].CompletedAt != "" {
+			lastExec = wf.RecentExecutions[0].CreatedAt
 		} else {
 			lastExec = wf.RecentExecutions[0].StartedAt
 		}
