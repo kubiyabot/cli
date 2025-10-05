@@ -22,6 +22,7 @@ type Config struct {
 	Email       string
 	APIKey      string
 	BaseURL     string
+	ComposerURL string
 	Debug       bool
 	AutoSession bool
 }
@@ -76,6 +77,11 @@ func Load() (*Config, error) {
 		baseURL = "https://api.kubiya.ai/api/v1"
 	}
 
+	composerURL := os.Getenv("KUBIYA_COMPOSER_URL")
+	if composerURL == "" {
+		composerURL = "https://compose.kubiya.ai/api"
+	}
+
 	// AutoSession is enabled by default but can be overridden by KUBIYA_AUTO_SESSION environment variable
 	autoSession := true
 	if val, exists := os.LookupEnv("KUBIYA_AUTO_SESSION"); exists {
@@ -87,6 +93,7 @@ func Load() (*Config, error) {
 	cfg := &Config{
 		APIKey:      apiKey,
 		BaseURL:     baseURL,
+		ComposerURL: composerURL,
 		Debug:       os.Getenv("KUBIYA_DEBUG") == "true",
 		AutoSession: autoSession,
 	}
