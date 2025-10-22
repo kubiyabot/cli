@@ -126,6 +126,7 @@ Need help? Visit: https://docs.kubiya.ai
 		newPolicyCommand(cfg),
 		newUsersCommand(cfg),
 		newLoginCommand(cfg),
+		newWorkerCommand(cfg),
 	)
 
 	return rootCmd.Execute()
