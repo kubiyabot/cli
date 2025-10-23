@@ -12,6 +12,9 @@ litellm>=1.35.0
 # Agno for agent/team orchestration
 agno>=0.0.100
 
+# Claude Code SDK for claude_code runtime
+claude-agent-sdk>=0.1.0
+
 # Optional: Docker support for DockerTools
 # Uncomment if Docker toolset is needed and Docker daemon is available
 # docker>=7.0.0

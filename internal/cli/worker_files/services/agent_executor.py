@@ -212,91 +212,101 @@ class AgentExecutorService:
 
             def stream_agent_run():
                 """Run agent with streaming and collect response"""
-                try:
-                    # Execute with conversation context
-                    if conversation_context:
-                        run_response = agent.run(
-                            input.prompt,
-                            stream=True,
-                            messages=conversation_context,
-                        )
-                    else:
-                        run_response = agent.run(input.prompt, stream=True)
+                # Create event loop for this thread (needed for async streaming)
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
 
-                    # Process streaming chunks
-                    for chunk in run_response:
-                        # Handle run_id capture
-                        streaming_helper.handle_run_id(
-                            chunk=chunk,
-                            on_run_id=lambda run_id: self.cancellation_manager.set_run_id(execution_id, run_id)
-                        )
+                async def _async_stream():
+                    """Async wrapper for streaming execution"""
+                    import time as time_module
+                    last_heartbeat_time = time_module.time()
+                    last_persistence_time = time_module.time()
+                    heartbeat_interval = 10  # Send heartbeat every 10 seconds
+                    persistence_interval = 60  # Persist to database every 60 seconds
 
-                        # Handle content chunk
-                        streaming_helper.handle_content_chunk(
-                            chunk=chunk,
-                            message_id=message_id,
-                            print_to_console=True
-                        )
-
-                    print()  # New line after streaming
-                    return run_response
-
-                except Exception as e:
-                    print(f"\n❌ Streaming error: {str(e)}")
-                    # Fall back to non-streaming
-                    if conversation_context:
-                        return agent.run(input.prompt, stream=False, messages=conversation_context)
-                    else:
-                        return agent.run(input.prompt, stream=False)
-
-            # STEP 7.5: Create periodic session persistence task
-            # This ensures conversation history is saved even if worker crashes
-            execution_running = True
-            last_persisted_length = 0
-
-            async def periodic_persistence_task():
-                """Persist session history every 60 seconds during execution"""
-                nonlocal last_persisted_length
-                while execution_running:
-                    await asyncio.sleep(60)  # Persist every minute
-                    if not execution_running:
-                        break
-
-                    # Build current snapshot from streamed content
-                    current_response = streaming_helper.get_full_response()
-                    if current_response and len(current_response) > last_persisted_length:
-                        print(f"\n💾 Periodic persistence ({len(current_response)} chars)...")
-
-                        # Create snapshot message
-                        snapshot_messages = session_history + [{
-                            "role": "assistant",
-                            "content": current_response,
-                            "timestamp": datetime.now(timezone.utc).isoformat(),
-                        }]
-
-                        # Persist (best effort - don't fail execution if this fails)
-                        try:
-                            success = self.session_service.persist_session(
-                                execution_id=execution_id,
-                                session_id=input.session_id or execution_id,
-                                user_id=input.user_id,
-                                messages=snapshot_messages,
-                                metadata={
-                                    "agent_id": input.agent_id,
-                                    "organization_id": input.organization_id,
-                                    "snapshot": True,  # Mark as intermediate snapshot
-                                }
+                    try:
+                        # Execute with conversation context
+                        if conversation_context:
+                            run_response = agent.run(
+                                input.prompt,
+                                stream=True,
+                                messages=conversation_context,
                             )
-                            if success:
-                                last_persisted_length = len(current_response)
-                                print(f"   ✅ Session snapshot persisted")
-                            else:
-                                print(f"   ⚠️  Session snapshot persistence failed (non-fatal)")
-                        except Exception as e:
-                            print(f"   ⚠️  Session snapshot error: {str(e)} (non-fatal)")
+                        else:
+                            run_response = agent.run(input.prompt, stream=True)
 
-            # Start periodic persistence in background
-            persistence_task = asyncio.create_task(periodic_persistence_task())
+                        # Process streaming chunks (sync iteration in async context)
+                        for chunk in run_response:
+                            # Periodic maintenance: heartbeats and persistence
+                            current_time = time_module.time()
+
+                            # Send heartbeat every 10s (Temporal liveness)
+                            if current_time - last_heartbeat_time >= heartbeat_interval:
+                                current_response = streaming_helper.get_full_response()
+                                activity.heartbeat({
+                                    "status": "Streaming in progress...",
+                                    "response_length": len(current_response),
+                                    "execution_id": execution_id,
+                                })
+                                last_heartbeat_time = current_time
+
+                            # Persist snapshot every 60s (resilience against crashes)
+                            if current_time - last_persistence_time >= persistence_interval:
+                                current_response = streaming_helper.get_full_response()
+                                if current_response:
+                                    print(f"\n💾 Periodic persistence ({len(current_response)} chars)...")
+                                    snapshot_messages = session_history + [{
+                                        "role": "assistant",
+                                        "content": current_response,
+                                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                                    }]
+                                    try:
+                                        # Best effort - don't fail execution if persistence fails
+                                        self.session_service.persist_session(
+                                            execution_id=execution_id,
+                                            session_id=input.session_id or execution_id,
+                                            user_id=input.user_id,
+                                            messages=snapshot_messages,
+                                            metadata={
+                                                "agent_id": input.agent_id,
+                                                "organization_id": input.organization_id,
+                                                "snapshot": True,
+                                            }
+                                        )
+                                        print(f"   ✅ Session snapshot persisted")
+                                    except Exception as e:
+                                        print(f"   ⚠️  Session persistence error: {str(e)} (non-fatal)")
+                                last_persistence_time = current_time
+
+                            # Handle run_id capture
+                            streaming_helper.handle_run_id(
+                                chunk=chunk,
+                                on_run_id=lambda run_id: self.cancellation_manager.set_run_id(execution_id, run_id)
+                            )
+
+                            # Handle content chunk
+                            streaming_helper.handle_content_chunk(
+                                chunk=chunk,
+                                message_id=message_id,
+                                print_to_console=True
+                            )
+
+                        print()  # New line after streaming
+                        return run_response
+
+                    except Exception as e:
+                        print(f"\n❌ Streaming error: {str(e)}")
+                        # Fall back to non-streaming
+                        if conversation_context:
+                            return agent.run(input.prompt, stream=False, messages=conversation_context)
+                        else:
+                            return agent.run(input.prompt, stream=False)
+
+                # Run the async function in the event loop
+                try:
+                    return loop.run_until_complete(_async_stream())
+                finally:
+                    loop.close()
 
             # Execute in thread pool (no timeout - user controls via STOP button)
             # Wrap in try-except to handle Temporal cancellation
@@ -312,13 +322,6 @@ class AgentExecutorService:
                     print(f"⚠️  Cancellation completed with warning: {cancel_result.get('error', 'Unknown')}")
                 # Re-raise to let Temporal know we're cancelled
                 raise
-            finally:
-                # Always stop persistence task
-                execution_running = False
-                try:
-                    await asyncio.wait_for(persistence_task, timeout=2.0)
-                except asyncio.TimeoutError:
-                    persistence_task.cancel()
 
             print("✅ Agent Execution Completed!")
             full_response = streaming_helper.get_full_response()

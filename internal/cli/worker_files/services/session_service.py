@@ -11,6 +11,30 @@ from utils.retry_utils import retry_with_backoff
 logger = structlog.get_logger()
 
 
+def _safe_timestamp_to_iso(timestamp: Any) -> str:
+    """
+    Safely convert a timestamp (int, float, datetime, or str) to ISO format string.
+
+    Args:
+        timestamp: Can be Unix timestamp (int/float), datetime object, or ISO string
+
+    Returns:
+        ISO format timestamp string
+    """
+    if isinstance(timestamp, str):
+        # Already a string, return as-is
+        return timestamp
+    elif isinstance(timestamp, datetime):
+        # datetime object, call isoformat()
+        return timestamp.isoformat()
+    elif isinstance(timestamp, (int, float)):
+        # Unix timestamp, convert to datetime first
+        return datetime.fromtimestamp(timestamp, tz=timezone.utc).isoformat()
+    else:
+        # Fallback to current time
+        return datetime.now(timezone.utc).isoformat()
+
+
 class SessionService:
     """
     Manages session history loading and persistence via Control Plane API.
@@ -158,8 +182,8 @@ class SessionService:
                     "role": msg.role,
                     "content": msg.content,
                     "timestamp": (
-                        getattr(msg, "created_at", datetime.now(timezone.utc)).isoformat()
-                        if hasattr(msg, "created_at")
+                        _safe_timestamp_to_iso(msg.created_at)
+                        if hasattr(msg, "created_at") and msg.created_at is not None
                         else datetime.now(timezone.utc).isoformat()
                     ),
                     "user_id": getattr(msg, "user_id", user_id),
