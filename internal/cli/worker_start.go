@@ -196,6 +196,107 @@ func (opts *WorkerStartOptions) RunLocal(ctx context.Context) error {
 		return fmt.Errorf("❌ failed to write team_activities.py: %w", err)
 	}
 
+	if err := os.WriteFile(fmt.Sprintf("%s/toolset_activities.py", activitiesDir), []byte(toolsetActivities), 0644); err != nil {
+		return fmt.Errorf("❌ failed to write toolset_activities.py: %w", err)
+	}
+
+	// Write control_plane_client.py (root level)
+	if err := os.WriteFile(fmt.Sprintf("%s/control_plane_client.py", workerDir), []byte(controlPlaneClient), 0644); err != nil {
+		return fmt.Errorf("❌ failed to write control_plane_client.py: %w", err)
+	}
+
+	// Write models directory
+	modelsDir := fmt.Sprintf("%s/models", workerDir)
+	if err := os.MkdirAll(modelsDir, 0755); err != nil {
+		return fmt.Errorf("❌ failed to create models directory: %w", err)
+	}
+
+	if err := os.WriteFile(fmt.Sprintf("%s/__init__.py", modelsDir), []byte(modelsInit), 0644); err != nil {
+		return fmt.Errorf("❌ failed to write models __init__.py: %w", err)
+	}
+
+	if err := os.WriteFile(fmt.Sprintf("%s/inputs.py", modelsDir), []byte(modelsInputs), 0644); err != nil {
+		return fmt.Errorf("❌ failed to write models inputs.py: %w", err)
+	}
+
+	// Write services directory
+	servicesDir := fmt.Sprintf("%s/services", workerDir)
+	if err := os.MkdirAll(servicesDir, 0755); err != nil {
+		return fmt.Errorf("❌ failed to create services directory: %w", err)
+	}
+
+	if err := os.WriteFile(fmt.Sprintf("%s/__init__.py", servicesDir), []byte(servicesInit), 0644); err != nil {
+		return fmt.Errorf("❌ failed to write services __init__.py: %w", err)
+	}
+
+	if err := os.WriteFile(fmt.Sprintf("%s/agent_executor.py", servicesDir), []byte(agentExecutorService), 0644); err != nil {
+		return fmt.Errorf("❌ failed to write agent_executor.py: %w", err)
+	}
+
+	if err := os.WriteFile(fmt.Sprintf("%s/agent_executor_v2.py", servicesDir), []byte(agentExecutorV2Service), 0644); err != nil {
+		return fmt.Errorf("❌ failed to write agent_executor_v2.py: %w", err)
+	}
+
+	if err := os.WriteFile(fmt.Sprintf("%s/cancellation_manager.py", servicesDir), []byte(cancellationManagerService), 0644); err != nil {
+		return fmt.Errorf("❌ failed to write cancellation_manager.py: %w", err)
+	}
+
+	if err := os.WriteFile(fmt.Sprintf("%s/session_service.py", servicesDir), []byte(sessionService), 0644); err != nil {
+		return fmt.Errorf("❌ failed to write session_service.py: %w", err)
+	}
+
+	if err := os.WriteFile(fmt.Sprintf("%s/team_executor.py", servicesDir), []byte(teamExecutorService), 0644); err != nil {
+		return fmt.Errorf("❌ failed to write team_executor.py: %w", err)
+	}
+
+	if err := os.WriteFile(fmt.Sprintf("%s/toolset_factory.py", servicesDir), []byte(toolsetFactoryService), 0644); err != nil {
+		return fmt.Errorf("❌ failed to write toolset_factory.py: %w", err)
+	}
+
+	// Write runtimes directory
+	runtimesDir := fmt.Sprintf("%s/runtimes", workerDir)
+	if err := os.MkdirAll(runtimesDir, 0755); err != nil {
+		return fmt.Errorf("❌ failed to create runtimes directory: %w", err)
+	}
+
+	if err := os.WriteFile(fmt.Sprintf("%s/__init__.py", runtimesDir), []byte(runtimesInit), 0644); err != nil {
+		return fmt.Errorf("❌ failed to write runtimes __init__.py: %w", err)
+	}
+
+	if err := os.WriteFile(fmt.Sprintf("%s/base.py", runtimesDir), []byte(runtimesBase), 0644); err != nil {
+		return fmt.Errorf("❌ failed to write runtimes base.py: %w", err)
+	}
+
+	if err := os.WriteFile(fmt.Sprintf("%s/claude_code_runtime.py", runtimesDir), []byte(runtimesClaudeCode), 0644); err != nil {
+		return fmt.Errorf("❌ failed to write claude_code_runtime.py: %w", err)
+	}
+
+	if err := os.WriteFile(fmt.Sprintf("%s/default_runtime.py", runtimesDir), []byte(runtimesDefault), 0644); err != nil {
+		return fmt.Errorf("❌ failed to write default_runtime.py: %w", err)
+	}
+
+	if err := os.WriteFile(fmt.Sprintf("%s/factory.py", runtimesDir), []byte(runtimesFactory), 0644); err != nil {
+		return fmt.Errorf("❌ failed to write runtimes factory.py: %w", err)
+	}
+
+	// Write utils directory
+	utilsDir := fmt.Sprintf("%s/utils", workerDir)
+	if err := os.MkdirAll(utilsDir, 0755); err != nil {
+		return fmt.Errorf("❌ failed to create utils directory: %w", err)
+	}
+
+	if err := os.WriteFile(fmt.Sprintf("%s/__init__.py", utilsDir), []byte(utilsInit), 0644); err != nil {
+		return fmt.Errorf("❌ failed to write utils __init__.py: %w", err)
+	}
+
+	if err := os.WriteFile(fmt.Sprintf("%s/retry_utils.py", utilsDir), []byte(utilsRetry), 0644); err != nil {
+		return fmt.Errorf("❌ failed to write retry_utils.py: %w", err)
+	}
+
+	if err := os.WriteFile(fmt.Sprintf("%s/streaming_utils.py", utilsDir), []byte(utilsStreaming), 0644); err != nil {
+		return fmt.Errorf("❌ failed to write streaming_utils.py: %w", err)
+	}
+
 	fmt.Println("✓ Worker code deployed from embedded binaries")
 	fmt.Println("✓ Workflows and activities configured")
 

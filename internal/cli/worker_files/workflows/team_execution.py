@@ -119,6 +119,19 @@ class TeamExecutionWorkflow:
             self._state.is_waiting_for_input = False
             workflow.logger.info("Team workflow marked as done by user")
 
+    @workflow.signal
+    async def update_streaming_response(self, current_response: str) -> None:
+        """
+        Signal handler: Update current streaming response.
+        Activity sends this periodically during execution for state tracking.
+        """
+        async with self._lock:
+            self._state.current_response = current_response
+            workflow.logger.info(
+                f"Streaming response updated",
+                extra={"response_length": len(current_response)}
+            )
+
     @workflow.run
     async def run(self, input: TeamExecutionInput) -> dict:
         """

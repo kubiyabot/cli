@@ -244,209 +244,219 @@ class TeamExecutorService:
 
             def stream_team_run():
                 """Run team with streaming and collect response"""
-                try:
-                    # Execute with conversation context
-                    if conversation_context:
-                        run_response = team.run(
-                            input.prompt,
-                            stream=True,
-                            messages=conversation_context,
-                        )
-                    else:
-                        run_response = team.run(input.prompt, stream=True)
+                # Create event loop for this thread (needed for async streaming)
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
 
-                    # Process streaming events
-                    for event in run_response:
-                        # Handle run_id capture
-                        streaming_helper.handle_run_id(
-                            chunk=event,
-                            on_run_id=lambda run_id: self.cancellation_manager.set_run_id(execution_id, run_id)
-                        )
+                async def _async_stream():
+                    """Async wrapper for streaming execution"""
+                    import time as time_module
+                    last_heartbeat_time = time_module.time()
+                    last_persistence_time = time_module.time()
+                    heartbeat_interval = 10  # Send heartbeat every 10 seconds
+                    persistence_interval = 60  # Persist to database every 60 seconds
 
-                        # Get event type
-                        event_type = getattr(event, 'event', None)
+                    try:
+                        # Execute with conversation context
+                        if conversation_context:
+                            run_response = team.run(
+                                input.prompt,
+                                stream=True,
+                                messages=conversation_context,
+                            )
+                        else:
+                            run_response = team.run(input.prompt, stream=True)
 
-                        # Handle TEAM LEADER content chunks
-                        if event_type == "TeamRunContent":
-                            streaming_helper.handle_content_chunk(
+                        # Process streaming events (sync iteration in async context)
+                        for event in run_response:
+                            # Periodic maintenance: heartbeats and persistence
+                            current_time = time_module.time()
+
+                            # Send heartbeat every 10s (Temporal liveness)
+                            if current_time - last_heartbeat_time >= heartbeat_interval:
+                                current_response = streaming_helper.get_full_response()
+                                activity.heartbeat({
+                                    "status": "Streaming in progress...",
+                                    "response_length": len(current_response),
+                                    "execution_id": execution_id,
+                                })
+                                last_heartbeat_time = current_time
+
+                            # Persist snapshot every 60s (resilience against crashes)
+                            if current_time - last_persistence_time >= persistence_interval:
+                                current_response = streaming_helper.get_full_response()
+                                if current_response:
+                                    print(f"\n💾 Periodic persistence ({len(current_response)} chars)...")
+                                    snapshot_messages = session_history + [{
+                                        "role": "assistant",
+                                        "content": current_response,
+                                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                                    }]
+                                    try:
+                                        # Best effort - don't fail execution if persistence fails
+                                        self.session_service.persist_session(
+                                            execution_id=execution_id,
+                                            session_id=input.session_id or execution_id,
+                                            user_id=input.user_id,
+                                            messages=snapshot_messages,
+                                            metadata={
+                                                "team_id": input.team_id,
+                                                "organization_id": input.organization_id,
+                                                "snapshot": True,
+                                            }
+                                        )
+                                        print(f"   ✅ Session snapshot persisted")
+                                    except Exception as e:
+                                        print(f"   ⚠️  Session persistence error: {str(e)} (non-fatal)")
+                                last_persistence_time = current_time
+
+                            # Handle run_id capture
+                            streaming_helper.handle_run_id(
                                 chunk=event,
-                                message_id=message_id,
-                                print_to_console=True
+                                on_run_id=lambda run_id: self.cancellation_manager.set_run_id(execution_id, run_id)
                             )
 
-                        # Handle MEMBER content chunks (from team members)
-                        elif event_type == "RunContent":
-                            # Member agent content chunk
-                            member_name = getattr(event, 'agent_name', getattr(event, 'member_name', 'Team Member'))
+                            # Get event type
+                            event_type = getattr(event, 'event', None)
 
-                            if hasattr(event, 'content') and event.content:
-                                content = str(event.content)
-                                streaming_helper.handle_member_content_chunk(
-                                    member_name=member_name,
-                                    content=content,
+                            # Handle TEAM LEADER content chunks
+                            if event_type == "TeamRunContent":
+                                streaming_helper.handle_content_chunk(
+                                    chunk=event,
+                                    message_id=message_id,
                                     print_to_console=True
                                 )
 
-                        # Handle TEAM LEADER tool calls
-                        elif event_type == "TeamToolCallStarted":
-                            # Extract tool name properly
-                            tool_obj = getattr(event, 'tool', None)
-                            if tool_obj and hasattr(tool_obj, 'tool_name'):
-                                tool_name = tool_obj.tool_name
-                                tool_args = getattr(tool_obj, 'tool_args', {})
-                            else:
-                                tool_name = str(tool_obj) if tool_obj else getattr(event, 'tool_name', 'unknown')
-                                tool_args = {}
+                            # Handle MEMBER content chunks (from team members)
+                            elif event_type == "RunContent":
+                                # Member agent content chunk
+                                member_name = getattr(event, 'agent_name', getattr(event, 'member_name', 'Team Member'))
 
-                            import time
-                            tool_execution_id = f"{tool_name}_{int(time.time() * 1000000)}"
+                                if hasattr(event, 'content') and event.content:
+                                    content = str(event.content)
+                                    streaming_helper.handle_member_content_chunk(
+                                        member_name=member_name,
+                                        content=content,
+                                        print_to_console=True
+                                    )
 
-                            print(f"\n   🔧 Tool Starting: {tool_name} (Team Leader)")
-                            streaming_helper.publish_tool_start(
-                                tool_name=tool_name,
-                                tool_execution_id=tool_execution_id,
-                                tool_args=tool_args,
-                                source="team_leader",
-                                member_name=None
-                            )
+                            # Handle TEAM LEADER tool calls
+                            elif event_type == "TeamToolCallStarted":
+                                # Extract tool name properly
+                                tool_obj = getattr(event, 'tool', None)
+                                if tool_obj and hasattr(tool_obj, 'tool_name'):
+                                    tool_name = tool_obj.tool_name
+                                    tool_args = getattr(tool_obj, 'tool_args', {})
+                                else:
+                                    tool_name = str(tool_obj) if tool_obj else getattr(event, 'tool_name', 'unknown')
+                                    tool_args = {}
 
-                        elif event_type == "TeamToolCallCompleted":
-                            # Extract tool name and output
-                            tool_obj = getattr(event, 'tool', None)
-                            if tool_obj and hasattr(tool_obj, 'tool_name'):
-                                tool_name = tool_obj.tool_name
-                                tool_output = getattr(tool_obj, 'result', None) or getattr(event, 'result', None)
-                            else:
-                                tool_name = str(tool_obj) if tool_obj else getattr(event, 'tool_name', 'unknown')
-                                tool_output = getattr(event, 'result', None)
+                                import time
+                                tool_execution_id = f"{tool_name}_{int(time.time() * 1000000)}"
 
-                            import time
-                            tool_execution_id = f"{tool_name}_{int(time.time() * 1000000)}"
+                                print(f"\n   🔧 Tool Starting: {tool_name} (Team Leader)")
+                                streaming_helper.publish_tool_start(
+                                    tool_name=tool_name,
+                                    tool_execution_id=tool_execution_id,
+                                    tool_args=tool_args,
+                                    source="team_leader",
+                                    member_name=None
+                                )
 
-                            print(f"\n   ✅ Tool Completed: {tool_name} (Team Leader)")
-                            streaming_helper.publish_tool_complete(
-                                tool_name=tool_name,
-                                tool_execution_id=tool_execution_id,
-                                status="success",
-                                output=str(tool_output) if tool_output else None,
-                                error=None,
-                                source="team_leader",
-                                member_name=None
-                            )
+                            elif event_type == "TeamToolCallCompleted":
+                                # Extract tool name and output
+                                tool_obj = getattr(event, 'tool', None)
+                                if tool_obj and hasattr(tool_obj, 'tool_name'):
+                                    tool_name = tool_obj.tool_name
+                                    tool_output = getattr(tool_obj, 'result', None) or getattr(event, 'result', None)
+                                else:
+                                    tool_name = str(tool_obj) if tool_obj else getattr(event, 'tool_name', 'unknown')
+                                    tool_output = getattr(event, 'result', None)
 
-                        # Handle MEMBER tool calls
-                        elif event_type == "ToolCallStarted":
-                            # Extract tool name properly
-                            tool_obj = getattr(event, 'tool', None)
-                            if tool_obj and hasattr(tool_obj, 'tool_name'):
-                                tool_name = tool_obj.tool_name
-                                tool_args = getattr(tool_obj, 'tool_args', {})
-                            else:
-                                tool_name = str(tool_obj) if tool_obj else getattr(event, 'tool_name', 'unknown')
-                                tool_args = {}
+                                import time
+                                tool_execution_id = f"{tool_name}_{int(time.time() * 1000000)}"
 
-                            member_name = getattr(event, 'agent_name', getattr(event, 'member_name', 'Team Member'))
+                                print(f"\n   ✅ Tool Completed: {tool_name} (Team Leader)")
+                                streaming_helper.publish_tool_complete(
+                                    tool_name=tool_name,
+                                    tool_execution_id=tool_execution_id,
+                                    status="success",
+                                    output=str(tool_output) if tool_output else None,
+                                    error=None,
+                                    source="team_leader",
+                                    member_name=None
+                                )
 
-                            import time
-                            tool_execution_id = f"{tool_name}_{int(time.time() * 1000000)}"
+                            # Handle MEMBER tool calls
+                            elif event_type == "ToolCallStarted":
+                                # Extract tool name properly
+                                tool_obj = getattr(event, 'tool', None)
+                                if tool_obj and hasattr(tool_obj, 'tool_name'):
+                                    tool_name = tool_obj.tool_name
+                                    tool_args = getattr(tool_obj, 'tool_args', {})
+                                else:
+                                    tool_name = str(tool_obj) if tool_obj else getattr(event, 'tool_name', 'unknown')
+                                    tool_args = {}
 
-                            print(f"\n   🔧 Tool Starting: {tool_name} ({member_name})")
-                            streaming_helper.publish_tool_start(
-                                tool_name=tool_name,
-                                tool_execution_id=tool_execution_id,
-                                tool_args=tool_args,
-                                source="team_member",
-                                member_name=member_name
-                            )
+                                member_name = getattr(event, 'agent_name', getattr(event, 'member_name', 'Team Member'))
 
-                        elif event_type == "ToolCallCompleted":
-                            # Extract tool name and output
-                            tool_obj = getattr(event, 'tool', None)
-                            if tool_obj and hasattr(tool_obj, 'tool_name'):
-                                tool_name = tool_obj.tool_name
-                                tool_output = getattr(tool_obj, 'result', None) or getattr(event, 'result', None)
-                            else:
-                                tool_name = str(tool_obj) if tool_obj else getattr(event, 'tool_name', 'unknown')
-                                tool_output = getattr(event, 'result', None)
+                                import time
+                                tool_execution_id = f"{tool_name}_{int(time.time() * 1000000)}"
 
-                            member_name = getattr(event, 'agent_name', getattr(event, 'member_name', 'Team Member'))
+                                print(f"\n   🔧 Tool Starting: {tool_name} ({member_name})")
+                                streaming_helper.publish_tool_start(
+                                    tool_name=tool_name,
+                                    tool_execution_id=tool_execution_id,
+                                    tool_args=tool_args,
+                                    source="team_member",
+                                    member_name=member_name
+                                )
 
-                            import time
-                            tool_execution_id = f"{tool_name}_{int(time.time() * 1000000)}"
+                            elif event_type == "ToolCallCompleted":
+                                # Extract tool name and output
+                                tool_obj = getattr(event, 'tool', None)
+                                if tool_obj and hasattr(tool_obj, 'tool_name'):
+                                    tool_name = tool_obj.tool_name
+                                    tool_output = getattr(tool_obj, 'result', None) or getattr(event, 'result', None)
+                                else:
+                                    tool_name = str(tool_obj) if tool_obj else getattr(event, 'tool_name', 'unknown')
+                                    tool_output = getattr(event, 'result', None)
 
-                            print(f"\n   ✅ Tool Completed: {tool_name} ({member_name})")
-                            streaming_helper.publish_tool_complete(
-                                tool_name=tool_name,
-                                tool_execution_id=tool_execution_id,
-                                status="success",
-                                output=str(tool_output) if tool_output else None,
-                                error=None,
-                                source="team_member",
-                                member_name=member_name
-                            )
+                                member_name = getattr(event, 'agent_name', getattr(event, 'member_name', 'Team Member'))
 
-                    # Finalize streaming (mark any active member as complete)
-                    streaming_helper.finalize_streaming()
+                                import time
+                                tool_execution_id = f"{tool_name}_{int(time.time() * 1000000)}"
 
-                    print()  # New line after streaming
-                    return run_response
+                                print(f"\n   ✅ Tool Completed: {tool_name} ({member_name})")
+                                streaming_helper.publish_tool_complete(
+                                    tool_name=tool_name,
+                                    tool_execution_id=tool_execution_id,
+                                    status="success",
+                                    output=str(tool_output) if tool_output else None,
+                                    error=None,
+                                    source="team_member",
+                                    member_name=member_name
+                                )
 
-                except Exception as e:
-                    print(f"\n❌ Streaming error: {str(e)}")
-                    # Fall back to non-streaming
-                    if conversation_context:
-                        return team.run(input.prompt, stream=False, messages=conversation_context)
-                    else:
-                        return team.run(input.prompt, stream=False)
+                        # Finalize streaming (mark any active member as complete)
+                        streaming_helper.finalize_streaming()
 
-            # STEP 7.5: Create periodic session persistence task
-            # This ensures conversation history is saved even if worker crashes
-            execution_running = True
-            last_persisted_length = 0
+                        print()  # New line after streaming
+                        return run_response
 
-            async def periodic_persistence_task():
-                """Persist session history every 60 seconds during execution"""
-                nonlocal last_persisted_length
-                while execution_running:
-                    await asyncio.sleep(60)  # Persist every minute
-                    if not execution_running:
-                        break
+                    except Exception as e:
+                        print(f"\n❌ Streaming error: {str(e)}")
+                        # Fall back to non-streaming
+                        if conversation_context:
+                            return team.run(input.prompt, stream=False, messages=conversation_context)
+                        else:
+                            return team.run(input.prompt, stream=False)
 
-                    # Build current snapshot from streamed content
-                    current_response = streaming_helper.get_full_response()
-                    if current_response and len(current_response) > last_persisted_length:
-                        print(f"\n💾 Periodic persistence ({len(current_response)} chars)...")
-
-                        # Create snapshot message
-                        snapshot_messages = session_history + [{
-                            "role": "assistant",
-                            "content": current_response,
-                            "timestamp": datetime.now(timezone.utc).isoformat(),
-                        }]
-
-                        # Persist (best effort - don't fail execution if this fails)
-                        try:
-                            success = self.session_service.persist_session(
-                                execution_id=execution_id,
-                                session_id=input.session_id or execution_id,
-                                user_id=input.user_id,
-                                messages=snapshot_messages,
-                                metadata={
-                                    "team_id": input.team_id,
-                                    "organization_id": input.organization_id,
-                                    "snapshot": True,  # Mark as intermediate snapshot
-                                }
-                            )
-                            if success:
-                                last_persisted_length = len(current_response)
-                                print(f"   ✅ Session snapshot persisted")
-                            else:
-                                print(f"   ⚠️  Session snapshot persistence failed (non-fatal)")
-                        except Exception as e:
-                            print(f"   ⚠️  Session snapshot error: {str(e)} (non-fatal)")
-
-            # Start periodic persistence in background
-            persistence_task = asyncio.create_task(periodic_persistence_task())
+                # Run the async function in the event loop
+                try:
+                    return loop.run_until_complete(_async_stream())
+                finally:
+                    loop.close()
 
             # Execute in thread pool (no timeout - user controls via STOP button)
             # Wrap in try-except to handle Temporal cancellation
@@ -462,13 +472,6 @@ class TeamExecutorService:
                     print(f"⚠️  Cancellation completed with warning: {cancel_result.get('error', 'Unknown')}")
                 # Re-raise to let Temporal know we're cancelled
                 raise
-            finally:
-                # Always stop persistence task
-                execution_running = False
-                try:
-                    await asyncio.wait_for(persistence_task, timeout=2.0)
-                except asyncio.TimeoutError:
-                    persistence_task.cancel()
 
             print("✅ Team Execution Completed!")
             full_response = streaming_helper.get_full_response()

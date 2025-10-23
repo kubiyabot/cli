@@ -214,6 +214,70 @@ async def execute_team_coordination(input: ActivityExecuteTeamInput) -> dict:
         }
 
 
+@dataclass
+class ActivityPersistSessionInput:
+    """Input for persist_session activity"""
+    execution_id: str
+    session_id: str
+    team_id: str
+    organization_id: str
+    user_id: Optional[str]
+    messages: List[dict]
+    is_snapshot: bool = True
+
+
+@activity.defn(name="persist_team_session")
+async def persist_team_session(input: ActivityPersistSessionInput) -> dict:
+    """
+    Persist team session history to Control Plane database.
+
+    This activity is called periodically during team execution to ensure
+    conversation history is not lost if worker crashes.
+
+    Args:
+        input: ActivityPersistSessionInput with session details
+
+    Returns:
+        Dict with success status
+    """
+    print(f"\n💾 Persisting session snapshot ({len(input.messages)} messages)...")
+
+    try:
+        control_plane = get_control_plane_client()
+        session_service = SessionService(control_plane)
+
+        success = session_service.persist_session(
+            execution_id=input.execution_id,
+            session_id=input.session_id,
+            user_id=input.user_id,
+            messages=input.messages,
+            metadata={
+                "team_id": input.team_id,
+                "organization_id": input.organization_id,
+                "snapshot": input.is_snapshot,
+                "message_count": len(input.messages),
+            }
+        )
+
+        if success:
+            print(f"✅ Session snapshot persisted\n")
+        else:
+            print(f"⚠️  Session persistence failed\n")
+
+        return {"success": success, "message_count": len(input.messages)}
+
+    except Exception as e:
+        print(f"❌ Error persisting session: {str(e)}\n")
+        activity.logger.error(
+            "persist_session_error",
+            extra={
+                "execution_id": input.execution_id,
+                "error": str(e),
+            }
+        )
+        return {"success": False, "error": str(e)}
+
+
 @activity.defn(name="cancel_team_run")
 async def cancel_team_run(input: ActivityCancelTeamInput) -> dict:
     """
