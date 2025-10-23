@@ -10,9 +10,11 @@ with workflow.unsafe.imports_passed_through():
     from activities.team_activities import (
         get_team_agents,
         execute_team_coordination,
-        update_execution_status,
         ActivityGetTeamAgentsInput,
         ActivityExecuteTeamInput,
+    )
+    from activities.agent_activities import (
+        update_execution_status,
         ActivityUpdateExecutionInput,
     )
 

@@ -131,6 +131,48 @@ log_buffer = deque(maxlen=500)  # Keep last 500 log lines
 worker_start_time = time.time()
 
 
+class ProgressUI:
+    """Minimal animated UI for worker startup - minikube style"""
+
+    @staticmethod
+    def step(emoji: str, message: str, status: str = ""):
+        """Print a step with emoji and optional status"""
+        if status:
+            print(f"{emoji}  {message} {status}")
+        else:
+            print(f"{emoji}  {message}")
+
+    @staticmethod
+    def success(emoji: str, message: str):
+        """Print success message"""
+        GREEN = "\033[92m"
+        RESET = "\033[0m"
+        print(f"{GREEN}{emoji}  {message}{RESET}")
+
+    @staticmethod
+    def error(emoji: str, message: str):
+        """Print error message"""
+        RED = "\033[91m"
+        RESET = "\033[0m"
+        print(f"{RED}{emoji}  {message}{RESET}")
+
+    @staticmethod
+    def header(text: str):
+        """Print section header"""
+        CYAN = "\033[96m"
+        BOLD = "\033[1m"
+        RESET = "\033[0m"
+        print(f"\n{CYAN}{BOLD}{text}{RESET}")
+
+    @staticmethod
+    def banner():
+        """Print startup banner"""
+        CYAN = "\033[96m"
+        BOLD = "\033[1m"
+        RESET = "\033[0m"
+        print(f"\n{CYAN}{BOLD}🚀 Kubiya Agent Worker{RESET}\n")
+
+
 def collect_system_info() -> dict:
     """
     Collect current system metrics and information.
@@ -140,10 +182,80 @@ def collect_system_info() -> dict:
         memory = psutil.virtual_memory()
         disk = psutil.disk_usage('/')
 
+        # Get Kubiya CLI version from environment variable (set by CLI) - skipped for now
+        cli_version = None
+
+        # Check Docker availability
+        docker_available = False
+        docker_version = None
+        try:
+            import subprocess
+            import shutil
+
+            # First try to find docker in PATH using shutil.which
+            docker_path = shutil.which('docker')
+            logger.debug("docker_which_result", path=docker_path)
+
+            # Fallback to common locations if not in PATH
+            if not docker_path:
+                docker_paths = [
+                    '/usr/local/bin/docker',
+                    '/usr/bin/docker',
+                    '/opt/homebrew/bin/docker',
+                ]
+                for path in docker_paths:
+                    logger.debug("docker_checking_path", path=path, exists=os.path.exists(path))
+                    if os.path.exists(path):
+                        docker_path = path
+                        break
+
+            if docker_path:
+                logger.debug("docker_running_version_check", path=docker_path)
+                result = subprocess.run(
+                    [docker_path, '--version'],
+                    capture_output=True,
+                    text=True,
+                    timeout=3,
+                    shell=False
+                )
+                logger.debug(
+                    "docker_version_output",
+                    returncode=result.returncode,
+                    stdout=result.stdout[:200],
+                    stderr=result.stderr[:200] if result.stderr else None
+                )
+                if result.returncode == 0:
+                    docker_available = True
+                    # Parse "Docker version 28.1.1, build 4eba377"
+                    output = result.stdout.strip()
+                    if ',' in output:
+                        docker_version = output.split(',')[0].replace('Docker version', '').strip()
+                    else:
+                        docker_version = output.replace('Docker version', '').strip()
+                    logger.debug("docker_detected", version=docker_version, path=docker_path)
+                else:
+                    logger.warning("docker_version_check_failed", returncode=result.returncode)
+            else:
+                logger.warning("docker_not_found_in_path_or_common_locations")
+        except Exception as e:
+            # Log for debugging but don't fail
+            logger.warning("docker_detection_failed", error=str(e), error_type=type(e).__name__)
+            import traceback
+            logger.debug("docker_detection_traceback", traceback=traceback.format_exc())
+
+        # Parse OS details from platform
+        os_name = platform.system()  # Darwin, Linux, Windows
+        os_version = platform.release()
+
         return {
             "hostname": socket.gethostname(),
             "platform": platform.platform(),
+            "os_name": os_name,
+            "os_version": os_version,
             "python_version": platform.python_version(),
+            "cli_version": cli_version,
+            "docker_available": docker_available,
+            "docker_version": docker_version,
             "cpu_count": psutil.cpu_count(),
             "cpu_percent": cpu_percent,
             "memory_total": memory.total,
@@ -228,14 +340,7 @@ async def start_worker_for_queue(
             if response.status_code == 200:
                 data = response.json()
 
-                print("\n")
-                print("✅  Successfully registered with Control Plane")
-                print()
-                print(f"   📋 Queue:    {data.get('queue_name', 'N/A')}")
-                print(f"   🆔 Worker:   {data.get('worker_id', '')[:8]}...")
-                print(f"   🏢 Org:      {data.get('organization_id', 'N/A')}")
-                print()
-
+                ProgressUI.success("✓", f"Registered with control plane")
                 logger.info(
                     "worker_registered",
                     worker_id=data.get("worker_id")[:8],
@@ -265,40 +370,8 @@ async def start_worker_for_queue(
                 except:
                     pass
 
-                # Make error message more user-friendly
-                print("\n")
-                print("════════════════════════════════════════════════════════════════════════════════")
-                print("❌  WORKER START FAILED")
-                print("════════════════════════════════════════════════════════════════════════════════")
-                print()
-
-                if response.status_code == 404:
-                    print("   🔍 Queue Not Found")
-                    print()
-                    print(f"   {error_message}")
-                    print()
-                    print("   💡 Next steps:")
-                    print("      1. Go to http://localhost:3000/control-planes/workers")
-                    print("      2. Create a new worker queue")
-                    print("      3. Use the queue ID shown in the UI")
-                elif response.status_code == 403:
-                    print("   🚫 Access Denied")
-                    print()
-                    print(f"   {error_message}")
-                    print()
-                    print("   💡 Make sure you're using the correct KUBIYA_API_KEY")
-                elif response.status_code == 500:
-                    print("   ⚙️  Server Error")
-                    print()
-                    print(f"   {error_message}")
-                    print()
-                    print("   💡 This might be a temporary issue. Try again in a moment.")
-                else:
-                    print(f"   Error ({response.status_code}): {error_message}")
-
-                print()
-                print("────────────────────────────────────────────────────────────────────────────────")
-                print()
+                ProgressUI.error("✗", "Worker registration failed")
+                print(f"   {error_message}\n")
 
                 logger.error(
                     "worker_start_failed",
@@ -308,19 +381,8 @@ async def start_worker_for_queue(
                 sys.exit(1)
 
     except httpx.RequestError as e:
-        print("\n")
-        print("════════════════════════════════════════════════════════════════════════════════")
-        print("❌  CONNECTION FAILED")
-        print("════════════════════════════════════════════════════════════════════════════════")
-        print()
-        print(f"   ⚠️  Could not connect to Control Plane: {control_plane_url}")
-        print()
-        print(f"   Error: {str(e)}")
-        print()
-        print("   💡 Check your internet connection and try again")
-        print()
-        print("────────────────────────────────────────────────────────────────────────────────")
-        print()
+        ProgressUI.error("✗", f"Connection failed: {control_plane_url}")
+        print(f"   {str(e)}\n")
         logger.error("control_plane_connection_failed", error=str(e))
         sys.exit(1)
 
@@ -361,9 +423,11 @@ async def send_heartbeat(
     }
 
     try:
+        url = f"{config.control_plane_url}/api/v1/workers/{config.worker_id}/heartbeat"
+
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.post(
-                f"{config.control_plane_url}/api/v1/workers/{config.worker_id}/heartbeat",
+                url,
                 json=heartbeat_data,
                 headers={"Authorization": f"Bearer {kubiya_api_key}"}
             )
@@ -410,7 +474,7 @@ async def create_temporal_client(config: WorkerConfig) -> Client:
 
     except Exception as e:
         logger.error("connection_failed", error=str(e))
-        print(f"\n❌  Failed to connect: {str(e)}\n")
+        ProgressUI.error("✗", f"Temporal connection failed: {str(e)}")
         raise
 
 
@@ -539,35 +603,48 @@ async def run_worker():
     log_to_buffer(f"[{time.strftime('%H:%M:%S')}] Worker starting for queue {queue_id}")
 
     try:
-        # Start worker for queue
-        print("🔄  Registering with control plane...")
+        # Print banner
+        ProgressUI.banner()
+
+        # Step 1: Register with control plane
+        ProgressUI.step("⏳", "Registering with control plane...")
         log_to_buffer(f"[{time.strftime('%H:%M:%S')}] Registering with control plane...")
         config = await start_worker_for_queue(
             control_plane_url=control_plane_url,
             kubiya_api_key=kubiya_api_key,
             queue_id=queue_id,
         )
-
         log_to_buffer(f"[{time.strftime('%H:%M:%S')}] Worker registered: {config.worker_id}")
 
         # Set environment variables for activities to use
         os.environ["CONTROL_PLANE_URL"] = config.control_plane_url
-        os.environ["KUBIYA_API_KEY"] = kubiya_api_key  # Pass the same API key to activities
-        os.environ["WORKER_ID"] = config.worker_id  # Pass worker ID for attribution
+        os.environ["KUBIYA_API_KEY"] = kubiya_api_key
+        os.environ["WORKER_ID"] = config.worker_id
         os.environ["LITELLM_API_BASE"] = config.litellm_api_url
         os.environ["LITELLM_API_KEY"] = config.litellm_api_key
 
-        # Create client
-        print("🔗  Establishing connection...")
+        # Step 2: Connect to Temporal
+        ProgressUI.step("⏳", "Connecting to Temporal...")
         client = await create_temporal_client(config)
-        print("✅  Ready to process tasks\n")
+        ProgressUI.success("✓", "Connected to Temporal")
+
+        # Step 3: Send initial heartbeat
+        ProgressUI.step("⏳", "Sending heartbeat...")
+        await send_heartbeat(
+            config=config,
+            kubiya_api_key=kubiya_api_key,
+            status="active",
+            tasks_processed=0
+        )
+        ProgressUI.success("✓", "Worker visible in UI")
 
         # Start heartbeat loop in background
         heartbeat_task = asyncio.create_task(
             heartbeat_loop(config, kubiya_api_key, heartbeat_interval)
         )
 
-        # Create worker
+        # Step 4: Create worker
+        ProgressUI.step("⏳", "Starting worker...")
         worker = Worker(
             client,
             task_queue=config.environment_name,
@@ -586,18 +663,8 @@ async def run_worker():
             max_concurrent_workflow_tasks=10,
         )
 
-        print("\n")
-        print("════════════════════════════════════════════════════════════════════════════════")
-        print("🚀  WORKER RUNNING")
-        print("════════════════════════════════════════════════════════════════════════════════")
-        print()
-        print(f"   📡 Listening for agent execution requests...")
-        print(f"   ⚡ Ready to process agents and teams")
-        print()
-        print("   Press Ctrl+C to stop gracefully")
-        print()
-        print("────────────────────────────────────────────────────────────────────────────────")
-        print()
+        ProgressUI.success("✓", "Worker ready")
+        ProgressUI.header("📡 Listening for tasks... (Ctrl+C to stop)")
 
         logger.info(
             "worker_ready",
@@ -615,19 +682,20 @@ async def run_worker():
             pass
 
         # Notify control plane of graceful shutdown
-        print("\n")
-        print("👋  Shutting down gracefully...")
+        print()
+        ProgressUI.step("⏳", "Shutting down gracefully...")
         await send_disconnect(
             config=config,
             kubiya_api_key=kubiya_api_key,
             reason="shutdown",
             exit_code=0
         )
-        print("✅  Worker stopped\n")
+        ProgressUI.success("✓", "Worker stopped")
+        print()
 
     except KeyboardInterrupt:
-        print("\n")
-        print("👋  Received stop signal, shutting down...")
+        print()
+        ProgressUI.step("⏳", "Shutting down...")
         # Notify control plane of keyboard interrupt
         try:
             await send_disconnect(
@@ -636,6 +704,7 @@ async def run_worker():
                 reason="shutdown",
                 exit_code=0
             )
+            ProgressUI.success("✓", "Worker stopped")
         except Exception as e:
             logger.warning("disconnect_on_interrupt_failed", error=str(e))
     except Exception as e:
