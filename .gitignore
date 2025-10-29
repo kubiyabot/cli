@@ -31,3 +31,8 @@ __pycache__/
 *.py[cod]
 *$py.class
 *.pyc
+
+# Backup files
+*.bak
+*.backup
+*~
