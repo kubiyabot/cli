@@ -25,3 +25,9 @@ kubiya_chat.log
 vendor
 .DS_Store
 docs/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyc
