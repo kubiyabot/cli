@@ -156,7 +156,7 @@ func (c *Client) SendMessageWithRetry(ctx context.Context, agentID, message stri
 	return nil, fmt.Errorf("failed after %d attempts: %w", maxRetries, lastErr)
 }
 
-// SendMessage sends a message to an agent using the workflow-engine compatible streaming approach
+// SendMessage sends a message to an agent using the streaming API approach
 func (c *Client) SendMessage(ctx context.Context, agentID, message string, sessionID string) (<-chan ChatMessage, error) {
 	messagesChan := make(chan ChatMessage, 100)
 
