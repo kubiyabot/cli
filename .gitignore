@@ -21,7 +21,41 @@
 go.work
 .idea
 
+# Build artifacts
+/kubiya
+/kubiya-cli
+/kubiya-fixed
+/test_agent_selection
+bin/
+
+# Logs
 kubiya_chat.log
+*.log
+
+# Temporary and analysis files
+analyze_files.py
+generate_tree.py
+directory_tree.txt
+directory_structure_mermaid.md
+*_directory_tree.md
+Untitled-*
+
+# Test files in root
+test-workflow*.json
+test_workflow*.json
+simple-test-workflow.json
+test_mcp_client.py
+
 vendor
 .DS_Store
-docs/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyc
+
+# Backup files
+*.bak
+*.backup
+*~

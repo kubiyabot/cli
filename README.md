@@ -1,6 +1,50 @@
-# Kubiya CLI - Your Agentic Automation Companion 🤖
+# Kubiya CLI - Your AI-Powered Automation Platform 🚀
 
-A powerful command-line interface for managing Kubiya sources, serverless agents, and tools. Automate your engineering workflows and interact with Kubiya AI Serverless Agents seamlessly.
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Go Version](https://img.shields.io/badge/go-1.21+-00ADD8.svg)](https://golang.org)
+[![Python](https://img.shields.io/badge/python-3.8+-3776AB.svg)](https://python.org)
+
+A comprehensive command-line interface for building, deploying, and managing AI-powered automation workflows. Kubiya CLI empowers you to create serverless agents, execute workflows, manage tools, and run distributed workers on your infrastructure.
+
+## 🎯 What is Kubiya?
+
+Kubiya is an AI-powered automation platform that enables you to:
+- **Build AI Agents**: Create intelligent agents that automate complex workflows
+- **Deploy Anywhere**: Run on Kubernetes, Docker, or locally
+- **Integrate Everything**: Connect with your existing tools and services
+- **Scale Effortlessly**: Distribute work across multiple workers with automatic load balancing
+
+## 📋 Table of Contents
+
+- [Quick Start](#quick-start)
+- [Features](#features-)
+- [Installation](#installation-)
+- [Core Concepts](#core-concepts)
+- [Worker Architecture](#worker-architecture-)
+- [Usage Guide](#usage-guide)
+- [Configuration](#configuration-)
+- [Deployment](#deployment)
+- [Documentation](#support-and-documentation-)
+- [Contributing](#contributing)
+
+## 🚀 Quick Start
+
+```bash
+# Install via Homebrew (macOS)
+brew install kubiyabot/kubiya/kubiya
+
+# Configure your API key
+export KUBIYA_API_KEY="your-api-key"
+
+# Start a worker
+kubiya worker start --queue-id=my-queue --type=local
+
+# Or execute a workflow
+kubiya workflow execute myorg/deploy-workflow
+
+# Chat with an agent
+kubiya chat -n "DevOps Agent" -m "Deploy to staging"
+```
 
 ## Features ✨
 
@@ -16,6 +60,13 @@ A powerful command-line interface for managing Kubiya sources, serverless agents
   - Deploy lightweight agents using Kubiya runners on scalable infrastructure (Kubernetes)
   - Manage environment variables and secrets
   - Set up webhooks for automated interactions
+
+- **Worker Mode** 🔧
+  - Run Temporal workers for agent execution workflows
+  - Support for both agent and team execution activities
+  - Automatic Python environment setup with required dependencies
+  - Embedded worker files for easy deployment
+  - Integration with Kubiya Control Plane for event streaming and session persistence
 
 - **Workflow Execution** 🔄
   - Execute workflows from multiple sources: local files, GitHub repositories, raw URLs
@@ -58,9 +109,54 @@ A powerful command-line interface for managing Kubiya sources, serverless agents
   - List, apply, and edit provider configurations
   - Support for tool execution with streaming output via MCP protocol
 
-## Quick Installation 🚀
+## Core Concepts
 
-### Mac OSX Using HomeBrew
+### Agents
+AI-powered agents that can execute tasks, use tools, and interact with your infrastructure. Agents can be deployed as serverless functions or run continuously as workers.
+
+### Workers
+Temporal-based execution engines that process agent workflows from task queues. Workers can be deployed on Kubernetes, Docker, or run locally, providing scalable and fault-tolerant execution.
+
+### Tools
+Executable units of work (scripts, Docker containers, API calls) that agents can use to accomplish tasks. Tools are organized in sources and can be shared across agents.
+
+### Workflows
+Orchestrated sequences of tasks that can be executed across multiple agents and tools. Workflows support branching, error handling, and human-in-the-loop interactions.
+
+### Sources
+Collections of tools and configurations stored in Git repositories or defined inline. Sources provide version control and reusability for your automation toolkit.
+
+## Installation 🚀
+
+### Quick Install (Automated Script)
+
+The easiest way to install Kubiya CLI with support for worker setup:
+
+```bash
+# Basic installation
+curl -fsSL https://raw.githubusercontent.com/kubiyabot/cli/main/install.sh | bash
+
+# With worker setup
+curl -fsSL https://raw.githubusercontent.com/kubiyabot/cli/main/install.sh | bash -s -- --worker --queue-id=my-queue
+
+# Interactive configuration
+curl -fsSL https://raw.githubusercontent.com/kubiyabot/cli/main/install.sh | bash -s -- --config
+
+# Install and start worker in daemon mode
+curl -fsSL https://raw.githubusercontent.com/kubiyabot/cli/main/install.sh | bash -s -- --worker --queue-id=prod-queue --mode=daemon --start
+```
+
+**Script Options:**
+- `--verbose` or `-v`: Enable verbose output
+- `--worker` or `-w`: Setup worker after installation
+- `--queue-id <id>` or `-q <id>`: Worker queue ID (required with --worker)
+- `--mode <mode>` or `-m <mode>`: Worker mode (local, docker, daemon)
+- `--start` or `-s`: Start worker immediately
+- `--config` or `-c`: Interactive configuration setup
+- `--force-binary` or `-f`: Force binary installation (skip package managers)
+- `--help` or `-h`: Show help
+
+### Mac OSX (Homebrew)
 
 ```bash
 brew update
@@ -68,16 +164,18 @@ brew tap kubiyabot/kubiya
 brew install kubiya
 ```
 
-### APT Installation (Debian/Ubuntu)
+### Linux (Binary Installation)
 
 ```bash
-# Add Kubiya's APT repository
-curl -fsSL https://cli.kubiya.ai/apt-key.gpg | sudo gpg --dearmor -o /usr/share/keyrings/kubiya-archive-keyring.gpg
-echo "deb [signed-by=/usr/share/keyrings/kubiya-archive-keyring.gpg] https://cli.kubiya.ai/apt stable main" | sudo tee /etc/apt/sources.list.d/kubiya.list
+# Download and install latest release
+curl -fsSL https://raw.githubusercontent.com/kubiyabot/cli/main/install.sh | bash
 
-# Update and install
-sudo apt update
-sudo apt install kubiya-cli
+# Or download specific version manually
+VERSION=v2.5.5
+ARCH=$(uname -m | sed 's/x86_64/amd64/g' | sed 's/aarch64/arm64/g')
+curl -LO "https://github.com/kubiyabot/cli/releases/download/${VERSION}/kubiya-cli-linux-${ARCH}"
+chmod +x kubiya-cli-linux-${ARCH}
+sudo mv kubiya-cli-linux-${ARCH} /usr/local/bin/kubiya
 ```
 
 ### Build from Source
@@ -107,6 +205,455 @@ export KUBIYA_BASE_URL="https://api.kubiya.ai/api/v1"  # Default API URL
 export KUBIYA_DEBUG=true                               # Enable debug mode
 ```
 
+**📖 For a complete reference of all environment variables, see [Environment Variables Documentation](docs/environment-variables.md)**
+
+## Worker Architecture 🔧
+
+Kubiya Workers are Temporal-based execution engines that process AI agent workflows with enterprise-grade reliability and scalability.
+
+**📖 For comprehensive documentation, see [Worker Guide](docs/worker-guide.md) | [Environment Variables](docs/environment-variables.md)**
+
+### Architecture Overview
+
+```mermaid
+graph TB
+    subgraph "User Interaction"
+        User[👤 User]
+        Composer[🎨 Kubiya Composer<br/>Web UI]
+        CLI[💻 Kubiya CLI]
+    end
+
+    subgraph "Control Plane"
+        CP[🎯 Control Plane<br/>control-plane.kubiya.ai]
+        API[📡 API Gateway]
+        Config[⚙️ Configuration<br/>Management]
+        Monitor[📊 Monitoring &<br/>Health Checks]
+    end
+
+    subgraph "Temporal Cloud"
+        Temporal[⚡ Temporal Server<br/>Workflow Engine]
+        Queue[📥 Task Queue<br/>Agent Workflows]
+    end
+
+    subgraph "Worker Infrastructure"
+        W1[🔧 Worker 1<br/>Local/Docker/K8s]
+        W2[🔧 Worker 2<br/>Local/Docker/K8s]
+        W3[🔧 Worker 3<br/>Local/Docker/K8s]
+    end
+
+    subgraph "Execution Environment"
+        Tools[🛠️ Tools &<br/>Integrations]
+        Agents[🤖 AI Agents<br/>LLM Integration]
+        Runtime[⚙️ Runtime<br/>Environment]
+    end
+
+    User -->|Trigger| Composer
+    User -->|CLI Commands| CLI
+    Composer -->|API Calls| API
+    CLI -->|API Calls| API
+    API --> CP
+    CP -->|Workflow Request| Temporal
+    CP <-->|Config & Health| Monitor
+    Temporal -->|Task Distribution| Queue
+    Queue -->|Poll Tasks| W1
+    Queue -->|Poll Tasks| W2
+    Queue -->|Poll Tasks| W3
+    W1 -->|Heartbeat| CP
+    W2 -->|Heartbeat| CP
+    W3 -->|Heartbeat| CP
+    W1 --> Runtime
+    W2 --> Runtime
+    W3 --> Runtime
+    Runtime --> Tools
+    Runtime --> Agents
+    Runtime -->|Results| Temporal
+    Temporal -->|Status| CP
+    CP -->|Updates| Composer
+    CP -->|Updates| CLI
+
+    style CP fill:#4CAF50,stroke:#2E7D32,color:#fff
+    style Temporal fill:#00ADD8,stroke:#006A8E,color:#fff
+    style W1 fill:#FF9800,stroke:#E65100,color:#fff
+    style W2 fill:#FF9800,stroke:#E65100,color:#fff
+    style W3 fill:#FF9800,stroke:#E65100,color:#fff
+    style Runtime fill:#9C27B0,stroke:#6A1B9A,color:#fff
+```
+
+### Worker Communication Flow
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant CP as Control Plane<br/>🎯
+    participant Temporal as Temporal Cloud<br/>⚡
+    participant Worker as Kubiya Worker<br/>🔧
+    participant Agent as AI Agent<br/>🤖
+    participant Tools as Tools/APIs<br/>🛠️
+
+    Note over Worker: Worker Startup
+    Worker->>CP: Register Worker<br/>(API Key, Queue ID)
+    CP->>Worker: Configuration<br/>(Temporal Credentials)
+    Worker->>Temporal: Connect to Temporal<br/>(Start Polling)
+
+    loop Every 30 seconds
+        Worker->>CP: Heartbeat<br/>(Health & Metrics)
+        CP->>Worker: ACK
+    end
+
+    Note over User,Tools: Task Execution Flow
+    User->>CP: Trigger Agent Workflow
+    CP->>Temporal: Create Workflow<br/>(Agent Task)
+    Temporal->>Worker: Poll & Receive Task
+
+    Worker->>Agent: Initialize Agent<br/>(Load Config & Tools)
+    Agent->>Tools: Execute Tool 1
+    Tools->>Agent: Tool Result
+    Agent->>CP: Stream Event<br/>(Tool Execution)
+
+    Agent->>Tools: Execute Tool 2
+    Tools->>Agent: Tool Result
+    Agent->>CP: Stream Event<br/>(Progress Update)
+
+    Agent->>Worker: Task Complete
+    Worker->>Temporal: Workflow Complete
+    Temporal->>CP: Update Status
+    CP->>User: Final Result<br/>& Event Stream
+
+    Note over Worker: Graceful Shutdown
+    User->>Worker: SIGTERM
+    Worker->>Temporal: Finish Current Tasks
+    Worker->>CP: Deregister
+    Worker->>Worker: Cleanup & Exit
+```
+
+### Deployment Modes
+
+```mermaid
+graph LR
+    subgraph "Local Mode 🐍"
+        L1[Python 3.8+<br/>Virtual Env]
+        L2[Auto Setup<br/>Dependencies]
+        L3[Foreground<br/>Process]
+    end
+
+    subgraph "Docker Mode 🐳"
+        D1[Container<br/>Isolation]
+        D2[Pre-built<br/>Image]
+        D3[Resource<br/>Limits]
+    end
+
+    subgraph "Daemon Mode ⚙️"
+        DM1[Background<br/>Process]
+        DM2[Auto Restart<br/>on Crash]
+        DM3[Log<br/>Rotation]
+    end
+
+    subgraph "Kubernetes Mode ☸️"
+        K1[Multi-Replica<br/>Deployment]
+        K2[Auto Scaling<br/>HPA]
+        K3[Health Checks<br/>& Probes]
+    end
+
+    Choice{Choose<br/>Deployment}
+
+    Choice -->|Development| L1
+    Choice -->|Isolation| D1
+    Choice -->|Production| DM1
+    Choice -->|Scale| K1
+
+    L1 --> L2 --> L3
+    D1 --> D2 --> D3
+    DM1 --> DM2 --> DM3
+    K1 --> K2 --> K3
+
+    style Choice fill:#2196F3,stroke:#1565C0,color:#fff
+    style L1 fill:#4CAF50,stroke:#2E7D32,color:#fff
+    style D1 fill:#00BCD4,stroke:#006064,color:#fff
+    style DM1 fill:#FF9800,stroke:#E65100,color:#fff
+    style K1 fill:#9C27B0,stroke:#6A1B9A,color:#fff
+```
+
+### Quick Start
+
+```bash
+# 1. Configure API Key
+export KUBIYA_API_KEY="your-api-key"
+
+# 2. Start Worker (Choose a mode)
+
+# Local Mode - Development
+kubiya worker start --queue-id=dev-queue --type=local
+
+# Daemon Mode - Production
+kubiya worker start --queue-id=prod-queue --type=local -d
+
+# Docker Mode - Isolated
+kubiya worker start --queue-id=docker-queue --type=docker
+
+# 3. Monitor Worker
+tail -f ~/.kubiya/workers/<queue-id>/logs/worker.log
+```
+
+### Configuration
+
+#### Environment Variables
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `KUBIYA_API_KEY` | ✅ | - | API authentication key |
+| `CONTROL_PLANE_URL` | ❌ | `https://control-plane.kubiya.ai` | Control Plane URL |
+| `CONTROL_PLANE_GATEWAY_URL` | ❌ | - | Override Control Plane URL |
+| `QUEUE_ID` | ✅ | - | Worker queue identifier |
+| `ENVIRONMENT_NAME` | ❌ | `default` | Environment name |
+| `WORKER_HOSTNAME` | ❌ | Auto-detected | Worker hostname |
+| `HEARTBEAT_INTERVAL` | ❌ | `30` | Heartbeat interval (seconds) |
+| `LOG_LEVEL` | ❌ | `INFO` | Logging level |
+
+**📖 See [Environment Variables Reference](docs/environment-variables.md) for complete list**
+
+#### Control Plane URL Override
+
+```bash
+# Use custom control plane
+export CONTROL_PLANE_GATEWAY_URL="https://custom-cp.example.com"
+
+# Priority: CONTROL_PLANE_GATEWAY_URL > CONTROL_PLANE_URL > default
+```
+
+### Deployment Examples
+
+<details>
+<summary><b>🐍 Local Development</b></summary>
+
+```bash
+# Start local worker with debug logging
+export KUBIYA_API_KEY="your-dev-key"
+export LOG_LEVEL="DEBUG"
+
+kubiya worker start --queue-id=dev-queue --type=local
+
+# Worker creates virtual environment at:
+# ~/.kubiya/workers/<queue-id>/venv
+```
+</details>
+
+<details>
+<summary><b>⚙️ Production Daemon</b></summary>
+
+```bash
+# Start daemon with monitoring
+export KUBIYA_API_KEY="your-prod-key"
+
+kubiya worker start \
+  --queue-id=prod-queue \
+  --type=local \
+  --daemon \
+  --max-log-size=104857600 \
+  --max-log-backups=10
+
+# View logs
+tail -f ~/.kubiya/workers/prod-queue/logs/worker.log
+
+# Check status
+cat ~/.kubiya/workers/prod-queue/daemon_info.txt
+```
+</details>
+
+<details>
+<summary><b>🐳 Docker Standalone</b></summary>
+
+```bash
+docker run -d \
+  --name kubiya-worker \
+  --restart unless-stopped \
+  -e KUBIYA_API_KEY="your-api-key" \
+  -e CONTROL_PLANE_URL="https://control-plane.kubiya.ai" \
+  -e QUEUE_ID="docker-queue" \
+  -e LOG_LEVEL="INFO" \
+  ghcr.io/kubiyabot/agent-worker:latest
+
+# View logs
+docker logs -f kubiya-worker
+```
+</details>
+
+<details>
+<summary><b>☸️ Kubernetes Production</b></summary>
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kubiya-worker
+  namespace: kubiya
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: kubiya-worker
+  template:
+    metadata:
+      labels:
+        app: kubiya-worker
+    spec:
+      containers:
+      - name: worker
+        image: ghcr.io/kubiyabot/agent-worker:latest
+        command: ["kubiya", "worker", "start"]
+        args:
+          - "--queue-id=$(QUEUE_ID)"
+          - "--type=local"
+        env:
+        - name: KUBIYA_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: kubiya-secrets
+              key: api-key
+        - name: CONTROL_PLANE_URL
+          value: "https://control-plane.kubiya.ai"
+        - name: QUEUE_ID
+          value: "production-queue"
+        - name: LOG_LEVEL
+          value: "INFO"
+        - name: WORKER_HOSTNAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+        livenessProbe:
+          exec:
+            command: ["pgrep", "-f", "worker.py"]
+          initialDelaySeconds: 30
+          periodSeconds: 10
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: kubiya-secrets
+  namespace: kubiya
+type: Opaque
+stringData:
+  api-key: "your-api-key-here"
+```
+
+Apply and scale:
+```bash
+kubectl apply -f kubiya-worker.yaml
+kubectl scale deployment kubiya-worker -n kubiya --replicas=5
+kubectl logs -f deployment/kubiya-worker -n kubiya
+```
+</details>
+
+<details>
+<summary><b>📊 Kubernetes with Autoscaling</b></summary>
+
+```yaml
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: kubiya-worker-hpa
+  namespace: kubiya
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: kubiya-worker
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+```
+</details>
+
+### Worker Features
+
+```mermaid
+graph LR
+    subgraph "🚀 Core Features"
+        F1[Auto Setup<br/>Python Env]
+        F2[Dependency<br/>Management]
+        F3[Event<br/>Streaming]
+    end
+
+    subgraph "🔒 Reliability"
+        R1[Auto Restart<br/>on Crash]
+        R2[Graceful<br/>Shutdown]
+        R3[Health<br/>Monitoring]
+    end
+
+    subgraph "📊 Operations"
+        O1[Log<br/>Rotation]
+        O2[Metrics<br/>Collection]
+        O3[Heartbeat<br/>System]
+    end
+
+    subgraph "⚡ Performance"
+        P1[Concurrent<br/>Execution]
+        P2[Resource<br/>Management]
+        P3[Load<br/>Balancing]
+    end
+
+    Worker[🔧 Kubiya Worker]
+
+    Worker --> F1 & F2 & F3
+    Worker --> R1 & R2 & R3
+    Worker --> O1 & O2 & O3
+    Worker --> P1 & P2 & P3
+
+    style Worker fill:#2196F3,stroke:#1565C0,color:#fff
+    style F1 fill:#4CAF50,stroke:#2E7D32,color:#fff
+    style R1 fill:#FF9800,stroke:#E65100,color:#fff
+    style O1 fill:#9C27B0,stroke:#6A1B9A,color:#fff
+    style P1 fill:#00BCD4,stroke:#006064,color:#fff
+```
+
+### Monitoring & Troubleshooting
+
+```bash
+# Check worker logs
+tail -f ~/.kubiya/workers/<queue-id>/logs/worker.log
+
+# Worker status (daemon mode)
+cat ~/.kubiya/workers/<queue-id>/daemon_info.txt
+
+# Process status
+ps aux | grep "worker.py"
+
+# Debug mode
+export LOG_LEVEL=DEBUG
+kubiya worker start --queue-id=test-queue
+
+# Test connectivity
+curl https://control-plane.kubiya.ai/health
+
+# Clear and restart
+rm -rf ~/.kubiya/workers/<queue-id>/venv
+kubiya worker start --queue-id=<queue-id>
+```
+
+---
+
+## Usage Guide
+
+This section covers the main features and commands of the Kubiya CLI. For detailed documentation, see the links in each section.
+
 ## Workflow Execution 🔄
 
 The Kubiya CLI supports executing workflows from multiple sources with comprehensive GitHub authentication support.
@@ -118,7 +665,7 @@ The Kubiya CLI supports executing workflows from multiple sources with comprehen
 # Execute local YAML workflow
 kubiya workflow execute deploy.yaml
 
-# Execute local JSON workflow  
+# Execute local JSON workflow
 kubiya workflow execute backup.json
 
 # Execute with variables
@@ -671,7 +1218,7 @@ Create a custom MCP configuration (`~/.kubiya/mcp-config.json`):
   "mcp": {
     "servers": {
       "kubiya": {
-        "command": "/usr/local/bin/kubiya", 
+        "command": "/usr/local/bin/kubiya",
         "args": ["mcp", "serve", "--config", "/home/user/.kubiya/mcp-config.json"],
         "env": {
           "KUBIYA_API_KEY": "your-api-key-here"
@@ -799,7 +1346,7 @@ export KUBIYA_API_KEY="prod-api-key"
 export KUBIYA_BASE_URL="https://api.kubiya.ai/api/v1"
 export KUBIYA_DEFAULT_RUNNER="production-runner"
 
-# Development environment  
+# Development environment
 export KUBIYA_API_KEY="dev-api-key"
 export KUBIYA_DEBUG=true
 export KUBIYA_DEFAULT_RUNNER="dev-runner"
@@ -874,6 +1421,30 @@ kubiya workflow execute myorg/test-repo --verbose
 # Visit https://compose.kubiya.ai to configure GitHub integration
 ```
 
+#### Worker Issues
+```bash
+# Check worker logs (daemon mode)
+tail -f ~/.kubiya/workers/<queue-id>/logs/worker.log
+
+# Start with debug logging
+export LOG_LEVEL=DEBUG
+kubiya worker start --queue-id=<queue-id>
+
+# Verify Python environment
+python3 --version  # Should be 3.8+
+
+# Check connectivity to control plane
+curl https://control-plane.kubiya.ai/health
+
+# Clear virtual environment and restart
+rm -rf ~/.kubiya/workers/<queue-id>/venv
+kubiya worker start --queue-id=<queue-id>
+
+# Use custom control plane URL
+export CONTROL_PLANE_GATEWAY_URL="https://custom-cp.example.com"
+kubiya worker start --queue-id=<queue-id>
+```
+
 ### Debug Mode
 
 Enable comprehensive debugging:
@@ -918,7 +1489,7 @@ jobs:
     steps:
     - uses: actions/checkout@v3
     - name: Install Kubiya CLI
-      run: curl -fsSL https://cli.kubiya.ai/install.sh | bash
+      run: curl -fsSL https://raw.githubusercontent.com/kubiyabot/cli/main/install.sh | bash
     - name: Execute Deployment Workflow
       env:
         KUBIYA_API_KEY: ${{ secrets.KUBIYA_API_KEY }}
@@ -934,7 +1505,7 @@ deploy:
   stage: deploy
   image: ubuntu:latest
   before_script:
-    - curl -fsSL https://cli.kubiya.ai/install.sh | bash
+    - curl -fsSL https://raw.githubusercontent.com/kubiyabot/cli/main/install.sh | bash
   script:
     - kubiya workflow execute ./deployment/workflow.yaml --var env=production
   environment:
@@ -977,6 +1548,8 @@ kubiya workflow execute myorg/workflows/build.yaml \
 ### Official Documentation
 - **Main Documentation**: [https://docs.kubiya.ai](https://docs.kubiya.ai)
 - **API Reference**: [https://api.kubiya.ai/docs](https://api.kubiya.ai/docs)
+- **Worker Guide**: [Worker Guide](docs/worker-guide.md)
+- **Environment Variables**: [Environment Variables Reference](docs/environment-variables.md)
 - **MCP Integration**: [MCP Comprehensive Guide](docs/mcp-comprehensive-guide.md)
 - **Workflow Examples**: [Workflow Commands Guide](docs/workflow-commands.md)
 
@@ -992,6 +1565,89 @@ kubiya workflow execute myorg/workflows/build.yaml \
 3. **Enable debug mode**: Use `KUBIYA_DEBUG=true` for detailed error information
 4. **Create an issue**: Provide detailed information about your environment and the problem
 
+## Quick Reference 📖
+
+### Common Commands Cheat Sheet
+
+```bash
+# Worker Operations
+kubiya worker start --queue-id=<id> --type=local       # Start local worker
+kubiya worker start --queue-id=<id> -d                 # Start daemon worker
+tail -f ~/.kubiya/workers/<id>/logs/worker.log         # View logs
+
+# Agent Management
+kubiya agent list                                       # List all agents
+kubiya agent create --interactive                       # Create agent interactively
+kubiya chat -n "Agent Name" -m "message"               # Chat with agent
+
+# Workflow Execution
+kubiya workflow execute workflow.yaml                   # Execute local workflow
+kubiya workflow execute myorg/repo/workflow.yaml       # Execute from GitHub
+kubiya workflow execute --var env=prod workflow.yaml   # With variables
+
+# Tool Management
+kubiya tool list                                        # List available tools
+kubiya tool exec --name "tool" --content "command"     # Execute tool
+
+# Source Management
+kubiya source list                                      # List sources
+kubiya source scan .                                    # Scan current directory
+kubiya source add https://github.com/org/repo          # Add source
+
+# Secret Management
+kubiya secret create KEY "value"                        # Create secret
+kubiya secret list                                      # List secrets
+
+# Runner Management
+kubiya runner list                                      # List runners
+kubiya runner describe <name>                           # Describe runner
+```
+
+### Environment Variables Quick Reference
+
+| Variable | Purpose | Example |
+|----------|---------|---------|
+| `KUBIYA_API_KEY` | Authentication | `export KUBIYA_API_KEY="kby_..."` |
+| `CONTROL_PLANE_GATEWAY_URL` | Custom control plane | `export CONTROL_PLANE_GATEWAY_URL="https://..."` |
+| `LOG_LEVEL` | Logging verbosity | `export LOG_LEVEL="DEBUG"` |
+| `KUBIYA_DEBUG` | Debug mode | `export KUBIYA_DEBUG=true` |
+
+**📖 Full reference: [Environment Variables](docs/environment-variables.md)**
+
+### Deployment Quick Reference
+
+| Mode | Command | Use Case |
+|------|---------|----------|
+| Local Dev | `kubiya worker start --queue-id=dev --type=local` | Development & testing |
+| Production Daemon | `kubiya worker start --queue-id=prod -d` | Production standalone |
+| Docker | `docker run ghcr.io/kubiyabot/agent-worker:latest` | Container deployment |
+| Kubernetes | `kubectl apply -f worker.yaml` | Scalable production |
+
+### Architecture Diagram Quick View
+
+```mermaid
+graph LR
+    User[👤 User] --> CLI[💻 CLI/UI]
+    CLI --> CP[🎯 Control Plane]
+    CP --> Temporal[⚡ Temporal]
+    Temporal --> Worker[🔧 Worker]
+    Worker --> Agent[🤖 Agent]
+    Agent --> Tools[🛠️ Tools]
+
+    style CP fill:#4CAF50,color:#fff
+    style Worker fill:#FF9800,color:#fff
+    style Agent fill:#2196F3,color:#fff
+```
+
+### Troubleshooting Quick Fixes
+
+| Issue | Quick Fix |
+|-------|-----------|
+| Worker won't start | `rm -rf ~/.kubiya/workers/<id>/venv && kubiya worker start --queue-id=<id>` |
+| Connection errors | `curl https://control-plane.kubiya.ai/health` |
+| Authentication fails | `echo $KUBIYA_API_KEY` - verify it's set |
+| Debug mode | `export LOG_LEVEL=DEBUG && kubiya worker start --queue-id=<id>` |
+
 ## Tab Completion 🎯
 
 Enable tab completion for enhanced CLI experience:
@@ -1000,11 +1656,37 @@ Enable tab completion for enhanced CLI experience:
 # Bash
 echo 'source <(kubiya completion bash)' >> ~/.bashrc
 
-# Zsh  
+# Zsh
 echo 'source <(kubiya completion zsh)' >> ~/.zshrc
 
 # Fish
 kubiya completion fish | source
+```
+
+## Contributing 🤝
+
+We welcome contributions! Here's how you can help:
+
+1. **Report Issues**: Found a bug? [Open an issue](https://github.com/kubiyabot/cli/issues)
+2. **Suggest Features**: Have an idea? Start a discussion
+3. **Submit PRs**: Fork, create a branch, and submit a pull request
+4. **Improve Docs**: Documentation improvements are always welcome
+
+### Development Setup
+
+```bash
+# Clone the repository
+git clone https://github.com/kubiyabot/cli.git
+cd cli
+
+# Build from source
+make build
+
+# Run tests
+make test
+
+# Install locally
+make install
 ```
 
 ## License 📄
@@ -1013,4 +1695,12 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ---
 
-Built with ❤️ by the Kubiya team. Deploy serverless agents on your infrastructure and automate everything! 🚀
+<div align="center">
+
+**Built with ❤️ by the Kubiya team**
+
+Deploy AI agents on your infrastructure and automate everything! 🚀
+
+[Website](https://kubiya.ai) • [Documentation](https://docs.kubiya.ai) • [GitHub](https://github.com/kubiyabot/cli) • [Community](https://community.kubiya.ai)
+
+</div>

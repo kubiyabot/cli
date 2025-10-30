@@ -1,0 +1,19 @@
+# Core dependencies
+temporalio>=1.5.0
+httpx>=0.27.0
+structlog>=24.1.0
+
+# System information
+psutil>=5.9.0
+
+# LiteLLM for LLM calls
+litellm>=1.35.0
+
+# Agno for agent/team orchestration
+agno>=0.0.100
+
+# Claude Code SDK for claude_code runtime
+
+# Optional: Docker support for DockerTools
+# Uncomment if Docker toolset is needed and Docker daemon is available
+# docker>=7.0.0

@@ -1,0 +1,1217 @@
+"""Team-related Temporal activities"""
+
+import os
+import httpx
+from dataclasses import dataclass
+from typing import Optional, List, Any, Dict
+from datetime import datetime, timezone
+from temporalio import activity
+import structlog
+from pathlib import Path
+
+from agno.agent import Agent
+from agno.team import Team
+from agno.models.litellm import LiteLLM
+from agno.tools.shell import ShellTools
+from agno.tools.python import PythonTools
+from agno.tools.file import FileTools
+
+from activities.agent_activities import update_execution_status, ActivityUpdateExecutionInput
+from control_plane_client import get_control_plane_client
+
+logger = structlog.get_logger()
+
+# Global registry for active Team instances to support cancellation
+# Key: execution_id, Value: {team: Team, run_id: str}
+_active_teams: Dict[str, Dict[str, Any]] = {}
+
+
+def instantiate_toolset(toolset_data: dict) -> Optional[Any]:
+    """
+    Instantiate an Agno toolkit based on toolset configuration from Control Plane.
+
+    Args:
+        toolset_data: Toolset data from Control Plane API containing:
+            - type: Toolset type (file_system, shell, python, docker, etc.)
+            - name: Toolset name
+            - configuration: Dict with toolset-specific config
+            - enabled: Whether toolset is enabled
+
+    Returns:
+        Instantiated Agno toolkit or None if type not supported/enabled
+    """
+    if not toolset_data.get("enabled", True):
+        print(f"   ⊗ Skipping disabled toolset: {toolset_data.get('name')}")
+        return None
+
+    toolset_type = toolset_data.get("type", "").lower()
+    config = toolset_data.get("configuration", {})
+    name = toolset_data.get("name", "Unknown")
+
+    try:
+        # Map Control Plane toolset types to Agno toolkit classes
+        if toolset_type in ["file_system", "file", "file_generation"]:
+            # FileTools: file operations (read, write, list, search)
+            # Note: file_generation is mapped to FileTools (save_file functionality)
+            base_dir = config.get("base_dir")
+            toolkit = FileTools(
+                base_dir=Path(base_dir) if base_dir else None,
+                enable_save_file=config.get("enable_save_file", True),
+                enable_read_file=config.get("enable_read_file", True),
+                enable_list_files=config.get("enable_list_files", True),
+                enable_search_files=config.get("enable_search_files", True),
+            )
+            print(f"   ✓ Instantiated FileTools: {name}")
+            if toolset_type == "file_generation":
+                print(f"     - Type: File Generation (using FileTools.save_file)")
+            print(f"     - Base Dir: {base_dir or 'Current directory'}")
+            print(f"     - Read: {config.get('enable_read_file', True)}, Write: {config.get('enable_save_file', True)}")
+            return toolkit
+
+        elif toolset_type in ["shell", "bash"]:
+            # ShellTools: shell command execution
+            base_dir = config.get("base_dir")
+            toolkit = ShellTools(
+                base_dir=Path(base_dir) if base_dir else None,
+                enable_run_shell_command=config.get("enable_run_shell_command", True),
+            )
+            print(f"   ✓ Instantiated ShellTools: {name}")
+            print(f"     - Base Dir: {base_dir or 'Current directory'}")
+            print(f"     - Run Commands: {config.get('enable_run_shell_command', True)}")
+            return toolkit
+
+        elif toolset_type == "python":
+            # PythonTools: Python code execution
+            base_dir = config.get("base_dir")
+            toolkit = PythonTools(
+                base_dir=Path(base_dir) if base_dir else None,
+                safe_globals=config.get("safe_globals"),
+                safe_locals=config.get("safe_locals"),
+            )
+            print(f"   ✓ Instantiated PythonTools: {name}")
+            print(f"     - Base Dir: {base_dir or 'Current directory'}")
+            return toolkit
+
+        elif toolset_type == "docker":
+            # DockerTools requires docker package and running Docker daemon
+            try:
+                from agno.tools.docker import DockerTools
+                import docker
+
+                # Check if Docker daemon is accessible
+                try:
+                    docker_client = docker.from_env()
+                    docker_client.ping()
+
+                    # Docker is available, instantiate toolkit
+                    toolkit = DockerTools()
+                    print(f"   ✓ Instantiated DockerTools: {name}")
+                    print(f"     - Docker daemon: Connected")
+                    docker_client.close()
+                    return toolkit
+
+                except Exception as docker_error:
+                    print(f"   ⚠ Docker daemon not available - skipping: {name}")
+                    print(f"     Error: {str(docker_error)}")
+                    return None
+
+            except ImportError:
+                print(f"   ⚠ Docker toolset requires 'docker' package - skipping: {name}")
+                print(f"     Install with: pip install docker")
+                return None
+
+        else:
+            print(f"   ⚠ Unsupported toolset type '{toolset_type}': {name}")
+            return None
+
+    except Exception as e:
+        print(f"   ❌ Error instantiating toolset '{name}' (type: {toolset_type}): {str(e)}")
+        logger.error(
+            f"Error instantiating toolset",
+            extra={
+                "toolset_name": name,
+                "toolset_type": toolset_type,
+                "error": str(e)
+            }
+        )
+        return None
+
+
+@dataclass
+class ActivityGetTeamAgentsInput:
+    """Input for get_team_agents activity"""
+    team_id: str
+    organization_id: str
+
+
+@dataclass
+class ActivityExecuteTeamInput:
+    """Input for execute_team_coordination activity"""
+    execution_id: str
+    team_id: str
+    organization_id: str
+    prompt: str
+    system_prompt: Optional[str] = None
+    agents: List[dict] = None
+    team_config: dict = None
+    mcp_servers: dict = None  # MCP servers configuration
+    session_id: Optional[str] = None  # Session ID for Agno session management
+    user_id: Optional[str] = None  # User ID for multi-user support
+    # Note: control_plane_url and api_key are read from worker environment variables (CONTROL_PLANE_URL, KUBIYA_API_KEY)
+
+    def __post_init__(self):
+        if self.agents is None:
+            self.agents = []
+        if self.team_config is None:
+            self.team_config = {}
+        if self.mcp_servers is None:
+            self.mcp_servers = {}
+
+
+@activity.defn
+async def get_team_agents(input: ActivityGetTeamAgentsInput) -> dict:
+    """
+    Get all agents in a team via Control Plane API.
+
+    This activity fetches team details including member agents from the Control Plane.
+
+    Args:
+        input: Activity input with team details
+
+    Returns:
+        Dict with agents list
+    """
+    print(f"\n\n=== GET_TEAM_AGENTS START ===")
+    print(f"team_id: {input.team_id} (type: {type(input.team_id).__name__})")
+    print(f"organization_id: {input.organization_id} (type: {type(input.organization_id).__name__})")
+    print(f"================================\n")
+
+    activity.logger.info(
+        f"[DEBUG] Getting team agents START",
+        extra={
+            "team_id": input.team_id,
+            "team_id_type": type(input.team_id).__name__,
+            "organization_id": input.organization_id,
+            "organization_id_type": type(input.organization_id).__name__,
+        }
+    )
+
+    try:
+        # Get Control Plane URL and Kubiya API key from environment
+        control_plane_url = os.getenv("CONTROL_PLANE_URL")
+        kubiya_api_key = os.getenv("KUBIYA_API_KEY")
+
+        if not control_plane_url:
+            raise ValueError("CONTROL_PLANE_URL environment variable not set")
+        if not kubiya_api_key:
+            raise ValueError("KUBIYA_API_KEY environment variable not set")
+
+        print(f"Fetching team from Control Plane API: {control_plane_url}")
+
+        # Call Control Plane API to get team with agents
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.get(
+                f"{control_plane_url}/api/v1/teams/{input.team_id}",
+                headers={
+                    "Authorization": f"Bearer {kubiya_api_key}",
+                    "Content-Type": "application/json",
+                }
+            )
+
+            if response.status_code == 404:
+                print(f"Team not found!")
+                activity.logger.error(
+                    f"[DEBUG] Team not found",
+                    extra={
+                        "team_id": input.team_id,
+                        "organization_id": input.organization_id,
+                    }
+                )
+                return {"agents": [], "count": 0}
+            elif response.status_code != 200:
+                raise Exception(f"Failed to get team: {response.status_code} - {response.text}")
+
+            team_data = response.json()
+
+        # Extract agents from the API response
+        # The API returns a TeamWithAgentsResponse which includes the agents array
+        agents = team_data.get("agents", [])
+
+        print(f"Query executed. Agents found: {len(agents)}")
+
+        activity.logger.info(
+            f"[DEBUG] Query executed, processing results",
+            extra={
+                "agents_found": len(agents),
+                "agent_ids": [a.get("id") for a in agents],
+            }
+        )
+
+        print(f"Agents found: {len(agents)}")
+        if agents:
+            for agent in agents:
+                print(f"  - {agent.get('name')} (ID: {agent.get('id')})")
+
+        activity.logger.info(
+            f"[DEBUG] Retrieved team agents via API",
+            extra={
+                "team_id": input.team_id,
+                "agent_count": len(agents),
+                "agent_names": [a.get("name") for a in agents],
+                "agent_ids": [a.get("id") for a in agents],
+            }
+        )
+
+        if not agents:
+            print(f"\n!!! NO AGENTS FOUND - Team may have no members !!!")
+            activity.logger.warning(
+                f"[DEBUG] WARNING: No agents found for team",
+                extra={
+                    "team_id": input.team_id,
+                    "organization_id": input.organization_id,
+                }
+            )
+
+        print(f"\n=== GET_TEAM_AGENTS END: Returning {len(agents)} agents ===\n\n")
+        return {
+            "agents": agents,
+            "count": len(agents),
+        }
+
+    except Exception as e:
+        print(f"\n!!! EXCEPTION in get_team_agents: {type(e).__name__}: {str(e)} !!!\n")
+        activity.logger.error(
+            f"[DEBUG] EXCEPTION in get_team_agents",
+            extra={
+                "team_id": input.team_id,
+                "organization_id": input.organization_id,
+                "error": str(e),
+                "error_type": type(e).__name__,
+            }
+        )
+        raise
+
+
+@activity.defn
+async def execute_team_coordination(input: ActivityExecuteTeamInput) -> dict:
+    """
+    Execute team coordination using Agno Teams.
+
+    This activity creates an Agno Team with member Agents and executes
+    the team run, allowing Agno to handle coordination.
+
+    Args:
+        input: Activity input with team execution details
+
+    Returns:
+        Dict with aggregated response, usage, success flag
+    """
+    print("\n" + "="*80)
+    print("🚀 TEAM EXECUTION START")
+    print("="*80)
+    print(f"Execution ID: {input.execution_id}")
+    print(f"Team ID: {input.team_id}")
+    print(f"Organization: {input.organization_id}")
+    print(f"Agent Count: {len(input.agents)}")
+    print(f"MCP Servers: {len(input.mcp_servers)} configured" if input.mcp_servers else "MCP Servers: None")
+    print(f"Session ID: {input.session_id}")
+    print(f"Prompt: {input.prompt[:100]}..." if len(input.prompt) > 100 else f"Prompt: {input.prompt}")
+    print("="*80 + "\n")
+
+    activity.logger.info(
+        f"Executing team coordination with Agno Teams",
+        extra={
+            "execution_id": input.execution_id,
+            "team_id": input.team_id,
+            "organization_id": input.organization_id,
+            "agent_count": len(input.agents),
+            "has_mcp_servers": bool(input.mcp_servers),
+            "mcp_server_count": len(input.mcp_servers) if input.mcp_servers else 0,
+            "mcp_server_ids": list(input.mcp_servers.keys()) if input.mcp_servers else [],
+            "session_id": input.session_id,
+        }
+    )
+
+    try:
+        # Get Control Plane client for session management
+        control_plane = get_control_plane_client()
+
+        # STEP 1: Load existing session history from Control Plane (if this is a continuation)
+        # This enables conversation continuity across multiple execution turns
+        # IMPORTANT: Must be non-blocking with proper timeout/retry
+        session_history = []
+        if input.session_id:
+            print(f"\n📥 Loading session history from Control Plane...")
+
+            # Try up to 3 times with exponential backoff
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    if attempt > 0:
+                        print(f"   🔄 Retry attempt {attempt + 1}/{max_retries}...")
+
+                    session_data = control_plane.get_session(
+                        execution_id=input.execution_id,
+                        session_id=input.session_id
+                    )
+                    if session_data and session_data.get("messages"):
+                        session_history = session_data["messages"]
+                        print(f"   ✅ Loaded {len(session_history)} messages from previous turns")
+
+                        activity.logger.info(
+                            "Team session history loaded from Control Plane",
+                            extra={
+                                "execution_id": input.execution_id,
+                                "session_id": input.session_id,
+                                "message_count": len(session_history),
+                                "attempt": attempt + 1,
+                            }
+                        )
+                        break
+                    else:
+                        print(f"   ℹ️  No previous session found - starting new conversation")
+                        break
+
+                except httpx.TimeoutException as e:
+                    print(f"   ⏱️  Timeout loading session (attempt {attempt + 1}/{max_retries})")
+                    activity.logger.warning(
+                        "Team session load timeout",
+                        extra={"error": str(e), "execution_id": input.execution_id, "attempt": attempt + 1}
+                    )
+                    if attempt < max_retries - 1:
+                        import time
+                        time.sleep(2 ** attempt)
+                        continue
+                    else:
+                        print(f"   ⚠️  Session load failed after {max_retries} attempts - continuing without history")
+
+                except Exception as e:
+                    error_type = type(e).__name__
+                    print(f"   ⚠️  Failed to load session history ({error_type}): {str(e)[:100]}")
+                    activity.logger.warning(
+                        "Failed to load team session history",
+                        extra={
+                            "error": str(e),
+                            "error_type": error_type,
+                            "execution_id": input.execution_id,
+                            "attempt": attempt + 1
+                        }
+                    )
+                    break
+
+            print(f"   → Continuing with {len(session_history)} messages in context\n")
+
+        # Get LiteLLM credentials from environment (set by worker from registration)
+        litellm_api_base = os.getenv("LITELLM_API_BASE", "https://llm-proxy.kubiya.ai")
+        litellm_api_key = os.getenv("LITELLM_API_KEY")
+
+        if not litellm_api_key:
+            raise ValueError("LITELLM_API_KEY environment variable not set")
+
+        # Get Control Plane URL and API key from environment (worker has these set on startup)
+        control_plane_url = os.getenv("CONTROL_PLANE_URL")
+        api_key = os.getenv("KUBIYA_API_KEY")
+
+        # Fetch resolved toolsets from Control Plane if available
+        toolsets = []
+        if control_plane_url and api_key and input.team_id:
+            print(f"🔧 Fetching toolsets for TEAM from Control Plane...")
+            try:
+                async with httpx.AsyncClient(timeout=30.0) as client:
+                    response = await client.get(
+                        f"{control_plane_url}/api/v1/toolsets/associations/teams/{input.team_id}/toolsets/resolved",
+                        headers={"Authorization": f"Bearer {api_key}"}
+                    )
+
+                    if response.status_code == 200:
+                        toolsets = response.json()
+                        print(f"✅ Resolved {len(toolsets)} toolsets from Control Plane for TEAM")
+                        print(f"   Toolset Types: {[t.get('type') for t in toolsets]}")
+                        print(f"   Toolset Sources: {[t.get('source') for t in toolsets]}")
+                        print(f"   Toolset Names: {[t.get('name') for t in toolsets]}\n")
+
+                        activity.logger.info(
+                            f"Resolved toolsets for team from Control Plane",
+                            extra={
+                                "team_id": input.team_id,
+                                "toolset_count": len(toolsets),
+                                "toolset_types": [t.get("type") for t in toolsets],
+                                "toolset_sources": [t.get("source") for t in toolsets],
+                                "toolset_names": [t.get("name") for t in toolsets],
+                            }
+                        )
+                    else:
+                        print(f"⚠️  Failed to fetch toolsets for team: HTTP {response.status_code}")
+                        print(f"   Response: {response.text[:200]}\n")
+                        activity.logger.warning(
+                            f"Failed to fetch toolsets for team from Control Plane: {response.status_code}",
+                            extra={
+                                "status_code": response.status_code,
+                                "response_text": response.text[:500]
+                            }
+                        )
+            except Exception as e:
+                print(f"❌ Error fetching toolsets for team: {str(e)}\n")
+                activity.logger.error(
+                    f"Error fetching toolsets for team from Control Plane: {str(e)}",
+                    extra={"error": str(e)}
+                )
+                # Continue execution without toolsets
+        else:
+            print(f"ℹ️  No Control Plane URL/API key in environment for team - skipping toolset resolution\n")
+
+        # Instantiate Agno toolkits from Control Plane toolsets
+        print(f"\n🔧 Instantiating Toolsets:")
+        agno_toolkits = []
+        if toolsets:
+            for toolset in toolsets:
+                toolkit = instantiate_toolset(toolset)
+                if toolkit:
+                    agno_toolkits.append(toolkit)
+
+        if agno_toolkits:
+            print(f"\n✅ Successfully instantiated {len(agno_toolkits)} toolset(s)")
+        else:
+            print(f"\nℹ️  No toolsets instantiated\n")
+
+        print(f"📦 Total Tools Available:")
+        print(f"   MCP Servers: {len(input.mcp_servers)}")
+        print(f"   OS-Level Toolsets: {len(agno_toolkits)}\n")
+
+        # Create Agno Agent objects for each team member
+        print("\n📋 Creating Team Members:")
+        member_agents = []
+        for i, agent_data in enumerate(input.agents, 1):
+            # Get model ID (default to kubiya/claude-sonnet-4 if not specified)
+            model_id = agent_data.get("model_id") or "kubiya/claude-sonnet-4"
+
+            print(f"  {i}. {agent_data['name']}")
+            print(f"     Model: {model_id}")
+            print(f"     Role: {agent_data.get('description', agent_data['name'])[:60]}...")
+
+            # Create Agno Agent with explicit LiteLLM proxy configuration
+            # IMPORTANT: Use openai/ prefix for custom proxy compatibility
+            member_agent = Agent(
+                name=agent_data["name"],
+                role=agent_data.get("description", agent_data["name"]),
+                model=LiteLLM(
+                    id=f"openai/{model_id}",  # e.g., "openai/kubiya/claude-sonnet-4"
+                    api_base=litellm_api_base,
+                    api_key=litellm_api_key,
+                ),
+            )
+            member_agents.append(member_agent)
+
+            activity.logger.info(
+                f"Created Agno Agent",
+                extra={
+                    "agent_name": agent_data["name"],
+                    "model": model_id,
+                }
+            )
+
+        # Create Agno Team with member agents and LiteLLM model for coordination
+        # Get coordinator model from team configuration (if specified by user in UI)
+        # Falls back to default if not configured
+        team_model = (
+            input.team_config.get("llm", {}).get("model")
+            or "kubiya/claude-sonnet-4"  # Default coordinator model
+        )
+
+        print(f"\n🤖 Creating Agno Team:")
+        print(f"   Coordinator Model: {team_model}")
+        print(f"   Members: {len(member_agents)}")
+        print(f"   Toolsets: {len(agno_toolkits)}")
+
+        # Send heartbeat: Creating team
+        activity.heartbeat({"status": "Creating team with agents and toolsets..."})
+
+        # Track tool executions for real-time streaming
+        tool_execution_messages = []
+
+        # Create tool hook to capture tool execution for real-time streaming
+        # Agno inspects the signature and passes matching parameters
+        def tool_hook(name: str = None, function_name: str = None, function=None, arguments: dict = None, **kwargs):
+            """Hook to capture tool execution and add to messages for streaming
+
+            Agno passes these parameters based on our signature:
+            - name or function_name: The tool function name
+            - function: The callable being executed (this is the NEXT function in the chain)
+            - arguments: Dict of arguments passed to the tool
+
+            The hook must CALL the function and return its result.
+            """
+            # Get tool name from Agno's parameters
+            tool_name = name or function_name or "unknown"
+            tool_args = arguments or {}
+
+            # Generate unique tool execution ID (tool_name + timestamp)
+            import time
+            tool_execution_id = f"{tool_name}_{int(time.time() * 1000000)}"
+
+            print(f"   🔧 Tool Starting: {tool_name} (ID: {tool_execution_id})")
+            if tool_args:
+                args_preview = str(tool_args)[:200]
+                print(f"      Args: {args_preview}{'...' if len(str(tool_args)) > 200 else ''}")
+
+            # Publish streaming event to Control Plane (real-time UI update)
+            control_plane.publish_event(
+                execution_id=input.execution_id,
+                event_type="tool_started",
+                data={
+                    "tool_name": tool_name,
+                    "tool_execution_id": tool_execution_id,  # Unique ID for this execution
+                    "tool_arguments": tool_args,
+                    "message": f"🔧 Executing tool: {tool_name}",
+                }
+            )
+
+            tool_execution_messages.append({
+                "role": "system",
+                "content": f"🔧 Executing tool: **{tool_name}**",
+                "tool_name": tool_name,
+                "tool_event": "started",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            })
+
+            # CRITICAL: Actually call the function and handle completion
+            result = None
+            error = None
+            try:
+                # Call the actual function (next in the hook chain)
+                if function and callable(function):
+                    result = function(**tool_args) if tool_args else function()
+                else:
+                    raise ValueError(f"Function not callable: {function}")
+
+                status = "success"
+                icon = "✅"
+                print(f"   {icon} Tool Success: {tool_name}")
+
+            except Exception as e:
+                error = e
+                status = "failed"
+                icon = "❌"
+                print(f"   {icon} Tool Failed: {tool_name} - {str(e)}")
+
+            # Publish completion event to Control Plane (real-time UI update)
+            control_plane.publish_event(
+                execution_id=input.execution_id,
+                event_type="tool_completed",
+                data={
+                    "tool_name": tool_name,
+                    "tool_execution_id": tool_execution_id,  # Same ID to match the started event
+                    "status": status,
+                    "error": str(error) if error else None,
+                    "tool_output": result if result is not None else None,  # Include tool output for UI display
+                    "message": f"{icon} Tool {status}: {tool_name}",
+                }
+            )
+
+            tool_execution_messages.append({
+                "role": "system",
+                "content": f"{icon} Tool {status}: **{tool_name}**",
+                "tool_name": tool_name,
+                "tool_event": "completed",
+                "tool_status": status,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            })
+
+            # If there was an error, re-raise it so Agno knows the tool failed
+            if error:
+                raise error
+
+            # Return the result to continue the chain
+            return result
+
+        # Create PERSISTENT database for Team based on session_id
+        # This allows Agno to automatically manage conversation history across turns
+        # Database persists across executions within the same session
+        from agno.db.sqlite import SqliteDb
+        import tempfile
+
+        # Use session_id (not execution_id) for persistent database across conversation turns
+        session_id_for_db = input.session_id or input.execution_id
+        db_path = os.path.join(tempfile.gettempdir(), f"team_session_{session_id_for_db}.db")
+        team_db = SqliteDb(db_file=db_path)
+
+        print(f"📂 Using persistent team database: {db_path}")
+
+        # Create Team with openai/ prefix for custom proxy compatibility
+        team = Team(
+            members=member_agents,
+            name=f"Team {input.team_id}",
+            model=LiteLLM(
+                id=f"openai/{team_model}",  # e.g., "openai/kubiya/claude-sonnet-4"
+                api_base=litellm_api_base,
+                api_key=litellm_api_key,
+            ),
+            tools=agno_toolkits if agno_toolkits else None,  # Add toolsets to team
+            tool_hooks=[tool_hook],  # Add hook for real-time tool updates
+            db=team_db,  # PERSISTENT database per session
+            add_history_to_context=True,  # Agno automatically adds conversation history from DB
+            num_history_runs=10,  # Include last 10 turns in context
+            share_member_interactions=True,  # Members see each other's work during current run
+            store_member_responses=True,  # Enable member responses to be stored
+            show_members_responses=True,  # Show member responses in logs
+        )
+
+        print(f"   📚 Team configured with automatic history (last 10 runs)\n")
+
+        # Register team for cancellation support
+        _active_teams[input.execution_id] = {
+            "team": team,
+            "run_id": None,  # Will be set when run starts
+            "started_at": datetime.now(timezone.utc).isoformat(),
+        }
+        print(f"✅ Team registered for cancellation support (execution_id: {input.execution_id})\n")
+
+        activity.logger.info(
+            f"Created Agno Team with {len(member_agents)} members",
+            extra={
+                "coordinator_model": team_model,
+                "member_count": len(member_agents),
+            }
+        )
+
+        # Cache execution metadata in Redis for fast SSE lookups (avoid DB queries)
+        control_plane = get_control_plane_client()
+        control_plane.cache_metadata(input.execution_id, "TEAM")
+
+        # Execute team run with streaming in a thread pool
+        # This prevents blocking the async event loop in Temporal
+        print("\n⚡ Executing Team Run with Streaming...")
+        print(f"   Prompt: {input.prompt}\n")
+
+        # Send heartbeat: Starting execution
+        activity.heartbeat({"status": "Team is processing your request..."})
+
+        import asyncio
+
+        # Stream the response and collect chunks + tool messages
+        response_chunks = []
+        full_response = ""
+
+        # Generate unique message ID for this turn (execution_id + timestamp)
+        import time
+        message_id = f"{input.execution_id}_{int(time.time() * 1000000)}"
+
+        def stream_team_run():
+            """Run team with streaming and collect response + member events"""
+            nonlocal full_response, message_id
+            try:
+                # Run with streaming enabled AND stream_events to capture member events
+                # Agno Team automatically loads conversation history from persistent database
+                # via add_history_to_context=True and num_history_runs=10
+                run_kwargs = {
+                    "stream": True,
+                    "stream_events": True,  # CRITICAL: Stream ALL events including member events
+                    "stream_member_events": True,  # Stream member agent events
+                    "session_id": input.session_id or input.execution_id,
+                }
+                if input.user_id:
+                    run_kwargs["user_id"] = input.user_id
+
+                print(f"   📖 Agno will automatically load conversation history from persistent database\n")
+                run_response = team.run(input.prompt, **run_kwargs)
+
+                # Track member message IDs for streaming
+                member_message_ids = {}
+                active_streaming_member = None  # Track which member is currently streaming
+                tool_execution_ids = {}  # Track tool_execution_id to match start/complete events (key: tool_name_timestamp)
+                run_id_published = False  # Track if we've captured and published run_id
+
+                # Iterate over streaming events (not just chunks)
+                for event in run_response:
+                    # Capture and publish run_id from first event for cancellation support
+                    if not run_id_published and hasattr(event, 'run_id') and event.run_id:
+                        agno_run_id = event.run_id
+                        print(f"\n🆔 Agno run_id: {agno_run_id}")
+
+                        # Store run_id in registry for cancellation
+                        if input.execution_id in _active_teams:
+                            _active_teams[input.execution_id]["run_id"] = agno_run_id
+
+                        # Publish run_id to Redis for Control Plane cancellation access
+                        # This allows users to cancel via STOP button in UI
+                        control_plane.publish_event(
+                            execution_id=input.execution_id,
+                            event_type="run_started",
+                            data={
+                                "run_id": agno_run_id,
+                                "team_id": input.team_id,
+                                "cancellable": True,
+                            }
+                        )
+                        run_id_published = True
+
+                    event_type = getattr(event, 'event', None)
+
+                    # Handle TEAM LEADER content chunks
+                    if event_type == "TeamRunContent":
+                        # If a member was streaming, mark them as complete (leader took control back)
+                        if active_streaming_member and active_streaming_member in member_message_ids:
+                            control_plane.publish_event(
+                                execution_id=input.execution_id,
+                                event_type="member_message_complete",
+                                data={
+                                    "message_id": member_message_ids[active_streaming_member],
+                                    "member_name": active_streaming_member,
+                                    "source": "team_member",
+                                }
+                            )
+                            active_streaming_member = None
+                        if hasattr(event, 'content') and event.content:
+                            content = str(event.content)
+                            full_response += content
+                            response_chunks.append(content)
+                            print(content, end='', flush=True)
+
+                            # Stream team leader chunk to Control Plane
+                            control_plane.publish_event(
+                                execution_id=input.execution_id,
+                                event_type="message_chunk",
+                                data={
+                                    "role": "assistant",
+                                    "content": content,
+                                    "is_chunk": True,
+                                    "message_id": message_id,  # Team leader message ID
+                                    "source": "team_leader",
+                                }
+                            )
+
+                    # Handle MEMBER content chunks (from team members)
+                    elif event_type == "RunContent":
+                        # Member agent content chunk
+                        member_name = getattr(event, 'agent_name', getattr(event, 'member_name', 'Unknown Member'))
+
+                        # If switching to a different member, mark the previous one as complete
+                        if active_streaming_member and active_streaming_member != member_name and active_streaming_member in member_message_ids:
+                            control_plane.publish_event(
+                                execution_id=input.execution_id,
+                                event_type="member_message_complete",
+                                data={
+                                    "message_id": member_message_ids[active_streaming_member],
+                                    "member_name": active_streaming_member,
+                                    "source": "team_member",
+                                }
+                            )
+
+                        # Generate unique message ID for this member
+                        if member_name not in member_message_ids:
+                            member_message_ids[member_name] = f"{input.execution_id}_{member_name}_{int(time.time() * 1000000)}"
+                            # Print member name header once when they start
+                            print(f"\n[{member_name}] ", end='', flush=True)
+
+                        # Track that this member is now actively streaming
+                        active_streaming_member = member_name
+
+                        if hasattr(event, 'content') and event.content:
+                            content = str(event.content)
+                            # Print content without the repeated member name prefix
+                            print(content, end='', flush=True)
+
+                            # Stream member chunk to Control Plane
+                            control_plane.publish_event(
+                                execution_id=input.execution_id,
+                                event_type="member_message_chunk",
+                                data={
+                                    "role": "assistant",
+                                    "content": content,
+                                    "is_chunk": True,
+                                    "message_id": member_message_ids[member_name],
+                                    "source": "team_member",
+                                    "member_name": member_name,
+                                }
+                            )
+
+                    # Handle tool calls (team leader or members)
+                    elif event_type in ["TeamToolCallStarted", "ToolCallStarted"]:
+                        # Extract tool name properly (event.tool might be a ToolExecution object)
+                        tool_obj = getattr(event, 'tool', None)
+                        if tool_obj and hasattr(tool_obj, 'tool_name'):
+                            # It's a ToolExecution object
+                            tool_name = tool_obj.tool_name
+                            tool_args = getattr(tool_obj, 'tool_args', {})
+                        else:
+                            # Fallback to string name
+                            tool_name = str(tool_obj) if tool_obj else getattr(event, 'tool_name', 'unknown')
+                            tool_args = {}
+
+                        is_member_tool = event_type == "ToolCallStarted"
+                        member_name = getattr(event, 'agent_name', getattr(event, 'member_name', None)) if is_member_tool else None
+
+                        # Generate unique tool_execution_id and message_id
+                        tool_execution_id = f"{tool_name}_{int(time.time() * 1000000)}"
+                        message_id = f"{input.execution_id}_tool_{tool_execution_id}"
+
+                        # Store the tool_execution_id so we can match it with the completion event
+                        # Use a composite key to handle multiple tools with same name
+                        tool_key = f"{member_name or 'leader'}_{tool_name}_{int(time.time())}"
+                        tool_execution_ids[tool_key] = {
+                            "tool_execution_id": tool_execution_id,
+                            "message_id": message_id,
+                            "tool_name": tool_name,
+                            "member_name": member_name,
+                            "parent_message_id": member_message_ids.get(member_name) if is_member_tool and member_name else None,
+                        }
+
+                        print(f"\n   🔧 Tool Starting: {tool_name} (ID: {tool_execution_id})")
+                        if tool_args:
+                            args_preview = str(tool_args)[:200]
+                            print(f"      Args: {args_preview}{'...' if len(str(tool_args)) > 200 else ''}")
+
+                        control_plane.publish_event(
+                            execution_id=input.execution_id,
+                            event_type="tool_started" if not is_member_tool else "member_tool_started",
+                            data={
+                                "tool_name": tool_name,
+                                "tool_execution_id": tool_execution_id,
+                                "message_id": message_id,
+                                "tool_arguments": tool_args if tool_args else None,
+                                "source": "team_member" if is_member_tool else "team_leader",
+                                "member_name": member_name,
+                                "parent_message_id": member_message_ids.get(member_name) if is_member_tool and member_name else None,
+                                "message": f"🔧 Executing tool: {tool_name}",
+                            }
+                        )
+
+                    elif event_type in ["TeamToolCallCompleted", "ToolCallCompleted", "TeamToolCallFailed", "ToolCallFailed"]:
+                        # Extract tool name properly (event.tool might be a ToolExecution object)
+                        tool_obj = getattr(event, 'tool', None)
+                        if tool_obj and hasattr(tool_obj, 'tool_name'):
+                            # It's a ToolExecution object
+                            tool_name = tool_obj.tool_name
+                            tool_output = getattr(tool_obj, 'result', None) or getattr(event, 'result', None)
+                        else:
+                            # Fallback to string name
+                            tool_name = str(tool_obj) if tool_obj else getattr(event, 'tool_name', 'unknown')
+                            tool_output = getattr(event, 'result', None)
+
+                        is_member_tool = event_type in ["ToolCallCompleted", "ToolCallFailed"]
+                        member_name = getattr(event, 'agent_name', getattr(event, 'member_name', None)) if is_member_tool else None
+
+                        # Determine if this is a failure event
+                        is_failure = event_type in ["TeamToolCallFailed", "ToolCallFailed"]
+                        tool_error = getattr(event, 'error', None) if is_failure else None
+
+                        # Find the stored tool info from the start event
+                        tool_key_pattern = f"{member_name or 'leader'}_{tool_name}"
+                        matching_tool = None
+                        for key, tool_info in list(tool_execution_ids.items()):
+                            if key.startswith(tool_key_pattern):
+                                matching_tool = tool_info
+                                # Remove from tracking dict
+                                del tool_execution_ids[key]
+                                break
+
+                        if matching_tool:
+                            tool_execution_id = matching_tool["tool_execution_id"]
+                            message_id = matching_tool["message_id"]
+                            parent_message_id = matching_tool["parent_message_id"]
+                        else:
+                            # Fallback if start event wasn't captured
+                            tool_execution_id = f"{tool_name}_{int(time.time() * 1000000)}"
+                            message_id = f"{input.execution_id}_tool_{tool_execution_id}"
+                            parent_message_id = member_message_ids.get(member_name) if is_member_tool and member_name else None
+                            print(f"   ⚠️ Warning: Tool completion without matching start event: {tool_name}")
+
+                        status = "failed" if is_failure else "success"
+                        icon = "❌" if is_failure else "✅"
+                        print(f"\n   {icon} Tool {status.capitalize()}: {tool_name}")
+                        if tool_error:
+                            print(f"      Error: {str(tool_error)[:200]}")
+
+                        control_plane.publish_event(
+                            execution_id=input.execution_id,
+                            event_type="tool_completed" if not is_member_tool else "member_tool_completed",
+                            data={
+                                "tool_name": tool_name,
+                                "tool_execution_id": tool_execution_id,
+                                "message_id": message_id,
+                                "status": status,
+                                "tool_output": str(tool_output)[:1000] if tool_output else None,  # Limit output size
+                                "tool_error": str(tool_error) if tool_error else None,
+                                "source": "team_member" if is_member_tool else "team_leader",
+                                "member_name": member_name,
+                                "parent_message_id": parent_message_id,
+                                "message": f"{icon} Tool {status}: {tool_name}",
+                            }
+                        )
+
+                        # Rotate message_id after tool completion so subsequent responses are grouped separately
+                        # This helps the UI show responses before and after tool execution as distinct sections
+                        if is_member_tool and member_name and member_name in member_message_ids:
+                            # Mark the previous message_id as complete before rotating
+                            old_message_id = member_message_ids[member_name]
+                            control_plane.publish_event(
+                                execution_id=input.execution_id,
+                                event_type="member_message_complete",
+                                data={
+                                    "message_id": old_message_id,
+                                    "member_name": member_name,
+                                    "source": "team_member",
+                                }
+                            )
+
+                            # Generate new message_id for this member's next response
+                            member_message_ids[member_name] = f"{input.execution_id}_{member_name}_{int(time.time() * 1000000)}"
+                            print(f"   🔄 Rotated message_id for {member_name}")
+
+                    # Handle reasoning events (if model supports reasoning)
+                    elif event_type in ["TeamReasoningStep", "ReasoningStep"]:
+                        if hasattr(event, 'content') and event.content:
+                            reasoning_content = str(event.content)
+                            is_member = event_type == "ReasoningStep"
+                            member_name = getattr(event, 'agent_name', getattr(event, 'member_name', None)) if is_member else None
+
+                            print(f"\n   💭 {'[' + member_name + '] ' if member_name else ''}Reasoning: {reasoning_content[:100]}...")
+
+                            control_plane.publish_event(
+                                execution_id=input.execution_id,
+                                event_type="reasoning_step",
+                                data={
+                                    "content": reasoning_content,
+                                    "source": "team_member" if is_member else "team_leader",
+                                    "member_name": member_name,
+                                }
+                            )
+
+                # Mark any remaining active member as complete (stream ended)
+                if active_streaming_member and active_streaming_member in member_message_ids:
+                    control_plane.publish_event(
+                        execution_id=input.execution_id,
+                        event_type="member_message_complete",
+                        data={
+                            "message_id": member_message_ids[active_streaming_member],
+                            "member_name": active_streaming_member,
+                            "source": "team_member",
+                        }
+                    )
+                    print(f"\n   ✓ {active_streaming_member} completed")
+
+                print()  # New line after streaming
+
+                # Return the iterator's final result
+                return run_response
+            except Exception as e:
+                print(f"\n❌ Streaming error: {str(e)}")
+                import traceback
+                traceback.print_exc()
+                # Fall back to non-streaming
+                run_kwargs_fallback = {
+                    "stream": False,
+                    "session_id": input.session_id or input.execution_id,
+                }
+                if input.user_id:
+                    run_kwargs_fallback["user_id"] = input.user_id
+                if conversation_context:
+                    run_kwargs_fallback["messages"] = conversation_context
+                return team.run(input.prompt, **run_kwargs_fallback)
+
+        # Execute in thread pool (NO TIMEOUT - tasks can run as long as needed)
+        # Control Plane can cancel via Agno's cancel_run API if user requests it
+        result = await asyncio.to_thread(stream_team_run)
+
+        # Send heartbeat: Completed
+        activity.heartbeat({"status": "Team execution completed, preparing response..."})
+
+        print("\n✅ Team Execution Completed!")
+        print(f"   Response Length: {len(full_response)} chars")
+
+        activity.logger.info(
+            f"Agno Team execution completed",
+            extra={
+                "execution_id": input.execution_id,
+                "has_content": bool(full_response),
+            }
+        )
+
+        # Use the streamed response content
+        response_content = full_response if full_response else (result.content if hasattr(result, "content") else str(result))
+
+        # Extract tool call messages for UI streaming
+        tool_messages = []
+        if hasattr(result, "messages") and result.messages:
+            for msg in result.messages:
+                # Check if message has tool calls
+                if hasattr(msg, "tool_calls") and msg.tool_calls:
+                    for tool_call in msg.tool_calls:
+                        tool_name = getattr(tool_call, "function", {}).get("name") if hasattr(tool_call, "function") else str(tool_call)
+                        tool_args = getattr(tool_call, "function", {}).get("arguments") if hasattr(tool_call, "function") else {}
+
+                        print(f"   🔧 Tool Call: {tool_name}")
+
+                        tool_messages.append({
+                            "role": "tool",
+                            "content": f"Executing {tool_name}...",
+                            "tool_name": tool_name,
+                            "tool_input": tool_args,
+                            "timestamp": datetime.now(timezone.utc).isoformat(),
+                        })
+
+        if tool_messages:
+            print(f"\n🔧 Tool Calls Captured: {len(tool_messages)}")
+
+        # Extract usage metrics if available
+        usage = {}
+        if hasattr(result, "metrics") and result.metrics:
+            metrics = result.metrics
+            usage = {
+                "input_tokens": getattr(metrics, "input_tokens", 0),
+                "output_tokens": getattr(metrics, "output_tokens", 0),
+                "total_tokens": getattr(metrics, "total_tokens", 0),
+            }
+            print(f"\n📊 Token Usage:")
+            print(f"   Input Tokens: {usage.get('input_tokens', 0)}")
+            print(f"   Output Tokens: {usage.get('output_tokens', 0)}")
+            print(f"   Total Tokens: {usage.get('total_tokens', 0)}")
+
+        print(f"\n📝 Response Preview:")
+        print(f"   {response_content[:200]}..." if len(response_content) > 200 else f"   {response_content}")
+
+        # CRITICAL: Persist COMPLETE session history to Control Plane API
+        # This includes previous history + current turn for conversation continuity
+        print("\n💾 Persisting session history to Control Plane...")
+        try:
+            # Build complete session: previous history + current turn's messages
+            updated_session_messages = list(session_history)  # Start with loaded history
+
+            # Add current turn messages (user prompt + assistant response)
+            # Streaming results don't have result.messages, so we manually build them
+            current_turn_messages = [
+                {
+                    "role": "user",
+                    "content": input.prompt,
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "user_id": input.user_id,
+                    "user_name": getattr(input, "user_name", None),
+                    "user_email": getattr(input, "user_email", None),
+                },
+                {
+                    "role": "assistant",
+                    "content": response_content,
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                }
+            ]
+
+            print(f"   📝 Adding {len(current_turn_messages)} messages from current turn (user + assistant)...")
+            updated_session_messages.extend(current_turn_messages)
+
+            if updated_session_messages:
+                success = control_plane.persist_session(
+                    execution_id=input.execution_id,
+                    session_id=input.session_id or input.execution_id,
+                    user_id=input.user_id,
+                    messages=updated_session_messages,  # Complete conversation history
+                    metadata={
+                        "team_id": input.team_id,
+                        "organization_id": input.organization_id,
+                        "turn_count": len(updated_session_messages),
+                    }
+                )
+
+                if success:
+                    print(f"   ✅ Complete session history persisted ({len(updated_session_messages)} total messages)")
+                else:
+                    print(f"   ⚠️  Session persistence failed")
+            else:
+                print("   ℹ️  No messages - skipping session persistence")
+
+        except Exception as session_error:
+            print(f"   ⚠️  Session persistence error: {str(session_error)}")
+            logger.warning("session_persistence_error", error=str(session_error), execution_id=input.execution_id)
+            # Don't fail the execution if session persistence fails
+
+        print("\n" + "="*80)
+        print("🏁 TEAM EXECUTION END")
+        print("="*80 + "\n")
+
+        # Cleanup: Remove team from registry
+        if input.execution_id in _active_teams:
+            del _active_teams[input.execution_id]
+            print(f"✅ Team unregistered (execution_id: {input.execution_id})\n")
+
+        # Database persists across session for conversation history
+        print(f"💾 Database persisted for future turns: {db_path}\n")
+
+        return {
+            "success": True,
+            "response": response_content,
+            "usage": usage,
+            "coordination_type": "agno_team",
+            "tool_messages": tool_messages,  # Include tool call messages for UI
+            "tool_execution_messages": tool_execution_messages,  # Include real-time tool execution status
+        }
+
+    except Exception as e:
+        # Cleanup on error
+        if input.execution_id in _active_teams:
+            del _active_teams[input.execution_id]
+
+        # Database persists even on error for potential recovery and history
+        print(f"💾 Database preserved for future turns despite error\n")
+
+        print("\n" + "="*80)
+        print("❌ TEAM EXECUTION FAILED")
+        print("="*80)
+        print(f"Error: {str(e)}")
+        print("="*80 + "\n")
+
+        activity.logger.error(
+            f"Team coordination failed",
+            extra={
+                "execution_id": input.execution_id,
+                "error": str(e),
+            }
+        )
+        return {
+            "success": False,
+            "error": str(e),
+            "coordination_type": "agno_team",
+            "usage": {},
+        }
+
+
+@dataclass
+class ActivityCancelTeamInput:
+    execution_id: str
+
+
+@activity.defn(name="cancel_team_run")
+async def cancel_team_run(input: ActivityCancelTeamInput) -> dict:
+    """Cancel an active team run using Agno's cancel_run API."""
+    print("\n" + "="*80)
+    print("🛑 CANCEL TEAM RUN")
+    print("="*80)
+    print(f"Execution ID: {input.execution_id}\n")
+
+    try:
+        if input.execution_id not in _active_teams:
+            print(f"⚠️  Team not found in registry - may have already completed")
+            return {"success": False, "error": "Team not found or already completed", "execution_id": input.execution_id}
+
+        team_info = _active_teams[input.execution_id]
+        team = team_info["team"]
+        run_id = team_info.get("run_id")
+
+        if not run_id:
+            print(f"⚠️  No run_id found - execution may not have started yet")
+            return {"success": False, "error": "Execution not started yet", "execution_id": input.execution_id}
+
+        print(f"🆔 Found run_id: {run_id}")
+        print(f"🛑 Calling team.cancel_run()...")
+
+        success = team.cancel_run(run_id)
+
+        if success:
+            print(f"✅ Team run cancelled successfully!\n")
+            del _active_teams[input.execution_id]
+            return {"success": True, "execution_id": input.execution_id, "run_id": run_id, "cancelled_at": datetime.now(timezone.utc).isoformat()}
+        else:
+            print(f"⚠️  Cancel failed - run may have already completed\n")
+            return {"success": False, "error": "Cancel failed - run may be completed", "execution_id": input.execution_id, "run_id": run_id}
+
+    except Exception as e:
+        print(f"❌ Error cancelling run: {str(e)}\n")
+        return {"success": False, "error": str(e), "execution_id": input.execution_id}
