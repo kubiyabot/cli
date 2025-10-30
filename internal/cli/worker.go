@@ -15,6 +15,8 @@ func newWorkerCommand(cfg *config.Config) *cobra.Command {
 
 	workerCmd.AddCommand(
 		newWorkerStartCommand(cfg),
+		newWorkerStatusCommand(cfg),
+		newWorkerStopCommand(cfg),
 	)
 
 	return workerCmd

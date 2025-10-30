@@ -72,6 +72,9 @@ var teamExecutorService string
 //go:embed worker_files/services/toolset_factory.py
 var toolsetFactoryService string
 
+//go:embed worker_files/services/data_visualization.py
+var dataVisualizationService string
+
 // Embed runtimes
 //go:embed worker_files/runtimes/__init__.py
 var runtimesInit string

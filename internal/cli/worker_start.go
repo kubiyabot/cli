@@ -29,11 +29,16 @@ type WorkerStartOptions struct {
 	// Worker configuration
 	QueueID          string
 	DeploymentType   string // "docker" or "local"
+	DaemonMode       bool   // Run in background with supervision
 
 	// Docker options
 	Image            string
 	ImageTag         string
 	AutoPull         bool
+
+	// Daemon options
+	MaxLogSize       int64
+	MaxLogBackups    int
 
 	cfg              *config.Config
 }
@@ -48,7 +53,8 @@ func newWorkerStartCommand(cfg *config.Config) *cobra.Command {
 		Short: "🚀 Start an agent worker",
 		Long: `Start an agent worker to execute tasks from a queue.
 
-The worker will run in the foreground. Press Ctrl+C to stop.
+The worker will run in the foreground by default. Press Ctrl+C to stop.
+Use -d flag to run in daemon mode with automatic crash recovery.
 
 Deployment Types:
   • local  - Run worker locally with embedded Python (no Docker required)
@@ -57,6 +63,9 @@ Deployment Types:
 Examples:
   # Start worker locally (no Docker)
   kubiya worker start --queue-id=<queue-id> --type=local
+
+  # Start worker in daemon mode with supervision
+  kubiya worker start --queue-id=<queue-id> --type=local -d
 
   # Start worker in Docker
   kubiya worker start --queue-id=<queue-id> --type=docker
@@ -70,6 +79,9 @@ Examples:
 
 	cmd.Flags().StringVar(&opts.QueueID, "queue-id", "", "Worker queue ID (required)")
 	cmd.Flags().StringVar(&opts.DeploymentType, "type", "local", "Deployment type: local or docker")
+	cmd.Flags().BoolVarP(&opts.DaemonMode, "daemon", "d", false, "Run in daemon mode with supervision and crash recovery")
+	cmd.Flags().Int64Var(&opts.MaxLogSize, "max-log-size", defaultMaxLogSize, "Maximum log file size in bytes (daemon mode)")
+	cmd.Flags().IntVar(&opts.MaxLogBackups, "max-log-backups", defaultMaxBackups, "Maximum number of log backup files (daemon mode)")
 	cmd.Flags().StringVar(&opts.Image, "image", defaultWorkerImage, "Worker Docker image (docker mode)")
 	cmd.Flags().StringVar(&opts.ImageTag, "image-tag", defaultImageTag, "Worker image tag (docker mode)")
 	cmd.Flags().BoolVar(&opts.AutoPull, "pull", true, "Automatically pull latest image (docker mode)")
@@ -94,6 +106,25 @@ func (opts *WorkerStartOptions) Run(ctx context.Context) error {
 }
 
 func (opts *WorkerStartOptions) RunLocal(ctx context.Context) error {
+	// Handle daemon mode
+	if opts.DaemonMode {
+		// Check if we're the child process
+		if !IsDaemonChild() {
+			// We're the parent - fork and exit
+			if err := Daemonize(); err != nil {
+				return err
+			}
+			// Parent exits here (won't reach this)
+		}
+		// Continue as daemon child
+		return opts.runLocalDaemon(ctx)
+	}
+
+	// Run in foreground mode
+	return opts.runLocalForeground(ctx)
+}
+
+func (opts *WorkerStartOptions) runLocalForeground(ctx context.Context) error {
 	// Print beautiful startup banner
 	fmt.Println()
 	fmt.Println(strings.Repeat("═", 80))
@@ -251,6 +282,10 @@ func (opts *WorkerStartOptions) RunLocal(ctx context.Context) error {
 
 	if err := os.WriteFile(fmt.Sprintf("%s/toolset_factory.py", servicesDir), []byte(toolsetFactoryService), 0644); err != nil {
 		return fmt.Errorf("❌ failed to write toolset_factory.py: %w", err)
+	}
+
+	if err := os.WriteFile(fmt.Sprintf("%s/data_visualization.py", servicesDir), []byte(dataVisualizationService), 0644); err != nil {
+		return fmt.Errorf("❌ failed to write data_visualization.py: %w", err)
 	}
 
 	// Write runtimes directory
@@ -538,4 +573,311 @@ func (opts *WorkerStartOptions) RunDocker(ctx context.Context) error {
 		fmt.Println("\n✓ Worker finished")
 		return nil
 	}
+}
+
+func (opts *WorkerStartOptions) runLocalDaemon(ctx context.Context) error {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("failed to get home directory: %w", err)
+	}
+
+	workerDir := fmt.Sprintf("%s/.kubiya/workers/%s", homeDir, opts.QueueID)
+
+	// Setup worker directory and files (if parent process)
+	if !IsDaemonChild() {
+		// Print startup info for parent
+		fmt.Println()
+		fmt.Println(strings.Repeat("═", 80))
+		fmt.Println("🚀  KUBIYA AGENT WORKER (DAEMON MODE)")
+		fmt.Println(strings.Repeat("═", 80))
+		fmt.Println()
+		fmt.Println("📋 CONFIGURATION")
+		fmt.Println(strings.Repeat("─", 80))
+		fmt.Printf("   Queue ID:         %s\n", opts.QueueID)
+		fmt.Printf("   Deployment Type:  Local (Python)\n")
+		fmt.Printf("   Mode:             Daemon with supervision\n")
+		fmt.Printf("   Control Plane:    %s\n", controlPlaneURL)
+		fmt.Printf("   Worker Directory: %s\n", workerDir)
+		fmt.Println()
+
+		// Setup will happen in child process
+		return nil
+	}
+
+	// We're in the daemon child process now
+	if err := os.MkdirAll(workerDir, 0755); err != nil {
+		return fmt.Errorf("failed to create worker directory: %w", err)
+	}
+
+	// Check API key
+	if opts.cfg.APIKey == "" {
+		return fmt.Errorf("KUBIYA_API_KEY is required")
+	}
+
+	// Check Python
+	pythonCmd := "python3"
+	checkCmd := exec.Command(pythonCmd, "--version")
+	if _, err := checkCmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("Python 3 is not installed")
+	}
+
+	// Setup worker files (same as foreground mode)
+	if err := opts.setupWorkerFiles(workerDir); err != nil {
+		return err
+	}
+
+	// Setup virtual environment
+	venvDir := fmt.Sprintf("%s/venv", workerDir)
+	pythonPath, pipPath := fmt.Sprintf("%s/bin/python", venvDir), fmt.Sprintf("%s/bin/pip", venvDir)
+
+	if _, err := os.Stat(venvDir); os.IsNotExist(err) {
+		venvCmd := exec.Command(pythonCmd, "-m", "venv", venvDir)
+		if err := venvCmd.Run(); err != nil {
+			return fmt.Errorf("failed to create virtual environment: %w", err)
+		}
+
+		// Install dependencies
+		pipUpgradeCmd := exec.Command(pipPath, "install", "--quiet", "--upgrade", "pip")
+		if err := pipUpgradeCmd.Run(); err != nil {
+			return fmt.Errorf("failed to upgrade pip: %w", err)
+		}
+
+		requirementsPath := fmt.Sprintf("%s/requirements.txt", workerDir)
+		installCmd := exec.Command(pipPath, "install", "--quiet", "-r", requirementsPath)
+		if err := installCmd.Run(); err != nil {
+			return fmt.Errorf("failed to install dependencies: %w", err)
+		}
+	}
+
+	// Get or use environment-configured log size
+	maxLogSize := opts.MaxLogSize
+	if envSize := GetMaxLogSizeFromEnv(); envSize != defaultMaxLogSize {
+		maxLogSize = envSize
+	}
+
+	// Create process supervisor
+	supervisor, err := NewProcessSupervisor(opts.QueueID, workerDir, maxLogSize, opts.MaxLogBackups)
+	if err != nil {
+		return fmt.Errorf("failed to create supervisor: %w", err)
+	}
+
+	// Start supervised worker
+	workerPyPath := fmt.Sprintf("%s/worker.py", workerDir)
+	daemonInfo, err := supervisor.Start(pythonPath, workerPyPath, opts.cfg.APIKey)
+	if err != nil {
+		return fmt.Errorf("failed to start daemon: %w", err)
+	}
+
+	// Write startup info file for parent to read
+	infoFile := fmt.Sprintf("%s/daemon_info.txt", workerDir)
+	startupInfo := fmt.Sprintf(`
+╔═══════════════════════════════════════════════════════════════════════════════╗
+║                    KUBIYA AGENT WORKER - DAEMON STARTED                       ║
+╚═══════════════════════════════════════════════════════════════════════════════╝
+
+📋 DAEMON INFORMATION
+────────────────────────────────────────────────────────────────────────────────
+   Process ID (PID):    %d
+   Queue ID:            %s
+   Worker Directory:    %s
+   Log File:            %s
+   PID File:            %s
+   Started At:          %s
+
+✅ SUPERVISION ENABLED
+────────────────────────────────────────────────────────────────────────────────
+   • Automatic crash recovery with exponential backoff
+   • Maximum restart attempts: %d
+   • Rotating logs (max size: %d MB, backups: %d)
+   • Health monitoring enabled
+
+📊 MANAGEMENT COMMANDS
+────────────────────────────────────────────────────────────────────────────────
+   View logs:     tail -f %s
+   Stop worker:   kubiya worker stop --queue-id=%s
+   Check status:  kubiya worker status --queue-id=%s
+
+🎯 The worker is now running in the background and will automatically restart if it crashes.
+`,
+		daemonInfo.PID,
+		daemonInfo.QueueID,
+		daemonInfo.WorkerDir,
+		daemonInfo.LogFile,
+		daemonInfo.PIDFile,
+		daemonInfo.StartedAt.Format("2006-01-02 15:04:05"),
+		maxRestartAttempts,
+		maxLogSize/(1024*1024),
+		opts.MaxLogBackups,
+		daemonInfo.LogFile,
+		opts.QueueID,
+		opts.QueueID,
+	)
+	os.WriteFile(infoFile, []byte(startupInfo), 0644)
+
+	// Setup signal handling for graceful shutdown
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+
+	// Wait for termination signal
+	<-sigChan
+	supervisor.Stop()
+
+	return nil
+}
+
+func (opts *WorkerStartOptions) setupWorkerFiles(workerDir string) error {
+	// Write worker.py script
+	workerPyPath := fmt.Sprintf("%s/worker.py", workerDir)
+	if err := os.WriteFile(workerPyPath, []byte(workerPyScript), 0644); err != nil {
+		return fmt.Errorf("failed to write worker.py: %w", err)
+	}
+
+	// Write requirements.txt
+	requirementsPath := fmt.Sprintf("%s/requirements.txt", workerDir)
+	if err := os.WriteFile(requirementsPath, []byte(requirementsTxt), 0644); err != nil {
+		return fmt.Errorf("failed to write requirements.txt: %w", err)
+	}
+
+	// Write workflows directory
+	workflowsDir := fmt.Sprintf("%s/workflows", workerDir)
+	if err := os.MkdirAll(workflowsDir, 0755); err != nil {
+		return fmt.Errorf("failed to create workflows directory: %w", err)
+	}
+
+	if err := os.WriteFile(fmt.Sprintf("%s/__init__.py", workflowsDir), []byte(workflowsInit), 0644); err != nil {
+		return fmt.Errorf("failed to write workflows __init__.py: %w", err)
+	}
+
+	if err := os.WriteFile(fmt.Sprintf("%s/agent_execution.py", workflowsDir), []byte(agentExecutionWorkflow), 0644); err != nil {
+		return fmt.Errorf("failed to write agent_execution.py: %w", err)
+	}
+
+	if err := os.WriteFile(fmt.Sprintf("%s/team_execution.py", workflowsDir), []byte(teamExecutionWorkflow), 0644); err != nil {
+		return fmt.Errorf("failed to write team_execution.py: %w", err)
+	}
+
+	// Write activities directory
+	activitiesDir := fmt.Sprintf("%s/activities", workerDir)
+	if err := os.MkdirAll(activitiesDir, 0755); err != nil {
+		return fmt.Errorf("failed to create activities directory: %w", err)
+	}
+
+	if err := os.WriteFile(fmt.Sprintf("%s/__init__.py", activitiesDir), []byte(activitiesInit), 0644); err != nil {
+		return fmt.Errorf("failed to write activities __init__.py: %w", err)
+	}
+
+	if err := os.WriteFile(fmt.Sprintf("%s/agent_activities.py", activitiesDir), []byte(agentActivities), 0644); err != nil {
+		return fmt.Errorf("failed to write agent_activities.py: %w", err)
+	}
+
+	if err := os.WriteFile(fmt.Sprintf("%s/team_activities.py", activitiesDir), []byte(teamActivities), 0644); err != nil {
+		return fmt.Errorf("failed to write team_activities.py: %w", err)
+	}
+
+	if err := os.WriteFile(fmt.Sprintf("%s/toolset_activities.py", activitiesDir), []byte(toolsetActivities), 0644); err != nil {
+		return fmt.Errorf("failed to write toolset_activities.py: %w", err)
+	}
+
+	// Write control_plane_client.py (root level)
+	if err := os.WriteFile(fmt.Sprintf("%s/control_plane_client.py", workerDir), []byte(controlPlaneClient), 0644); err != nil {
+		return fmt.Errorf("failed to write control_plane_client.py: %w", err)
+	}
+
+	// Write models directory
+	modelsDir := fmt.Sprintf("%s/models", workerDir)
+	if err := os.MkdirAll(modelsDir, 0755); err != nil {
+		return fmt.Errorf("failed to create models directory: %w", err)
+	}
+
+	if err := os.WriteFile(fmt.Sprintf("%s/__init__.py", modelsDir), []byte(modelsInit), 0644); err != nil {
+		return fmt.Errorf("failed to write models __init__.py: %w", err)
+	}
+
+	if err := os.WriteFile(fmt.Sprintf("%s/inputs.py", modelsDir), []byte(modelsInputs), 0644); err != nil {
+		return fmt.Errorf("failed to write models inputs.py: %w", err)
+	}
+
+	// Write services directory
+	servicesDir := fmt.Sprintf("%s/services", workerDir)
+	if err := os.MkdirAll(servicesDir, 0755); err != nil {
+		return fmt.Errorf("failed to create services directory: %w", err)
+	}
+
+	if err := os.WriteFile(fmt.Sprintf("%s/__init__.py", servicesDir), []byte(servicesInit), 0644); err != nil {
+		return fmt.Errorf("failed to write services __init__.py: %w", err)
+	}
+
+	if err := os.WriteFile(fmt.Sprintf("%s/agent_executor.py", servicesDir), []byte(agentExecutorService), 0644); err != nil {
+		return fmt.Errorf("failed to write agent_executor.py: %w", err)
+	}
+
+	if err := os.WriteFile(fmt.Sprintf("%s/agent_executor_v2.py", servicesDir), []byte(agentExecutorV2Service), 0644); err != nil {
+		return fmt.Errorf("failed to write agent_executor_v2.py: %w", err)
+	}
+
+	if err := os.WriteFile(fmt.Sprintf("%s/cancellation_manager.py", servicesDir), []byte(cancellationManagerService), 0644); err != nil {
+		return fmt.Errorf("failed to write cancellation_manager.py: %w", err)
+	}
+
+	if err := os.WriteFile(fmt.Sprintf("%s/session_service.py", servicesDir), []byte(sessionService), 0644); err != nil {
+		return fmt.Errorf("failed to write session_service.py: %w", err)
+	}
+
+	if err := os.WriteFile(fmt.Sprintf("%s/team_executor.py", servicesDir), []byte(teamExecutorService), 0644); err != nil {
+		return fmt.Errorf("failed to write team_executor.py: %w", err)
+	}
+
+	if err := os.WriteFile(fmt.Sprintf("%s/toolset_factory.py", servicesDir), []byte(toolsetFactoryService), 0644); err != nil {
+		return fmt.Errorf("failed to write toolset_factory.py: %w", err)
+	}
+
+	if err := os.WriteFile(fmt.Sprintf("%s/data_visualization.py", servicesDir), []byte(dataVisualizationService), 0644); err != nil {
+		return fmt.Errorf("failed to write data_visualization.py: %w", err)
+	}
+
+	// Write runtimes directory
+	runtimesDir := fmt.Sprintf("%s/runtimes", workerDir)
+	if err := os.MkdirAll(runtimesDir, 0755); err != nil {
+		return fmt.Errorf("failed to create runtimes directory: %w", err)
+	}
+
+	if err := os.WriteFile(fmt.Sprintf("%s/__init__.py", runtimesDir), []byte(runtimesInit), 0644); err != nil {
+		return fmt.Errorf("failed to write runtimes __init__.py: %w", err)
+	}
+
+	if err := os.WriteFile(fmt.Sprintf("%s/base.py", runtimesDir), []byte(runtimesBase), 0644); err != nil {
+		return fmt.Errorf("failed to write runtimes base.py: %w", err)
+	}
+
+	if err := os.WriteFile(fmt.Sprintf("%s/claude_code_runtime.py", runtimesDir), []byte(runtimesClaudeCode), 0644); err != nil {
+		return fmt.Errorf("failed to write claude_code_runtime.py: %w", err)
+	}
+
+	if err := os.WriteFile(fmt.Sprintf("%s/default_runtime.py", runtimesDir), []byte(runtimesDefault), 0644); err != nil {
+		return fmt.Errorf("failed to write default_runtime.py: %w", err)
+	}
+
+	if err := os.WriteFile(fmt.Sprintf("%s/factory.py", runtimesDir), []byte(runtimesFactory), 0644); err != nil {
+		return fmt.Errorf("failed to write runtimes factory.py: %w", err)
+	}
+
+	// Write utils directory
+	utilsDir := fmt.Sprintf("%s/utils", workerDir)
+	if err := os.MkdirAll(utilsDir, 0755); err != nil {
+		return fmt.Errorf("failed to create utils directory: %w", err)
+	}
+
+	if err := os.WriteFile(fmt.Sprintf("%s/__init__.py", utilsDir), []byte(utilsInit), 0644); err != nil {
+		return fmt.Errorf("failed to write utils __init__.py: %w", err)
+	}
+
+	if err := os.WriteFile(fmt.Sprintf("%s/retry_utils.py", utilsDir), []byte(utilsRetry), 0644); err != nil {
+		return fmt.Errorf("failed to write retry_utils.py: %w", err)
+	}
+
+	if err := os.WriteFile(fmt.Sprintf("%s/streaming_utils.py", utilsDir), []byte(utilsStreaming), 0644); err != nil {
+		return fmt.Errorf("failed to write streaming_utils.py: %w", err)
+	}
+
+	return nil
 }
