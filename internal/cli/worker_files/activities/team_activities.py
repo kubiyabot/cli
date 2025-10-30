@@ -603,6 +603,7 @@ async def execute_team_coordination(input: ActivityExecuteTeamInput) -> dict:
                     "tool_execution_id": tool_execution_id,  # Same ID to match the started event
                     "status": status,
                     "error": str(error) if error else None,
+                    "tool_output": result if result is not None else None,  # Include tool output for UI display
                     "message": f"{icon} Tool {status}: {tool_name}",
                 }
             )

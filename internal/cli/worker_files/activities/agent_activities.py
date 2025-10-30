@@ -115,6 +115,29 @@ def instantiate_toolset(toolset_data: dict) -> Optional[Any]:
                 print(f"     Install with: pip install docker")
                 return None
 
+        elif toolset_type in ["data_visualization", "diagramming", "visualization"]:
+            # DataVisualizationTools: Create diagrams using Mermaid syntax
+            # This is a custom implementation that uses streaming to send diagram data
+            from services.data_visualization import DataVisualizationTools
+
+            toolkit = DataVisualizationTools(
+                max_diagram_size=config.get("max_diagram_size", 50000),
+                enable_flowchart=config.get("enable_flowchart", True),
+                enable_sequence=config.get("enable_sequence", True),
+                enable_class_diagram=config.get("enable_class_diagram", True),
+                enable_er_diagram=config.get("enable_er_diagram", True),
+                enable_gantt=config.get("enable_gantt", True),
+                enable_pie_chart=config.get("enable_pie_chart", True),
+                enable_state_diagram=config.get("enable_state_diagram", True),
+                enable_git_graph=config.get("enable_git_graph", True),
+                enable_user_journey=config.get("enable_user_journey", True),
+                enable_quadrant_chart=config.get("enable_quadrant_chart", True),
+            )
+            print(f"   ✓ Instantiated DataVisualizationTools: {name}")
+            print(f"     - Max diagram size: {config.get('max_diagram_size', 50000)} chars")
+            print(f"     - Supported: Mermaid diagrams (flowchart, sequence, class, ER, etc.)")
+            return toolkit
+
         else:
             print(f"   ⚠ Unsupported toolset type '{toolset_type}': {name}")
             return None
@@ -462,6 +485,7 @@ async def execute_agent_llm(input: ActivityExecuteAgentInput) -> dict:
                     "tool_execution_id": tool_execution_id,  # Same ID to match the started event
                     "status": status,
                     "error": str(error) if error else None,
+                    "tool_output": result if result is not None else None,  # Include tool output for UI display
                     "message": f"{icon} Tool {status}: {tool_name}",
                 }
             )
