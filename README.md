@@ -128,7 +128,35 @@ Collections of tools and configurations stored in Git repositories or defined in
 
 ## Installation 🚀
 
-### Mac OSX Using HomeBrew
+### Quick Install (Automated Script)
+
+The easiest way to install Kubiya CLI with support for worker setup:
+
+```bash
+# Basic installation
+curl -fsSL https://raw.githubusercontent.com/kubiyabot/cli/main/install.sh | bash
+
+# With worker setup
+curl -fsSL https://raw.githubusercontent.com/kubiyabot/cli/main/install.sh | bash -s -- --worker --queue-id=my-queue
+
+# Interactive configuration
+curl -fsSL https://raw.githubusercontent.com/kubiyabot/cli/main/install.sh | bash -s -- --config
+
+# Install and start worker in daemon mode
+curl -fsSL https://raw.githubusercontent.com/kubiyabot/cli/main/install.sh | bash -s -- --worker --queue-id=prod-queue --mode=daemon --start
+```
+
+**Script Options:**
+- `--verbose` or `-v`: Enable verbose output
+- `--worker` or `-w`: Setup worker after installation
+- `--queue-id <id>` or `-q <id>`: Worker queue ID (required with --worker)
+- `--mode <mode>` or `-m <mode>`: Worker mode (local, docker, daemon)
+- `--start` or `-s`: Start worker immediately
+- `--config` or `-c`: Interactive configuration setup
+- `--force-binary` or `-f`: Force binary installation (skip package managers)
+- `--help` or `-h`: Show help
+
+### Mac OSX (Homebrew)
 
 ```bash
 brew update
@@ -136,16 +164,18 @@ brew tap kubiyabot/kubiya
 brew install kubiya
 ```
 
-### APT Installation (Debian/Ubuntu)
+### Linux (Binary Installation)
 
 ```bash
-# Add Kubiya's APT repository
-curl -fsSL https://cli.kubiya.ai/apt-key.gpg | sudo gpg --dearmor -o /usr/share/keyrings/kubiya-archive-keyring.gpg
-echo "deb [signed-by=/usr/share/keyrings/kubiya-archive-keyring.gpg] https://cli.kubiya.ai/apt stable main" | sudo tee /etc/apt/sources.list.d/kubiya.list
+# Download and install latest release
+curl -fsSL https://raw.githubusercontent.com/kubiyabot/cli/main/install.sh | bash
 
-# Update and install
-sudo apt update
-sudo apt install kubiya-cli
+# Or download specific version manually
+VERSION=v2.5.5
+ARCH=$(uname -m | sed 's/x86_64/amd64/g' | sed 's/aarch64/arm64/g')
+curl -LO "https://github.com/kubiyabot/cli/releases/download/${VERSION}/kubiya-cli-linux-${ARCH}"
+chmod +x kubiya-cli-linux-${ARCH}
+sudo mv kubiya-cli-linux-${ARCH} /usr/local/bin/kubiya
 ```
 
 ### Build from Source
@@ -1459,7 +1489,7 @@ jobs:
     steps:
     - uses: actions/checkout@v3
     - name: Install Kubiya CLI
-      run: curl -fsSL https://cli.kubiya.ai/install.sh | bash
+      run: curl -fsSL https://raw.githubusercontent.com/kubiyabot/cli/main/install.sh | bash
     - name: Execute Deployment Workflow
       env:
         KUBIYA_API_KEY: ${{ secrets.KUBIYA_API_KEY }}
@@ -1475,7 +1505,7 @@ deploy:
   stage: deploy
   image: ubuntu:latest
   before_script:
-    - curl -fsSL https://cli.kubiya.ai/install.sh | bash
+    - curl -fsSL https://raw.githubusercontent.com/kubiyabot/cli/main/install.sh | bash
   script:
     - kubiya workflow execute ./deployment/workflow.yaml --var env=production
   environment:
