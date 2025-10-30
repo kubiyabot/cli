@@ -238,6 +238,9 @@ func (s *ProcessSupervisor) supervisionLoop(pythonPath, workerPyPath, apiKey str
 }
 
 func (s *ProcessSupervisor) runWorker(pythonPath, workerPyPath, apiKey string) error {
+	// Get control plane URL
+	controlPlaneURL := getControlPlaneURL()
+
 	// Create command
 	cmd := exec.Command(
 		pythonPath,
