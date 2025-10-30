@@ -10,7 +10,7 @@ This worker:
 
 Environment variables REQUIRED:
 - KUBIYA_API_KEY: Kubiya API key for authentication (required)
-- CONTROL_PLANE_URL: Control Plane API URL (e.g., https://agent-control-plane.vercel.app)
+- CONTROL_PLANE_URL: Control Plane API URL (e.g., https://control-plane.kubiya.ai)
 - ENVIRONMENT_NAME: Environment/task queue name to join (default: "default")
 
 Environment variables OPTIONAL:

@@ -20,9 +20,9 @@ import (
 )
 
 const (
-	defaultWorkerImage = "ghcr.io/kubiyabot/agent-worker"
-	defaultImageTag    = "latest"
-	controlPlaneURL    = "https://agent-control-plane.vercel.app"
+	defaultWorkerImage      = "ghcr.io/kubiyabot/agent-worker"
+	defaultImageTag         = "latest"
+	defaultControlPlaneURL  = "https://control-plane.kubiya.ai"
 )
 
 type WorkerStartOptions struct {
@@ -41,6 +41,14 @@ type WorkerStartOptions struct {
 	MaxLogBackups    int
 
 	cfg              *config.Config
+}
+
+// getControlPlaneURL returns the control plane URL, checking environment variable first
+func getControlPlaneURL() string {
+	if url := os.Getenv("CONTROL_PLANE_GATEWAY_URL"); url != "" {
+		return url
+	}
+	return defaultControlPlaneURL
 }
 
 func newWorkerStartCommand(cfg *config.Config) *cobra.Command {
@@ -137,7 +145,7 @@ func (opts *WorkerStartOptions) runLocalForeground(ctx context.Context) error {
 	fmt.Println(strings.Repeat("─", 80))
 	fmt.Printf("   Queue ID:         %s\n", opts.QueueID)
 	fmt.Printf("   Deployment Type:  Local (Python)\n")
-	fmt.Printf("   Control Plane:    %s\n", controlPlaneURL)
+	fmt.Printf("   Control Plane:    %s\n", getControlPlaneURL())
 	fmt.Println()
 
 	// Check API key
@@ -384,6 +392,7 @@ func (opts *WorkerStartOptions) runLocalForeground(ctx context.Context) error {
 	done := make(chan error, 1)
 	go func() {
 		// Create Python command to run the worker
+		controlPlaneURL := getControlPlaneURL()
 		workerCmd := exec.Command(
 			pythonPath,
 			workerPyPath,
@@ -420,7 +429,7 @@ func (opts *WorkerStartOptions) runLocalForeground(ctx context.Context) error {
 	fmt.Println(strings.Repeat("═", 80))
 	fmt.Println()
 	fmt.Printf("   🎯 Queue ID:         %s\n", opts.QueueID)
-	fmt.Printf("   🔗 Control Plane:    %s\n", controlPlaneURL)
+	fmt.Printf("   🔗 Control Plane:    %s\n", getControlPlaneURL())
 	fmt.Printf("   🐍 Runtime:          Python (venv)\n")
 	fmt.Println()
 	fmt.Println("   The worker is now polling for tasks...")
@@ -488,7 +497,7 @@ func (opts *WorkerStartOptions) RunDocker(ctx context.Context) error {
 	// Prepare environment variables
 	env := []string{
 		fmt.Sprintf("QUEUE_ID=%s", opts.QueueID),
-		fmt.Sprintf("CONTROL_PLANE_URL=%s", controlPlaneURL),
+		fmt.Sprintf("CONTROL_PLANE_URL=%s", getControlPlaneURL()),
 		"LOG_LEVEL=INFO",
 	}
 
@@ -596,7 +605,7 @@ func (opts *WorkerStartOptions) runLocalDaemon(ctx context.Context) error {
 		fmt.Printf("   Queue ID:         %s\n", opts.QueueID)
 		fmt.Printf("   Deployment Type:  Local (Python)\n")
 		fmt.Printf("   Mode:             Daemon with supervision\n")
-		fmt.Printf("   Control Plane:    %s\n", controlPlaneURL)
+		fmt.Printf("   Control Plane:    %s\n", getControlPlaneURL())
 		fmt.Printf("   Worker Directory: %s\n", workerDir)
 		fmt.Println()
 
