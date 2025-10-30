@@ -39,7 +39,7 @@ async def resolve_agent_toolsets(
 
     Args:
         agent_id: Agent ID
-        control_plane_url: Control Plane API URL (e.g., https://agent-control-plane.vercel.app)
+        control_plane_url: Control Plane API URL (e.g., https://control-plane.kubiya.ai)
         api_key: API key for authentication
 
     Returns:
