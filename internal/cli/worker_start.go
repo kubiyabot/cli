@@ -7,9 +7,10 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"runtime"
+	"strconv"
 	"strings"
 	"syscall"
-	"time"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/image"
@@ -20,27 +21,36 @@ import (
 )
 
 const (
-	defaultWorkerImage      = "ghcr.io/kubiyabot/agent-worker"
-	defaultImageTag         = "latest"
-	defaultControlPlaneURL  = "https://control-plane.kubiya.ai"
+	defaultWorkerImage     = "ghcr.io/kubiyabot/agent-worker"
+	defaultImageTag        = "latest"
+	defaultControlPlaneURL = "https://control-plane.kubiya.ai"
+	minPythonMajor         = 3
+	minPythonMinor         = 8
 )
+
+//go:embed requirements.txt
+var requirementsTxt string
 
 type WorkerStartOptions struct {
 	// Worker configuration
-	QueueID          string
-	DeploymentType   string // "docker" or "local"
-	DaemonMode       bool   // Run in background with supervision
+	QueueID        string
+	DeploymentType string // "docker" or "local"
+	DaemonMode     bool   // Run in background with supervision
 
 	// Docker options
-	Image            string
-	ImageTag         string
-	AutoPull         bool
+	Image     string
+	ImageTag  string
+	AutoPull  bool
 
 	// Daemon options
-	MaxLogSize       int64
-	MaxLogBackups    int
+	MaxLogSize    int64
+	MaxLogBackups int
 
-	cfg              *config.Config
+	// Python package options
+	PackageVersion string // Version of kubiya-control-plane-api to install (default: ">=0.3.0")
+	LocalWheel     string // Path to local wheel file (for development only)
+
+	cfg *config.Config
 }
 
 // getControlPlaneURL returns the control plane URL, checking environment variable first
@@ -65,7 +75,7 @@ The worker will run in the foreground by default. Press Ctrl+C to stop.
 Use -d flag to run in daemon mode with automatic crash recovery.
 
 Deployment Types:
-  • local  - Run worker locally with embedded Python (no Docker required)
+  • local  - Run worker locally with Python package (no Docker required)
   • docker - Run worker in Docker container (default)
 
 Examples:
@@ -93,6 +103,8 @@ Examples:
 	cmd.Flags().StringVar(&opts.Image, "image", defaultWorkerImage, "Worker Docker image (docker mode)")
 	cmd.Flags().StringVar(&opts.ImageTag, "image-tag", defaultImageTag, "Worker image tag (docker mode)")
 	cmd.Flags().BoolVar(&opts.AutoPull, "pull", true, "Automatically pull latest image (docker mode)")
+	cmd.Flags().StringVar(&opts.PackageVersion, "package-version", "", "Version of kubiya-control-plane-api to install from PyPI (empty = latest, local mode)")
+	cmd.Flags().StringVar(&opts.LocalWheel, "local-wheel", "", "Path to local wheel file for development (local mode)")
 
 	cmd.MarkFlagRequired("queue-id")
 
@@ -144,7 +156,7 @@ func (opts *WorkerStartOptions) runLocalForeground(ctx context.Context) error {
 	fmt.Println("📋 CONFIGURATION")
 	fmt.Println(strings.Repeat("─", 80))
 	fmt.Printf("   Queue ID:         %s\n", opts.QueueID)
-	fmt.Printf("   Deployment Type:  Local (Python)\n")
+	fmt.Printf("   Deployment Type:  Local (Python Package)\n")
 	fmt.Printf("   Control Plane:    %s\n", getControlPlaneURL())
 	fmt.Println()
 
@@ -159,34 +171,18 @@ func (opts *WorkerStartOptions) runLocalForeground(ctx context.Context) error {
 	fmt.Println("🔍 PRE-FLIGHT CHECKS")
 	fmt.Println(strings.Repeat("─", 80))
 
-	// Check if Python 3 is installed and validate version
-	pythonCmd := "python3"
-	checkCmd := exec.Command(pythonCmd, "--version")
-	output, err := checkCmd.CombinedOutput()
+	// Check Python version with comprehensive validation
+	pythonCmd, pythonVersion, err := checkPythonVersion()
 	if err != nil {
-		return fmt.Errorf("❌ Python 3 is not installed\n\n   Please install Python 3.10 or later:\n   • macOS: brew install python@3.11\n   • Ubuntu: apt install python3.11\n   • Visit: https://www.python.org/downloads/")
-	}
-	pythonVersion := strings.TrimSpace(string(output))
-
-	// Validate Python version is 3.10+
-	if err := validatePythonVersion(pythonVersion); err != nil {
-		return fmt.Errorf("❌ %w\n\n   Please install Python 3.10 or later:\n   • macOS: brew install python@3.11\n   • Ubuntu: apt install python3.11\n   • Visit: https://www.python.org/downloads/", err)
+		return err
 	}
 	fmt.Printf("✓ Python found: %s\n", pythonVersion)
 
-	// Check if pip is available
-	pipCheckCmd := exec.Command(pythonCmd, "-m", "pip", "--version")
-	if err := pipCheckCmd.Run(); err != nil {
-		return fmt.Errorf("❌ pip module is not available\n\n   Please install pip:\n   • macOS: python3 -m ensurepip --upgrade\n   • Ubuntu: apt install python3-pip\n   • Or visit: https://pip.pypa.io/en/stable/installation/")
+	// Check pip is available
+	if err := checkPipAvailable(pythonCmd); err != nil {
+		return err
 	}
-	fmt.Println("✓ pip module available")
-
-	// Check if venv module is available
-	venvCheckCmd := exec.Command(pythonCmd, "-m", "venv", "--help")
-	if err := venvCheckCmd.Run(); err != nil {
-		return fmt.Errorf("❌ venv module is not available\n\n   Please install python3-venv:\n   • Ubuntu/Debian: apt install python3-venv\n   • This is typically included with Python on macOS")
-	}
-	fmt.Println("✓ venv module available")
+	fmt.Println("✓ pip package manager available")
 
 	// Create worker directory
 	homeDir, err := os.UserHomeDir()
@@ -222,8 +218,8 @@ func (opts *WorkerStartOptions) runLocalForeground(ctx context.Context) error {
 		fmt.Println("✓ Virtual environment exists")
 	}
 
-	// Determine pip path in venv
-	pipPath := fmt.Sprintf("%s/bin/pip", venvDir)
+	// Determine pip path in venv (python path not needed for package binary)
+	pipPath, _ := getVenvPaths(venvDir)
 
 	// Install/upgrade pip
 	fmt.Println()
@@ -236,17 +232,60 @@ func (opts *WorkerStartOptions) runLocalForeground(ctx context.Context) error {
 	}
 	fmt.Println("done")
 
-	// Install kubiya-control-plane-api package with worker extras
-	fmt.Print("   Installing kubiya-control-plane-api[worker] package... ")
-	installCmd := exec.Command(pipPath, "install", "--quiet", "--upgrade", "kubiya-control-plane-api[worker]")
-	installCmd.Stdout = os.Stdout
-	installCmd.Stderr = os.Stderr
+	// Install worker package with extras
+	fmt.Print("   Installing kubiya-control-plane-api package")
+
+	var installCmd *exec.Cmd
+	if opts.LocalWheel != "" {
+		// Install from local wheel (development mode) with [worker] extras
+		if _, err := os.Stat(opts.LocalWheel); os.IsNotExist(err) {
+			fmt.Println("... failed")
+			return fmt.Errorf("❌ local wheel file not found: %s", opts.LocalWheel)
+		}
+		installCmd = exec.Command(pipPath, "install", "--quiet", "--force-reinstall", opts.LocalWheel+"[worker]")
+		fmt.Printf(" (local: %s[worker])... ", opts.LocalWheel)
+	} else {
+		// Install from PyPI (production mode) with [worker] extras
+		// Build package spec - handle both formats: ">=0.3.0" or "0.3.0"
+		packageSpec := "kubiya-control-plane-api"
+		if opts.PackageVersion != "" {
+			// If version doesn't start with operator, assume ==
+			if !strings.HasPrefix(opts.PackageVersion, ">=") &&
+				!strings.HasPrefix(opts.PackageVersion, "==") &&
+				!strings.HasPrefix(opts.PackageVersion, "~=") &&
+				!strings.HasPrefix(opts.PackageVersion, "<") &&
+				!strings.HasPrefix(opts.PackageVersion, ">") {
+				packageSpec += "==" + opts.PackageVersion
+			} else {
+				packageSpec += opts.PackageVersion
+			}
+		}
+		// Add [worker] extras for all dependencies
+		packageSpec += "[worker]"
+		installCmd = exec.Command(pipPath, "install", "--quiet", packageSpec)
+		if opts.PackageVersion != "" {
+			fmt.Printf(" (%s)... ", packageSpec)
+		} else {
+			fmt.Print(" (latest with [worker] extras)... ")
+		}
+	}
+
 	if err := installCmd.Run(); err != nil {
 		fmt.Println("failed")
-		return fmt.Errorf("❌ failed to install kubiya-control-plane-api[worker]: %w", err)
+		if opts.LocalWheel != "" {
+			return fmt.Errorf("❌ failed to install worker package from local wheel: %w", err)
+		}
+		return fmt.Errorf("❌ failed to install worker package from PyPI: %w\nMake sure kubiya-control-plane-api is published", err)
 	}
 	fmt.Println("done")
 	fmt.Println("✓ Worker package with all dependencies installed")
+
+	// Verify worker binary is available
+	workerBinary := fmt.Sprintf("%s/bin/kubiya-control-plane-worker", venvDir)
+	if _, err := os.Stat(workerBinary); os.IsNotExist(err) {
+		return fmt.Errorf("❌ worker binary not found at %s\nPackage may not have installed correctly", workerBinary)
+	}
+	fmt.Println("✓ Worker binary verified")
 
 	// Setup signal handling
 	sigChan := make(chan os.Signal, 1)
@@ -255,13 +294,12 @@ func (opts *WorkerStartOptions) runLocalForeground(ctx context.Context) error {
 	// Run worker in a goroutine
 	done := make(chan error, 1)
 	go func() {
-		// Create command to run kubiya-control-plane-worker from venv
+		// Run the worker binary from the package with both env vars and CLI args
 		controlPlaneURL := getControlPlaneURL()
-		workerBinPath := fmt.Sprintf("%s/bin/kubiya-control-plane-worker", venvDir)
 
 		// Pass both env vars (safer) and CLI args (fallback)
 		workerCmd := exec.Command(
-			workerBinPath,
+			workerBinary,
 			"--queue-id", opts.QueueID,
 			"--api-key", opts.cfg.APIKey,
 			"--control-plane-url", controlPlaneURL,
@@ -325,6 +363,100 @@ func (opts *WorkerStartOptions) runLocalForeground(ctx context.Context) error {
 		fmt.Println()
 		return nil
 	}
+}
+
+// checkPythonVersion checks for Python 3.8+ and returns the command and version string
+func checkPythonVersion() (string, string, error) {
+	// Try python3 first, then python
+	pythonCommands := []string{"python3", "python"}
+
+	for _, cmd := range pythonCommands {
+		// Check if command exists
+		checkCmd := exec.Command(cmd, "--version")
+		output, err := checkCmd.CombinedOutput()
+		if err != nil {
+			continue
+		}
+
+		version := strings.TrimSpace(string(output))
+
+		// Parse version (format: "Python 3.11.9")
+		parts := strings.Fields(version)
+		if len(parts) < 2 {
+			continue
+		}
+
+		versionParts := strings.Split(parts[1], ".")
+		if len(versionParts) < 2 {
+			continue
+		}
+
+		major, err := strconv.Atoi(versionParts[0])
+		if err != nil {
+			continue
+		}
+
+		minor, err := strconv.Atoi(versionParts[1])
+		if err != nil {
+			continue
+		}
+
+		// Check minimum version
+		if major < minPythonMajor || (major == minPythonMajor && minor < minPythonMinor) {
+			return "", "", fmt.Errorf("❌ Python %d.%d+ is required, but found %s\nPlease upgrade Python", minPythonMajor, minPythonMinor, version)
+		}
+
+		return cmd, version, nil
+	}
+
+	// No Python found
+	return "", "", fmt.Errorf("❌ Python %d.%d+ is not installed\n\nInstallation instructions:\n%s", minPythonMajor, minPythonMinor, getPythonInstallInstructions())
+}
+
+// checkPipAvailable checks if pip is available
+func checkPipAvailable(pythonCmd string) error {
+	checkCmd := exec.Command(pythonCmd, "-m", "pip", "--version")
+	if err := checkCmd.Run(); err != nil {
+		return fmt.Errorf("❌ pip is not available\n\nTo install pip:\n%s -m ensurepip --upgrade", pythonCmd)
+	}
+	return nil
+}
+
+// getPythonInstallInstructions returns OS-specific Python installation instructions
+func getPythonInstallInstructions() string {
+	switch runtime.GOOS {
+	case "darwin":
+		return `  macOS:
+    brew install python@3.11
+    # or download from https://www.python.org/downloads/`
+	case "linux":
+		return `  Linux (Ubuntu/Debian):
+    sudo apt update && sudo apt install python3.11 python3.11-venv
+
+  Linux (CentOS/RHEL):
+    sudo yum install python311
+
+  Linux (Fedora):
+    sudo dnf install python3.11`
+	case "windows":
+		return `  Windows:
+    Download from https://www.python.org/downloads/
+    Or use: winget install Python.Python.3.11`
+	default:
+		return "  Please visit https://www.python.org/downloads/ to download Python"
+	}
+}
+
+// getVenvPaths returns the pip and python paths for the given venv directory
+func getVenvPaths(venvDir string) (pipPath, pythonPath string) {
+	if runtime.GOOS == "windows" {
+		pipPath = fmt.Sprintf("%s\\Scripts\\pip.exe", venvDir)
+		pythonPath = fmt.Sprintf("%s\\Scripts\\python.exe", venvDir)
+	} else {
+		pipPath = fmt.Sprintf("%s/bin/pip", venvDir)
+		pythonPath = fmt.Sprintf("%s/bin/python", venvDir)
+	}
+	return
 }
 
 func (opts *WorkerStartOptions) RunDocker(ctx context.Context) error {
@@ -410,8 +542,6 @@ func (opts *WorkerStartOptions) RunDocker(ctx context.Context) error {
 	// Stream logs
 	logsDone := make(chan error, 1)
 	go func() {
-		time.Sleep(500 * time.Millisecond)
-
 		logOptions := container.LogsOptions{
 			ShowStdout: true,
 			ShowStderr: true,
@@ -457,9 +587,8 @@ func (opts *WorkerStartOptions) runLocalDaemon(ctx context.Context) error {
 
 	workerDir := fmt.Sprintf("%s/.kubiya/workers/%s", homeDir, opts.QueueID)
 
-	// Setup worker directory and files (if parent process)
+	// Print startup info for parent
 	if !IsDaemonChild() {
-		// Print startup info for parent
 		fmt.Println()
 		fmt.Println(strings.Repeat("═", 80))
 		fmt.Println("🚀  KUBIYA AGENT WORKER (DAEMON MODE)")
@@ -468,13 +597,12 @@ func (opts *WorkerStartOptions) runLocalDaemon(ctx context.Context) error {
 		fmt.Println("📋 CONFIGURATION")
 		fmt.Println(strings.Repeat("─", 80))
 		fmt.Printf("   Queue ID:         %s\n", opts.QueueID)
-		fmt.Printf("   Deployment Type:  Local (Python)\n")
+		fmt.Printf("   Deployment Type:  Local (Python Package)\n")
 		fmt.Printf("   Mode:             Daemon with supervision\n")
 		fmt.Printf("   Control Plane:    %s\n", getControlPlaneURL())
 		fmt.Printf("   Worker Directory: %s\n", workerDir)
 		fmt.Println()
 
-		// Setup will happen in child process
 		return nil
 	}
 
@@ -488,16 +616,15 @@ func (opts *WorkerStartOptions) runLocalDaemon(ctx context.Context) error {
 		return fmt.Errorf("KUBIYA_API_KEY is required")
 	}
 
-	// Check Python
-	pythonCmd := "python3"
-	checkCmd := exec.Command(pythonCmd, "--version")
-	if _, err := checkCmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("Python 3 is not installed")
+	// Check Python version
+	pythonCmd, _, err := checkPythonVersion()
+	if err != nil {
+		return err
 	}
 
 	// Setup virtual environment
 	venvDir := fmt.Sprintf("%s/venv", workerDir)
-	pipPath := fmt.Sprintf("%s/bin/pip", venvDir)
+	pipPath, _ := getVenvPaths(venvDir)
 
 	if _, err := os.Stat(venvDir); os.IsNotExist(err) {
 		venvCmd := exec.Command(pythonCmd, "-m", "venv", venvDir)
@@ -512,9 +639,23 @@ func (opts *WorkerStartOptions) runLocalDaemon(ctx context.Context) error {
 		}
 
 		// Install kubiya-control-plane-api package with worker extras
-		installCmd := exec.Command(pipPath, "install", "--quiet", "--upgrade", "kubiya-control-plane-api[worker]")
+		packageSpec := "kubiya-control-plane-api"
+		if opts.PackageVersion != "" {
+			if !strings.HasPrefix(opts.PackageVersion, ">=") &&
+				!strings.HasPrefix(opts.PackageVersion, "==") &&
+				!strings.HasPrefix(opts.PackageVersion, "~=") &&
+				!strings.HasPrefix(opts.PackageVersion, "<") &&
+				!strings.HasPrefix(opts.PackageVersion, ">") {
+				packageSpec += "==" + opts.PackageVersion
+			} else {
+				packageSpec += opts.PackageVersion
+			}
+		}
+		packageSpec += "[worker]"
+
+		installCmd := exec.Command(pipPath, "install", "--quiet", packageSpec)
 		if err := installCmd.Run(); err != nil {
-			return fmt.Errorf("failed to install kubiya-control-plane-api[worker]: %w", err)
+			return fmt.Errorf("failed to install %s: %w", packageSpec, err)
 		}
 	}
 
@@ -602,33 +743,3 @@ func (opts *WorkerStartOptions) setupWorkerFiles(workerDir string) error {
 	return nil
 }
 
-// validatePythonVersion checks if the Python version is 3.10 or later
-func validatePythonVersion(versionStr string) error {
-	// Expected format: "Python 3.11.5" or "Python 3.10.12"
-	parts := strings.Fields(versionStr)
-	if len(parts) < 2 {
-		return fmt.Errorf("unable to parse Python version: %s", versionStr)
-	}
-
-	versionPart := parts[1]
-	versionNumbers := strings.Split(versionPart, ".")
-	if len(versionNumbers) < 2 {
-		return fmt.Errorf("unable to parse Python version: %s", versionStr)
-	}
-
-	// Parse major and minor version
-	var major, minor int
-	if _, err := fmt.Sscanf(versionNumbers[0], "%d", &major); err != nil {
-		return fmt.Errorf("unable to parse Python major version: %s", versionStr)
-	}
-	if _, err := fmt.Sscanf(versionNumbers[1], "%d", &minor); err != nil {
-		return fmt.Errorf("unable to parse Python minor version: %s", versionStr)
-	}
-
-	// Check if version is 3.10+
-	if major < 3 || (major == 3 && minor < 10) {
-		return fmt.Errorf("Python %d.%d is not supported (found: %s). Minimum required version: Python 3.10", major, minor, versionStr)
-	}
-
-	return nil
-}
