@@ -242,6 +242,7 @@ func (s *ProcessSupervisor) runWorker(pythonPath, workerPyPath, apiKey string) e
 	controlPlaneURL := getControlPlaneURL()
 
 	// Create command
+	// Pass both env vars (safer) and CLI args (fallback)
 	cmd := exec.Command(
 		pythonPath,
 		workerPyPath,
@@ -250,7 +251,7 @@ func (s *ProcessSupervisor) runWorker(pythonPath, workerPyPath, apiKey string) e
 		"--control-plane-url", controlPlaneURL,
 	)
 
-	// Set environment
+	// Set environment variables - take precedence over CLI args
 	cmd.Env = append(os.Environ(),
 		fmt.Sprintf("QUEUE_ID=%s", s.queueID),
 		fmt.Sprintf("KUBIYA_API_KEY=%s", apiKey),

@@ -202,13 +202,6 @@ func (opts *WorkerStartOptions) runLocalForeground(ctx context.Context) error {
 	fmt.Println("⚙️  WORKER SETUP")
 	fmt.Println(strings.Repeat("─", 80))
 
-	// Write requirements.txt
-	requirementsPath := fmt.Sprintf("%s/requirements.txt", workerDir)
-	if err := os.WriteFile(requirementsPath, []byte(requirementsTxt), 0644); err != nil {
-		return fmt.Errorf("❌ failed to write requirements.txt: %w", err)
-	}
-	fmt.Println("✓ Requirements file created")
-
 	// Create virtual environment if it doesn't exist
 	venvDir := fmt.Sprintf("%s/venv", workerDir)
 	if _, err := os.Stat(venvDir); os.IsNotExist(err) {
@@ -239,20 +232,20 @@ func (opts *WorkerStartOptions) runLocalForeground(ctx context.Context) error {
 	}
 	fmt.Println("done")
 
-	// Install worker package
+	// Install worker package with extras
 	fmt.Print("   Installing kubiya-control-plane-api package")
 
 	var installCmd *exec.Cmd
 	if opts.LocalWheel != "" {
-		// Install from local wheel (development mode)
+		// Install from local wheel (development mode) with [worker] extras
 		if _, err := os.Stat(opts.LocalWheel); os.IsNotExist(err) {
 			fmt.Println("... failed")
 			return fmt.Errorf("❌ local wheel file not found: %s", opts.LocalWheel)
 		}
-		installCmd = exec.Command(pipPath, "install", "--quiet", "--force-reinstall", opts.LocalWheel)
-		fmt.Printf(" (local: %s)... ", opts.LocalWheel)
+		installCmd = exec.Command(pipPath, "install", "--quiet", "--force-reinstall", opts.LocalWheel+"[worker]")
+		fmt.Printf(" (local: %s[worker])... ", opts.LocalWheel)
 	} else {
-		// Install from PyPI (production mode)
+		// Install from PyPI (production mode) with [worker] extras
 		// Build package spec - handle both formats: ">=0.3.0" or "0.3.0"
 		packageSpec := "kubiya-control-plane-api"
 		if opts.PackageVersion != "" {
@@ -267,11 +260,13 @@ func (opts *WorkerStartOptions) runLocalForeground(ctx context.Context) error {
 				packageSpec += opts.PackageVersion
 			}
 		}
+		// Add [worker] extras for all dependencies
+		packageSpec += "[worker]"
 		installCmd = exec.Command(pipPath, "install", "--quiet", packageSpec)
 		if opts.PackageVersion != "" {
 			fmt.Printf(" (%s)... ", packageSpec)
 		} else {
-			fmt.Print(" (latest)... ")
+			fmt.Print(" (latest with [worker] extras)... ")
 		}
 	}
 
@@ -283,7 +278,7 @@ func (opts *WorkerStartOptions) runLocalForeground(ctx context.Context) error {
 		return fmt.Errorf("❌ failed to install worker package from PyPI: %w\nMake sure kubiya-control-plane-api is published", err)
 	}
 	fmt.Println("done")
-	fmt.Println("✓ Worker package installed")
+	fmt.Println("✓ Worker package with all dependencies installed")
 
 	// Verify worker binary is available
 	workerBinary := fmt.Sprintf("%s/bin/kubiya-control-plane-worker", venvDir)
@@ -299,16 +294,22 @@ func (opts *WorkerStartOptions) runLocalForeground(ctx context.Context) error {
 	// Run worker in a goroutine
 	done := make(chan error, 1)
 	go func() {
-		// Run the worker binary from the package
+		// Run the worker binary from the package with both env vars and CLI args
 		controlPlaneURL := getControlPlaneURL()
-		workerCmd := exec.Command(workerBinary)
 
-		// Set environment variables
+		// Pass both env vars (safer) and CLI args (fallback)
+		workerCmd := exec.Command(
+			workerBinary,
+			"--queue-id", opts.QueueID,
+			"--api-key", opts.cfg.APIKey,
+			"--control-plane-url", controlPlaneURL,
+		)
+
+		// Set environment variables - take precedence over CLI args
 		workerCmd.Env = append(os.Environ(),
 			fmt.Sprintf("QUEUE_ID=%s", opts.QueueID),
 			fmt.Sprintf("KUBIYA_API_KEY=%s", opts.cfg.APIKey),
 			fmt.Sprintf("CONTROL_PLANE_URL=%s", controlPlaneURL),
-			"LOG_LEVEL=INFO",
 		)
 
 		// Connect stdout/stderr
@@ -332,7 +333,7 @@ func (opts *WorkerStartOptions) runLocalForeground(ctx context.Context) error {
 	fmt.Println()
 	fmt.Printf("   🎯 Queue ID:         %s\n", opts.QueueID)
 	fmt.Printf("   🔗 Control Plane:    %s\n", getControlPlaneURL())
-	fmt.Printf("   📦 Package:          kubiya-control-plane-api\n")
+	fmt.Printf("   📦 Package:          kubiya-control-plane-api[worker]\n")
 	fmt.Println()
 	fmt.Println("   The worker is now polling for tasks...")
 	fmt.Println("   Press Ctrl+C to stop gracefully")
@@ -606,7 +607,139 @@ func (opts *WorkerStartOptions) runLocalDaemon(ctx context.Context) error {
 	}
 
 	// We're in the daemon child process now
-	// Setup will happen here
-	// TODO: Implement daemon mode setup (similar to foreground but with supervision)
-	return fmt.Errorf("daemon mode not fully implemented yet")
+	if err := os.MkdirAll(workerDir, 0755); err != nil {
+		return fmt.Errorf("failed to create worker directory: %w", err)
+	}
+
+	// Check API key
+	if opts.cfg.APIKey == "" {
+		return fmt.Errorf("KUBIYA_API_KEY is required")
+	}
+
+	// Check Python version
+	pythonCmd, _, err := checkPythonVersion()
+	if err != nil {
+		return err
+	}
+
+	// Setup virtual environment
+	venvDir := fmt.Sprintf("%s/venv", workerDir)
+	pipPath, _ := getVenvPaths(venvDir)
+
+	if _, err := os.Stat(venvDir); os.IsNotExist(err) {
+		venvCmd := exec.Command(pythonCmd, "-m", "venv", venvDir)
+		if err := venvCmd.Run(); err != nil {
+			return fmt.Errorf("failed to create virtual environment: %w", err)
+		}
+
+		// Install dependencies
+		pipUpgradeCmd := exec.Command(pipPath, "install", "--quiet", "--upgrade", "pip")
+		if err := pipUpgradeCmd.Run(); err != nil {
+			return fmt.Errorf("failed to upgrade pip: %w", err)
+		}
+
+		// Install kubiya-control-plane-api package with worker extras
+		packageSpec := "kubiya-control-plane-api"
+		if opts.PackageVersion != "" {
+			if !strings.HasPrefix(opts.PackageVersion, ">=") &&
+				!strings.HasPrefix(opts.PackageVersion, "==") &&
+				!strings.HasPrefix(opts.PackageVersion, "~=") &&
+				!strings.HasPrefix(opts.PackageVersion, "<") &&
+				!strings.HasPrefix(opts.PackageVersion, ">") {
+				packageSpec += "==" + opts.PackageVersion
+			} else {
+				packageSpec += opts.PackageVersion
+			}
+		}
+		packageSpec += "[worker]"
+
+		installCmd := exec.Command(pipPath, "install", "--quiet", packageSpec)
+		if err := installCmd.Run(); err != nil {
+			return fmt.Errorf("failed to install %s: %w", packageSpec, err)
+		}
+	}
+
+	// Get or use environment-configured log size
+	maxLogSize := opts.MaxLogSize
+	if envSize := GetMaxLogSizeFromEnv(); envSize != defaultMaxLogSize {
+		maxLogSize = envSize
+	}
+
+	// Create process supervisor
+	supervisor, err := NewProcessSupervisor(opts.QueueID, workerDir, maxLogSize, opts.MaxLogBackups)
+	if err != nil {
+		return fmt.Errorf("failed to create supervisor: %w", err)
+	}
+
+	// Start supervised worker with kubiya-control-plane-worker command
+	workerBinPath := fmt.Sprintf("%s/bin/kubiya-control-plane-worker", venvDir)
+	daemonInfo, err := supervisor.Start(workerBinPath, "", opts.cfg.APIKey)
+	if err != nil {
+		return fmt.Errorf("failed to start daemon: %w", err)
+	}
+
+	// Write startup info file for parent to read
+	infoFile := fmt.Sprintf("%s/daemon_info.txt", workerDir)
+	startupInfo := fmt.Sprintf(`
+╔═══════════════════════════════════════════════════════════════════════════════╗
+║                    KUBIYA AGENT WORKER - DAEMON STARTED                       ║
+╚═══════════════════════════════════════════════════════════════════════════════╝
+
+📋 DAEMON INFORMATION
+────────────────────────────────────────────────────────────────────────────────
+   Process ID (PID):    %d
+   Queue ID:            %s
+   Worker Directory:    %s
+   Log File:            %s
+   PID File:            %s
+   Started At:          %s
+
+✅ SUPERVISION ENABLED
+────────────────────────────────────────────────────────────────────────────────
+   • Automatic crash recovery with exponential backoff
+   • Maximum restart attempts: %d
+   • Rotating logs (max size: %d MB, backups: %d)
+   • Health monitoring enabled
+
+📊 MANAGEMENT COMMANDS
+────────────────────────────────────────────────────────────────────────────────
+   View logs:     tail -f %s
+   Stop worker:   kubiya worker stop --queue-id=%s
+   Check status:  kubiya worker status --queue-id=%s
+
+🎯 The worker is now running in the background and will automatically restart if it crashes.
+`,
+		daemonInfo.PID,
+		daemonInfo.QueueID,
+		daemonInfo.WorkerDir,
+		daemonInfo.LogFile,
+		daemonInfo.PIDFile,
+		daemonInfo.StartedAt.Format("2006-01-02 15:04:05"),
+		maxRestartAttempts,
+		maxLogSize/(1024*1024),
+		opts.MaxLogBackups,
+		daemonInfo.LogFile,
+		opts.QueueID,
+		opts.QueueID,
+	)
+	os.WriteFile(infoFile, []byte(startupInfo), 0644)
+
+	// Setup signal handling for graceful shutdown
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+
+	// Wait for termination signal
+	<-sigChan
+	supervisor.Stop()
+
+	return nil
 }
+
+// setupWorkerFiles is no longer needed - we now install from pip package
+// This function is kept for backward compatibility but does nothing
+func (opts *WorkerStartOptions) setupWorkerFiles(workerDir string) error {
+	// Workers now use kubiya-control-plane-api pip package
+	// No file embedding needed
+	return nil
+}
+
