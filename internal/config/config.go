@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/golang-jwt/jwt/v4"
+	"github.com/kubiyabot/cli/internal/context"
 )
 
 const (
@@ -24,6 +25,8 @@ type Config struct {
 	BaseURL     string
 	Debug       bool
 	AutoSession bool
+	UseV1API    bool // Whether to use V1 API (from context or env var)
+	ContextName string // Current context name
 }
 
 // GetConfigFilePath returns the expected full path to the config file.
@@ -60,20 +63,8 @@ func SaveAPIKey(apiKey string) error {
 }
 
 func Load() (*Config, error) {
-	// TODO: Implement actual config file loading (e.g., Viper, YAML parser)
-	// For now, rely solely on environment variables.
-
-	apiKey := os.Getenv("KUBIYA_API_KEY")
-	// Don't error out here if APIKey is missing. Check later in commands that need it.
-	// if apiKey == "" {
-	// 	fmt.Println("KUBIYA_API_KEY environment variable is required in ~/.kubiya/config.yaml or as an environment variable")
-	// 	fmt.Println("You can get your API key from https://app.kubiya.ai/api-keys")
-	// 	return nil, fmt.Errorf("KUBIYA_API_KEY environment variable is required")
-	// }
-
-	baseURL := os.Getenv("KUBIYA_BASE_URL")
-	if baseURL == "" {
-		baseURL = "https://api.kubiya.ai/api/v1"
+	cfg := &Config{
+		Debug: os.Getenv("KUBIYA_DEBUG") == "true",
 	}
 
 	// AutoSession is enabled by default but can be overridden by KUBIYA_AUTO_SESSION environment variable
@@ -83,21 +74,56 @@ func Load() (*Config, error) {
 			autoSession = parsed
 		}
 	}
+	cfg.AutoSession = autoSession
 
-	cfg := &Config{
-		APIKey:      apiKey,
-		BaseURL:     baseURL,
-		Debug:       os.Getenv("KUBIYA_DEBUG") == "true",
-		AutoSession: autoSession,
+	// Try to load from context first
+	if ctx, name, err := context.GetCurrentContext(); err == nil {
+		cfg.ContextName = name
+		cfg.UseV1API = ctx.UseV1API
+		cfg.BaseURL = ctx.APIURL
+
+		// Get API key from user
+		if user, err := context.GetUser(ctx.User); err == nil {
+			cfg.APIKey = user.Token
+		}
+
+		// Extract org and email from JWT
+		if cfg.APIKey != "" {
+			_, _ = cfg.jwtDecoder()
+		}
+
+		return cfg, nil
+	}
+
+	// Fallback to environment variables if no context is configured
+	apiKey := os.Getenv("KUBIYA_API_KEY")
+	cfg.APIKey = apiKey
+
+	// Check for V1 API flag
+	cfg.UseV1API = context.ShouldUseV1API()
+
+	// Determine base URL based on V1 or V2
+	if cfg.UseV1API {
+		baseURL := os.Getenv("KUBIYA_BASE_URL")
+		if baseURL == "" {
+			baseURL = "https://api.kubiya.ai/api/v1"
+		}
+		cfg.BaseURL = baseURL
+	} else {
+		// Use control plane URL
+		baseURL := os.Getenv("KUBIYA_CONTROL_PLANE_BASE_URL")
+		if baseURL == "" {
+			baseURL = "https://control-plane.kubiya.ai"
+		}
+		cfg.BaseURL = baseURL
 	}
 
 	// Try to decode Org and Email from JWT if API key exists
 	if cfg.APIKey != "" {
-		// jwtDecoder modifies cfg in place, ignore error for now if decoding fails
 		_, _ = cfg.jwtDecoder()
 	}
 
-	return cfg, nil // Return the config even if API key is missing
+	return cfg, nil
 }
 
 func (c *Config) BaseURLV2() string {
@@ -135,4 +161,12 @@ func (c *Config) jwtDecoder() (*Config, error) {
 	}
 
 	return c, nil
+}
+
+// ValidateAPIKey checks if an API key is configured
+func (c *Config) ValidateAPIKey() error {
+	if c.APIKey == "" {
+		return fmt.Errorf("API key is required. Set KUBIYA_API_KEY or configure a context using 'kubiya config set-context'")
+	}
+	return nil
 }
