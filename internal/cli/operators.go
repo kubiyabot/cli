@@ -17,7 +17,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var runnerStyle = struct {
+var operatorStyle = struct {
 	TitleStyle     lipgloss.Style
 	SubtitleStyle  lipgloss.Style
 	HighlightStyle lipgloss.Style
@@ -37,24 +37,24 @@ var runnerStyle = struct {
 	CommandStyle:   lipgloss.NewStyle().Foreground(lipgloss.Color("39")),
 }
 
-func newRunnersCommand(cfg *config.Config) *cobra.Command {
+func newOperatorCommand(cfg *config.Config) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:     "runner",
-		Aliases: []string{"runners", "r"},
-		Short:   "🏃 Manage runners",
-		Long:    `Work with Kubiya runners - list and manage your runners.`,
+		Use:     "operator",
+		Aliases: []string{"operators", "op"},
+		Short:   "🏃 Manage Kubernetes operators",
+		Long:    `Work with Kubiya operators - list and manage your Kubernetes operators.`,
 	}
 
 	cmd.AddCommand(
-		newListRunnersCommand(cfg),
-		newGetRunnerManifestCommand(cfg),
-		newInstallRunnerCommand(cfg),
+		newListOperatorsCommand(cfg),
+		newGetOperatorManifestCommand(cfg),
+		newInstallOperatorCommand(cfg),
 	)
 
 	return cmd
 }
 
-func newListRunnersCommand(cfg *config.Config) *cobra.Command {
+func newListOperatorsCommand(cfg *config.Config) *cobra.Command {
 	var (
 		outputFormat string
 		debug        bool
@@ -63,8 +63,8 @@ func newListRunnersCommand(cfg *config.Config) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "list",
 		Aliases: []string{"ls", "l"},
-		Short:   "📋 List all runners",
-		Example: "  kubiya runner list\n  kubiya runner ls --output json\n  kubiya runner list --debug",
+		Short:   "📋 List all operators",
+		Example: "  kubiya operator list\n  kubiya operator ls --output json\n  kubiya operator list --debug",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// Set debug mode in client if --debug is passed
 			if debug {
@@ -105,7 +105,7 @@ func newListRunnersCommand(cfg *config.Config) *cobra.Command {
 						return
 					case <-ticker.C:
 						spinnerIdx = (spinnerIdx + 1) % len(spinner)
-						fmt.Printf("\r%s Loading runners...", spinner[spinnerIdx])
+						fmt.Printf("\r%s Loading operators...", spinner[spinnerIdx])
 					}
 				}
 			}()
@@ -131,14 +131,14 @@ func newListRunnersCommand(cfg *config.Config) *cobra.Command {
 				return json.NewEncoder(os.Stdout).Encode(runners)
 			case "text":
 				// Print the title
-				fmt.Println(runnerStyle.TitleStyle.Render("🏃 RUNNERS"))
+				fmt.Println(operatorStyle.TitleStyle.Render("🏃 OPERATORS"))
 
 				// Create a simple table with fixed column spacing
 				fmt.Println("NAME                 TYPE                 VERSION    NAMESPACE     STATUS     HEALTH           DETAILS")
 				fmt.Println("-------------------- -------------------- ---------- ------------- ---------- ---------------- ----------")
 
 				if len(runners) == 0 {
-					fmt.Println(runnerStyle.DimStyle.Render("No runners found"))
+					fmt.Println(operatorStyle.DimStyle.Render("No operators found"))
 					return nil
 				}
 
@@ -246,27 +246,27 @@ func newListRunnersCommand(cfg *config.Config) *cobra.Command {
 					details = fmt.Sprintf("%-10s", details)
 
 					// Now colorize the fields after proper formatting
-					name = runnerStyle.HighlightStyle.Render(name)
-					version = runnerStyle.HighlightStyle.Render(version)
+					name = operatorStyle.HighlightStyle.Render(name)
+					version = operatorStyle.HighlightStyle.Render(version)
 
 					if r.RunnerHealth.Status == "ok" {
-						status = runnerStyle.SuccessStyle.Render(status)
+						status = operatorStyle.SuccessStyle.Render(status)
 					} else if r.RunnerHealth.Status == "unknown" || r.RunnerHealth.Status == "" {
-						status = runnerStyle.DimStyle.Render(status)
+						status = operatorStyle.DimStyle.Render(status)
 					} else {
-						status = runnerStyle.WarningStyle.Render(status)
+						status = operatorStyle.WarningStyle.Render(status)
 					}
 
 					if r.RunnerHealth.Error != "" || r.RunnerHealth.Health == "false" || r.RunnerHealth.Status == "non-responsive" {
-						health = runnerStyle.ErrorStyle.Render(health)
+						health = operatorStyle.ErrorStyle.Render(health)
 					} else if r.RunnerHealth.Health == "true" {
-						health = runnerStyle.SuccessStyle.Render(health)
+						health = operatorStyle.SuccessStyle.Render(health)
 					} else {
-						health = runnerStyle.WarningStyle.Render(health)
+						health = operatorStyle.WarningStyle.Render(health)
 					}
 
 					if r.RunnerHealth.Health == "true" && r.RunnerHealth.Version != "" {
-						details = runnerStyle.HighlightStyle.Render(details)
+						details = operatorStyle.HighlightStyle.Render(details)
 					}
 
 					// Print the row with pre-formatted columns
@@ -281,40 +281,40 @@ func newListRunnersCommand(cfg *config.Config) *cobra.Command {
 				}
 
 				// Print summary after the table
-				fmt.Printf("\n%s\n", runnerStyle.SubtitleStyle.Render("Summary"))
-				fmt.Printf("Total runners: %s\n", runnerStyle.HighlightStyle.Render(fmt.Sprintf("%d", len(runners))))
-				fmt.Printf("Healthy: %s\n", runnerStyle.SuccessStyle.Render(fmt.Sprintf("%d", healthyCount)))
-				fmt.Printf("Unhealthy: %s\n", runnerStyle.ErrorStyle.Render(fmt.Sprintf("%d", unhealthyCount)))
-				fmt.Printf("Unknown: %s\n", runnerStyle.WarningStyle.Render(fmt.Sprintf("%d", unknownCount)))
+				fmt.Printf("\n%s\n", operatorStyle.SubtitleStyle.Render("Summary"))
+				fmt.Printf("Total operators: %s\n", operatorStyle.HighlightStyle.Render(fmt.Sprintf("%d", len(runners))))
+				fmt.Printf("Healthy: %s\n", operatorStyle.SuccessStyle.Render(fmt.Sprintf("%d", healthyCount)))
+				fmt.Printf("Unhealthy: %s\n", operatorStyle.ErrorStyle.Render(fmt.Sprintf("%d", unhealthyCount)))
+				fmt.Printf("Unknown: %s\n", operatorStyle.WarningStyle.Render(fmt.Sprintf("%d", unknownCount)))
 
 				// Print helpful tips
-				fmt.Printf("\n%s\n", runnerStyle.SubtitleStyle.Render("💡 Helpful Commands"))
-				fmt.Printf("• Get runner manifest:\n  %s\n",
-					runnerStyle.CommandStyle.Render("kubiya runner manifest <name>"))
-				fmt.Printf("• Install a new runner:\n  %s\n",
-					runnerStyle.CommandStyle.Render("kubiya runner install <name> [--namespace <ns>] [--wait]"))
+				fmt.Printf("\n%s\n", operatorStyle.SubtitleStyle.Render("💡 Helpful Commands"))
+				fmt.Printf("• Get operator manifest:\n  %s\n",
+					operatorStyle.CommandStyle.Render("kubiya operator manifest <name>"))
+				fmt.Printf("• Install a new operator:\n  %s\n",
+					operatorStyle.CommandStyle.Render("kubiya operator install <name> [--namespace <ns>] [--wait]"))
 				fmt.Printf("• Check runner logs:\n  %s\n",
-					runnerStyle.CommandStyle.Render("kubectl logs -n <namespace> <pod-name>"))
+					operatorStyle.CommandStyle.Render("kubectl logs -n <namespace> <pod-name>"))
 				fmt.Printf("• Get detailed runner info:\n  %s\n",
-					runnerStyle.CommandStyle.Render("kubiya runner manifest <name> --debug"))
+					operatorStyle.CommandStyle.Render("kubiya operator manifest <name> --debug"))
 
 				if unhealthyCount > 0 {
-					fmt.Printf("\n%s\n", runnerStyle.ErrorStyle.Render("⚠️  Troubleshooting Tips"))
-					fmt.Printf("1. %s\n", runnerStyle.HighlightStyle.Render("Check runner logs:"))
-					fmt.Printf("   %s\n", runnerStyle.CommandStyle.Render("kubectl logs -n <namespace> <pod-name>"))
-					fmt.Printf("2. %s\n", runnerStyle.HighlightStyle.Render("Verify runner configuration"))
-					fmt.Printf("3. %s\n", runnerStyle.HighlightStyle.Render("Check Kubernetes events:"))
-					fmt.Printf("   %s\n", runnerStyle.CommandStyle.Render("kubectl get events -n <namespace>"))
-					fmt.Printf("4. %s\n", runnerStyle.HighlightStyle.Render("Try reinstalling the runner:"))
-					fmt.Printf("   %s\n", runnerStyle.CommandStyle.Render("kubiya runner install <name>"))
+					fmt.Printf("\n%s\n", operatorStyle.ErrorStyle.Render("⚠️  Troubleshooting Tips"))
+					fmt.Printf("1. %s\n", operatorStyle.HighlightStyle.Render("Check runner logs:"))
+					fmt.Printf("   %s\n", operatorStyle.CommandStyle.Render("kubectl logs -n <namespace> <pod-name>"))
+					fmt.Printf("2. %s\n", operatorStyle.HighlightStyle.Render("Verify runner configuration"))
+					fmt.Printf("3. %s\n", operatorStyle.HighlightStyle.Render("Check Kubernetes events:"))
+					fmt.Printf("   %s\n", operatorStyle.CommandStyle.Render("kubectl get events -n <namespace>"))
+					fmt.Printf("4. %s\n", operatorStyle.HighlightStyle.Render("Try reinstalling the runner:"))
+					fmt.Printf("   %s\n", operatorStyle.CommandStyle.Render("kubiya operator install <name>"))
 				}
 
 				if unknownCount > 0 {
-					fmt.Printf("\n%s\n", runnerStyle.WarningStyle.Render("ℹ️  For unknown health status:"))
-					fmt.Printf("1. %s\n", runnerStyle.HighlightStyle.Render("Enable debug mode:"))
-					fmt.Printf("   %s\n", runnerStyle.CommandStyle.Render("kubiya runner list --debug"))
-					fmt.Printf("2. %s\n", runnerStyle.HighlightStyle.Render("Check runner configuration"))
-					fmt.Printf("3. %s\n", runnerStyle.HighlightStyle.Render("Verify network connectivity"))
+					fmt.Printf("\n%s\n", operatorStyle.WarningStyle.Render("ℹ️  For unknown health status:"))
+					fmt.Printf("1. %s\n", operatorStyle.HighlightStyle.Render("Enable debug mode:"))
+					fmt.Printf("   %s\n", operatorStyle.CommandStyle.Render("kubiya operator list --debug"))
+					fmt.Printf("2. %s\n", operatorStyle.HighlightStyle.Render("Check runner configuration"))
+					fmt.Printf("3. %s\n", operatorStyle.HighlightStyle.Render("Verify network connectivity"))
 				}
 
 				return nil
@@ -329,7 +329,7 @@ func newListRunnersCommand(cfg *config.Config) *cobra.Command {
 	return cmd
 }
 
-func newGetRunnerManifestCommand(cfg *config.Config) *cobra.Command {
+func newGetOperatorManifestCommand(cfg *config.Config) *cobra.Command {
 	var (
 		outputFile string
 		apply      bool
@@ -339,18 +339,18 @@ func newGetRunnerManifestCommand(cfg *config.Config) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "manifest [runner-name]",
 		Aliases: []string{"m", "man"},
-		Short:   "📜 Get runner's Kubernetes manifest",
+		Short:   "📜 Get operator's Kubernetes manifest",
 		Example: `  # Save manifest to file
-  kubiya runner manifest my-runner -o manifest.yaml
+  kubiya operator manifest my-runner -o manifest.yaml
   
   # Short form
   kubiya r m my-runner -o manifest.yaml
 
   # Apply manifest directly to current kubectl context
-  kubiya runner manifest my-runner --apply
+  kubiya operator manifest my-runner --apply
 
   # Apply to specific context
-  kubiya runner manifest my-runner --apply --context my-context`,
+  kubiya operator manifest my-runner --apply --context my-context`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			client := kubiya.NewClient(cfg)
@@ -381,7 +381,7 @@ func newGetRunnerManifestCommand(cfg *config.Config) *cobra.Command {
 	return cmd
 }
 
-func newInstallRunnerCommand(cfg *config.Config) *cobra.Command {
+func newInstallOperatorCommand(cfg *config.Config) *cobra.Command {
 	var (
 		namespace   string
 		context     string
@@ -397,21 +397,21 @@ func newInstallRunnerCommand(cfg *config.Config) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "install [runner-name]",
 		Aliases: []string{"i"},
-		Short:   "🚀 Install a Kubiya runner on Kubernetes",
+		Short:   "🚀 Install a Kubiya operator on Kubernetes",
 		Example: `  # Install a runner with interactive prompts
-  kubiya runner install my-runner
+  kubiya operator install my-runner
   
   # Install with automatic approval and RBAC
-  kubiya runner install my-runner -y --rbac
+  kubiya operator install my-runner -y --rbac
   
   # Install and deploy to current Kubernetes context
-  kubiya runner install my-runner --deploy
+  kubiya operator install my-runner --deploy
   
   # Install, deploy, and wait for deployment
-  kubiya runner install my-runner --deploy --wait --timeout 5m
+  kubiya operator install my-runner --deploy --wait --timeout 5m
   
   # Full installation with all options
-  kubiya runner install my-runner --deploy --wait --rbac --namespace kubiya-system --context my-cluster`,
+  kubiya operator install my-runner --deploy --wait --rbac --namespace kubiya-system --context my-cluster`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// Check flag dependencies
@@ -438,7 +438,7 @@ func newInstallRunnerCommand(cfg *config.Config) *cobra.Command {
 				return fmt.Errorf("failed to connect to Kubiya API: %w", err)
 			}
 
-			// Get runner manifest from API
+			// Get operator manifest from API
 			fmt.Printf("🔍 Requesting manifest for runner '%s'...\n", runnerName)
 			manifest, err := client.CreateRunnerManifest(cmd.Context(), args[0])
 			if err != nil {
@@ -499,7 +499,7 @@ func newInstallRunnerCommand(cfg *config.Config) *cobra.Command {
 				}
 
 				fmt.Println("\n💡 To deploy this runner to Kubernetes, run:")
-				fmt.Printf("  kubiya runner install %s --deploy\n", runnerName)
+				fmt.Printf("  kubiya operator install %s --deploy\n", runnerName)
 				fmt.Println("\n💡 Or manually run these commands:")
 				fmt.Println("  # Add Helm repository")
 				fmt.Println("  helm repo add kubiya-helm-charts https://kubiyabot.github.io/helm-charts/ && helm repo update")
@@ -564,7 +564,7 @@ func newInstallRunnerCommand(cfg *config.Config) *cobra.Command {
 				if err := verifyRunnerOperational(cmd.Context(), client, runnerName, timeout); err != nil {
 					fmt.Printf("⚠️  Warning: %v\n", err)
 					fmt.Println("    The deployment completed, but the runner might not be fully operational yet.")
-					fmt.Println("    Run 'kubiya runner list' after a few minutes to check the status.")
+					fmt.Println("    Run 'kubiya operator list' after a few minutes to check the status.")
 				} else {
 					fmt.Println("✅ Runner is operational in Kubiya")
 				}
@@ -580,7 +580,7 @@ func newInstallRunnerCommand(cfg *config.Config) *cobra.Command {
 			fmt.Println("\n🔍 To check the status of your runner, run:")
 			fmt.Printf("  kubectl get pods -n %s\n", namespace)
 			fmt.Println("\n📊 To view your runner in Kubiya:")
-			fmt.Println("  kubiya runner list")
+			fmt.Println("  kubiya operator list")
 
 			return nil
 		},

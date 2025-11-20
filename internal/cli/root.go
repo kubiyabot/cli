@@ -7,7 +7,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/kubiyabot/cli/internal/config"
-	"github.com/kubiyabot/cli/internal/tui"
 	"github.com/kubiyabot/cli/internal/version"
 )
 
@@ -17,7 +16,7 @@ func Execute(cfg *config.Config) error {
 		Short: "🤖 Kubiya CLI - Your Agentic AI Automation Companion",
 		Long: `Welcome to Kubiya CLI! 👋
 
-A powerful tool for interacting with your Kubiya agents and managing your automation sources.
+A powerful tool for interacting with your Kubiya agents and managing your automation.
 
 🔑 First Time Setup:
   kubiya login                          # Interactive authentication (recommended)
@@ -27,15 +26,17 @@ A powerful tool for interacting with your Kubiya agents and managing your automa
 
 Quick Start:
   • Authenticate:     kubiya login
-  • Chat:             kubiya chat --interactive
-  • Browse sources:   kubiya browse              # Interactive source browser
+  • Chat:             kubiya agent chat <agent-id>
   • Manage agents:    kubiya agent list
-  • Manage tools:     kubiya tool list
-  • Manage runners:   kubiya runner list
+  • Manage teams:     kubiya team list
+  • Manage skills:    kubiya skill list
+  • Manage policies:  kubiya policy list
+  • View executions:  kubiya execution list
+  • Schedule jobs:    kubiya job list
+  • Manage operators: kubiya operator list
   • Manage webhooks:  kubiya webhook list
   • Manage workflows: kubiya workflow list|run|execute|compose
   • Update CLI:       kubiya update
-  • Initialize:       kubiya init tool|workflow  # Create new tools/workflows
 
 Need help? Visit: https://docs.kubiya.ai`,
 		Version: version.GetVersion(),
@@ -89,44 +90,33 @@ Need help? Visit: https://docs.kubiya.ai
 		},
 	}
 
-	// Add the browse command as a top-level alias for source interactive
-	browseCmd := &cobra.Command{
-		Use:     "browse",
-		Aliases: []string{"b"},
-		Short:   "🎮 Browse and execute tools interactively",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			app := tui.NewSourceBrowser(cfg)
-			return app.Run()
-		},
-	}
-	rootCmd.AddCommand(browseCmd)
-
-	// Add other subcommands
+	// V2 Control Plane Commands
 	rootCmd.AddCommand(
-		newChatCommand(cfg),
-		newAgentCommand(cfg),
-		newSourcesCommand(cfg),
-		newToolsCommand(cfg),
-		newDocumentationCommand(cfg),
-		newKnowledgeCommand(cfg),
-		newRunnersCommand(cfg),
-		newWebhooksCommand(cfg),
-		newSecretsCommand(cfg),
-		newGenerateToolCommand(cfg),
+		// Core V2 Commands
+		newAgentCommand(cfg),       // V2: Agents
+		newTeamCommand(cfg),        // V2: Teams
+		newExecutionCommand(cfg),   // V2: Executions (one-time task runs)
+		newJobCommand(cfg),         // V2: Jobs (scheduled/recurring tasks)
+		newModelCommand(cfg),       // V2: Models
+		newSkillCommand(cfg),       // V2: Skills
+		newPolicyCommand(cfg),      // V2: Policies
+		newEnvironmentCommand(cfg), // V2: Environments
+		newProjectCommand(cfg),     // V2: Projects
+		newOperatorCommand(cfg),    // V2: Operators (formerly runners)
+
+		// V1 Legacy Commands (still on api.kubiya.ai)
+		newWorkflowCommand(cfg), // V1: Workflows
+		newUsersCommand(cfg),    // V1: User management
+		newWebhooksCommand(cfg), // V1: Webhooks
+		newSecretsCommand(cfg),  // V1: Secrets
+		newKnowledgeCommand(cfg), // V1: Knowledge service
+
+		// System Commands
+		newLoginCommand(cfg),
 		newUpdateCommand(cfg),
 		newVersionCommand(cfg),
-		newIntegrationsCommand(cfg),
-		newProjectCommand(cfg),
-		newAuditCommand(cfg),
-		newRunCommand(cfg),
-		newInitCommand(cfg),
-		newMcpCommand(cfg),
-		newWorkflowCommand(cfg),
-		newTriggerCommand(cfg),
-		newPolicyCommand(cfg),
-		newUsersCommand(cfg),
-		newLoginCommand(cfg),
-		newWorkerCommand(cfg),
+		NewConfigCmd(),       // Context management
+		newMcpCommand(cfg),   // MCP server management
 	)
 
 	return rootCmd.Execute()
@@ -136,15 +126,18 @@ Need help? Visit: https://docs.kubiya.ai
 func showAuthHintIfNeeded(cmd *cobra.Command, cfg *config.Config) {
 	// Commands that require authentication
 	authRequiredCommands := map[string]bool{
-		"workflow": true,
-		"agent":    true,
-		"chat":     true,
-		"browse":   true,
-		"tool":     true,
-		"runner":   true,
-		"webhook":  true,
-		"source":   true,
-		"secret":   true,
+		"workflow":  true,
+		"agent":     true,
+		"team":      true,
+		"execution": true,
+		"job":       true,
+		"model":     true,
+		"skill":     true,
+		"policy":    true,
+		"operator":  true,
+		"webhook":   true,
+		"secret":    true,
+		"knowledge": true,
 	}
 
 	// Check if this command or its parent requires auth
