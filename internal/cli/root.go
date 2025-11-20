@@ -103,6 +103,7 @@ Need help? Visit: https://docs.kubiya.ai
 		newEnvironmentCommand(cfg), // V2: Environments
 		newProjectCommand(cfg),     // V2: Projects
 		newOperatorCommand(cfg),    // V2: Operators (formerly runners)
+		newWorkerCommand(cfg),      // V2: Worker management
 
 		// V1 Legacy Commands (still on api.kubiya.ai)
 		newWorkflowCommand(cfg), // V1: Workflows

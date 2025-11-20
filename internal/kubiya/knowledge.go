@@ -95,8 +95,10 @@ func (kc *KnowledgeClient) Query(ctx context.Context, req KnowledgeQueryRequest)
 	// The orchestrator expects UserKey format for Kubiya API keys (even if they are JWTs)
 
 	// Execute request with a custom client with longer timeout
+	// Use the authenticated transport from the main client
 	queryClient := &http.Client{
-		Timeout: 5 * time.Minute, // Longer timeout for knowledge queries
+		Timeout:   5 * time.Minute,        // Longer timeout for knowledge queries
+		Transport: kc.client.client.Transport, // Reuse authenticated transport
 	}
 	resp, err := queryClient.Do(httpReq)
 	if err != nil {
@@ -130,18 +132,62 @@ func (kc *KnowledgeClient) Query(ctx context.Context, req KnowledgeQueryRequest)
 				return
 			}
 
-			// Convert JSON response to events
-			events <- KnowledgeSSEEvent{Type: "data", Data: fmt.Sprintf("🔍 Searching knowledge base...\n")}
-			events <- KnowledgeSSEEvent{Type: "data", Data: fmt.Sprintf("Session ID: %s\n", queryResp.SessionID)}
-
+			// Convert JSON response to events with clean formatting
 			if queryResp.TotalResults == 0 {
 				events <- KnowledgeSSEEvent{Type: "data", Data: "\n❌ No results found in the knowledge base.\n"}
 			} else {
-				events <- KnowledgeSSEEvent{Type: "data", Data: fmt.Sprintf("\n✅ Found %d results:\n\n", queryResp.TotalResults)}
+				events <- KnowledgeSSEEvent{Type: "data", Data: fmt.Sprintf("✅ Found %d results\n\n", queryResp.TotalResults)}
 
+				// Format results in a clean, readable way
 				for i, result := range queryResp.Results {
-					resultJSON, _ := json.MarshalIndent(result, "", "  ")
-					events <- KnowledgeSSEEvent{Type: "data", Data: fmt.Sprintf("Result %d:\n%s\n\n", i+1, string(resultJSON))}
+					var output strings.Builder
+					output.WriteString(fmt.Sprintf("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"))
+					output.WriteString(fmt.Sprintf("📄 Result %d\n", i+1))
+					output.WriteString(fmt.Sprintf("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"))
+
+					// Extract and display key information
+					if data, ok := result["data"].(map[string]interface{}); ok {
+						// Content
+						if content, ok := data["chunk_content"].(string); ok && content != "" {
+							output.WriteString(fmt.Sprintf("📝 Content:\n   %s\n\n", content))
+						}
+
+						// Relevance score
+						if score, ok := result["score"].(float64); ok {
+							percentage := score * 100
+							output.WriteString(fmt.Sprintf("⭐ Relevance: %.1f%%\n\n", percentage))
+						}
+
+						// Source metadata (if available)
+						if metadataStr, ok := data["metadata"].(string); ok {
+							var metadata map[string]interface{}
+							if err := json.Unmarshal([]byte(metadataStr), &metadata); err == nil {
+								// Channel info
+								if channelName, ok := metadata["channel_name"].(string); ok {
+									output.WriteString(fmt.Sprintf("📍 Source: #%s", channelName))
+
+									// User info
+									if user, ok := metadata["user"].(string); ok {
+										output.WriteString(fmt.Sprintf(" (by %s)", user))
+									}
+									output.WriteString("\n")
+								}
+
+								// Timestamp
+								if ts, ok := metadata["ts"].(string); ok {
+									output.WriteString(fmt.Sprintf("🕐 Timestamp: %s\n", ts))
+								}
+							}
+						}
+
+						// Database info
+						if db, ok := result["database"].(string); ok {
+							output.WriteString(fmt.Sprintf("💾 Database: %s\n", db))
+						}
+					}
+
+					output.WriteString("\n")
+					events <- KnowledgeSSEEvent{Type: "data", Data: output.String()}
 				}
 			}
 

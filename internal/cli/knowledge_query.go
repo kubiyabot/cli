@@ -126,10 +126,9 @@ Features:
 				return nil
 			}
 
-			// Streaming mode
+			// Streaming mode - clean output
 			fmt.Println(style.TitleStyle.Render("🔍 Knowledge Base Query"))
-			fmt.Println(style.SubtitleStyle.Render("Query: " + prompt))
-			fmt.Println()
+			fmt.Printf("Query: %s\n\n", style.SubtitleStyle.Render(prompt))
 
 			// Query with streaming
 			events, err := client.Knowledge().Query(cmd.Context(), req)
@@ -144,7 +143,7 @@ Features:
 					// Print data as it comes
 					fmt.Print(event.Data)
 				case "done":
-					fmt.Println("\n\n" + style.SuccessStyle.Render("✅ Query completed"))
+					// Query completed - no extra message needed
 					// Try to parse done event for metadata
 					if event.Data != "" {
 						var doneData map[string]interface{}
@@ -156,7 +155,7 @@ Features:
 						}
 					}
 				case "error":
-					fmt.Println("\n\n" + style.ErrorStyle.Render("❌ Error: "+event.Data))
+					fmt.Println("\n" + style.ErrorStyle.Render("❌ Error: "+event.Data))
 				}
 			}
 
