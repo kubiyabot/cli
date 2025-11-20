@@ -30,21 +30,26 @@ func newAgentCommand(cfg *config.Config) *cobra.Command {
 		Long:    `Create, edit, delete, and list agents in your Kubiya workspace.`,
 	}
 
+	// V2 Commands only - aligned with Control Plane API
 	cmd.AddCommand(
-		newListAgentsCommand(cfg),
-		newCreateAgentCommand(cfg),
-		newEditAgentCommand(cfg),
-		newDeleteAgentCommand(cfg),
-		newGetAgentCommand(cfg),
-		newAgentToolsCommand(cfg),
-		newAgentIntegrationsCommand(cfg),
-		newAgentEnvCommand(cfg),
-		newAgentSecretsCommand(cfg),
-		newAgentModelCommand(cfg),
-		newAgentAccessCommand(cfg),
-		newAgentRunnerCommand(cfg),
-		newAgentPromptCommand(cfg),
+		newListAgentsCommand(cfg),           // ✅ V2 - GET /api/v1/agents
+		newGetAgentCommand(cfg),             // ✅ V2 - GET /api/v1/agents/:id
+		newCreateAgentCommand(cfg),          // ✅ V2 - POST /api/v1/agents
+		newEditAgentCommand(cfg),            // ✅ V2 - PATCH /api/v1/agents/:id
+		newDeleteAgentCommand(cfg),          // ✅ V2 - DELETE /api/v1/agents/:id
+		newAgentInteractiveChatCommand(cfg), // ✅ V2 - POST /api/v1/agents/:id/execute
+		newAgentExecCommand(cfg),            // ✅ V2 - POST /api/v1/agents/:id/execute
 	)
+
+	// V1 Commands - Removed for V2 Migration
+	// - tools: Part of agent configuration in V2
+	// - integrations: Part of agent execution_environment in V2
+	// - env: Part of agent execution_environment.env_vars in V2
+	// - secrets: Part of agent execution_environment.secrets in V2
+	// - model: Part of agent model_id in V2
+	// - access: Need V2 access control endpoints
+	// - runner: Part of agent runner_name in V2
+	// - prompt: Part of agent system_prompt in V2
 
 	return cmd
 }
@@ -121,6 +126,22 @@ func newCreateAgentCommand(cfg *config.Config) *cobra.Command {
   # Create with knowledge item
   kubiya agent create --name "Docs Bot" --knowledge-file docs.md`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// Route to V2 for simple creates (not interactive, not from file)
+			if !cfg.UseV1API && !interactive && inputFile == "" && !fromStdin {
+				if name == "" {
+					return fmt.Errorf("--name is required")
+				}
+				// Simple V2 create
+				return createAgentV2(cfg, name, description, llmModel, "", "", nil, nil)
+			}
+
+			// V1 API implementation (supports all advanced features)
+			if !cfg.UseV1API && (interactive || inputFile != "" || fromStdin) {
+				fmt.Println(style.WarningStyle.Render("Note: Advanced agent creation features (interactive, file input) currently require V1 API"))
+				fmt.Println("Set KUBIYA_CLI_USE_V1_API=true to use these features, or use simple CLI flags for V2")
+				return fmt.Errorf("advanced features not yet available in V2")
+			}
+
 			client := kubiya.NewClient(cfg)
 
 			var agent kubiya.Agent
@@ -1639,6 +1660,20 @@ func newDeleteAgentCommand(cfg *config.Config) *cobra.Command {
 		Example: "  kubiya agent delete abc-123\n  kubiya agent delete abc-123 --force",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// Route to V2 if not using V1 API
+			if !cfg.UseV1API {
+				if !force {
+					fmt.Print("Are you sure you want to delete this agent? [y/N] ")
+					var confirm string
+					fmt.Scanln(&confirm)
+					if strings.ToLower(confirm) != "y" {
+						return fmt.Errorf("operation cancelled")
+					}
+				}
+				return deleteAgentV2(cfg, args[0])
+			}
+
+			// V1 API implementation
 			client := kubiya.NewClient(cfg)
 
 			// Get agent details first
@@ -1705,6 +1740,12 @@ func newListAgentsCommand(cfg *config.Config) *cobra.Command {
   # Output in JSON format
   kubiya agent list --output json`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// Route to V2 if not using V1 API
+			if !cfg.UseV1API {
+				return listAgentsV2(cfg, outputFormat)
+			}
+
+			// V1 API implementation
 			client := kubiya.NewClient(cfg)
 			agents, err := client.ListAgents(cmd.Context())
 			if err != nil {
@@ -2100,6 +2141,12 @@ func newGetAgentCommand(cfg *config.Config) *cobra.Command {
 		Example: "  kubiya agent get abc-123\n  kubiya agent describe abc-123\n  kubiya agent get abc-123 --output json",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// Route to V2 if not using V1 API
+			if !cfg.UseV1API {
+				return getAgentV2(cfg, args[0], outputFormat)
+			}
+
+			// V1 API implementation
 			client := kubiya.NewClient(cfg)
 			agent, err := client.GetAgent(cmd.Context(), args[0])
 			if err != nil {
@@ -3350,3 +3397,4 @@ func newAgentPromptClearCommand(cfg *config.Config) *cobra.Command {
 
 	return cmd
 }
+
