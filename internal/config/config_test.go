@@ -16,9 +16,9 @@ func TestLoad(t *testing.T) {
 		{
 			name: "valid config with all vars",
 			envVars: map[string]string{
-				"KUBIYA_API_KEY":  "test-key",
-				"KUBIYA_BASE_URL": "https://test.api.kubiya.ai",
-				"KUBIYA_DEBUG":    "true",
+				"KUBIYA_API_KEY":                   "test-key",
+				"KUBIYA_CONTROL_PLANE_BASE_URL":    "https://test.api.kubiya.ai",
+				"KUBIYA_DEBUG":                     "true",
 			},
 			wantBaseURL: "https://test.api.kubiya.ai",
 			wantDebug:   true,
@@ -28,14 +28,33 @@ func TestLoad(t *testing.T) {
 			envVars: map[string]string{
 				"KUBIYA_API_KEY": "test-key",
 			},
-			wantBaseURL: "https://api.kubiya.ai/api/v1",
+			wantBaseURL: "https://control-plane.kubiya.ai",
 			wantDebug:   false,
 		},
 		{
 			name:        "missing API key",
 			envVars:     map[string]string{},
 			wantErr:     false,
+			wantBaseURL: "https://control-plane.kubiya.ai",
+		},
+		{
+			name: "v1 API mode with flag",
+			envVars: map[string]string{
+				"KUBIYA_API_KEY":         "test-key",
+				"KUBIYA_CLI_USE_V1_API":  "true",
+			},
 			wantBaseURL: "https://api.kubiya.ai/api/v1",
+			wantDebug:   false,
+		},
+		{
+			name: "v1 API mode with custom URL",
+			envVars: map[string]string{
+				"KUBIYA_API_KEY":         "test-key",
+				"KUBIYA_CLI_USE_V1_API":  "true",
+				"KUBIYA_BASE_URL":        "https://custom.api.kubiya.ai",
+			},
+			wantBaseURL: "https://custom.api.kubiya.ai",
+			wantDebug:   false,
 		},
 	}
 

@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/exec"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/kubiyabot/cli/internal/controlplane"
@@ -155,8 +154,8 @@ func (c *UpdateCoordinator) performConfigUpdate(ctx context.Context) error {
 	}
 
 	// Signal the process to shutdown gracefully
-	if err := syscall.Kill(pid, syscall.SIGTERM); err != nil {
-		return fmt.Errorf("failed to send SIGTERM: %w", err)
+	if err := sendTermSignal(pid); err != nil {
+		return err
 	}
 
 	return nil
@@ -219,9 +218,9 @@ func (c *UpdateCoordinator) CheckHealth(ctx context.Context, maxWait time.Durati
 		return fmt.Errorf("failed to find process: %w", err)
 	}
 
-	// Send signal 0 to check if process exists
-	if err := process.Signal(syscall.Signal(0)); err != nil {
-		return fmt.Errorf("worker process not running: %w", err)
+	// Check if process exists
+	if err := checkProcessExists(process); err != nil {
+		return err
 	}
 
 	// Check control plane heartbeat

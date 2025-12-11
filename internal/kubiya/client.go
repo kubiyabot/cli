@@ -72,7 +72,7 @@ func NewClient(cfg *config.Config) *Client {
 		debug:   cfg.Debug,
 		client: &http.Client{
 			Timeout:   30 * time.Second,
-			Transport: NewAuthRoundTripper(),
+			Transport: NewAuthRoundTripper(cfg.APIKey),
 		},
 		cache: NewCache(5 * time.Minute),
 	}
