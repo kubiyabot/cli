@@ -188,17 +188,25 @@ func (ec *ExecCommand) ExecuteWithPlanning(ctx context.Context, prompt string) e
 
 	// 4. Auto-save plan
 	storage, _ := NewPlanStorageManager()
-	savedPlan, err := storage.SavePlan(plan, prompt)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: Failed to save plan: %v\n", err)
-	} else {
-		fmt.Println()
-		fmt.Printf("%s Plan saved to: %s\n",
-			style.DimStyle.Render("💾"),
-			style.HighlightStyle.Render(savedPlan.FilePath))
+	var savedPlan *SavedPlan
+	if plan != nil {
+		var saveErr error
+		savedPlan, saveErr = storage.SavePlan(plan, prompt)
+		if saveErr != nil {
+			fmt.Fprintf(os.Stderr, "Warning: Failed to save plan: %v\n", saveErr)
+		} else {
+			fmt.Println()
+			fmt.Printf("%s Plan saved to: %s\n",
+				style.DimStyle.Render("💾"),
+				style.HighlightStyle.Render(savedPlan.FilePath))
+		}
 	}
 
 	// 5. Display plan
+	if plan == nil {
+		return fmt.Errorf("plan generation failed: no plan returned")
+	}
+
 	fmt.Println()
 	displayer := NewPlanDisplayer(plan, ec.outputFormat, !ec.nonInteractive)
 
@@ -236,6 +244,9 @@ func (ec *ExecCommand) streamPlanGeneration(ctx context.Context, client *kubiya.
 		case event, ok := <-eventChan:
 			if !ok {
 				progressBar.Complete()
+				if plan == nil {
+					return nil, fmt.Errorf("plan generation completed but no plan was received from the planner service")
+				}
 				return plan, nil
 			}
 

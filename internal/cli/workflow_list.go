@@ -388,28 +388,34 @@ type WorkflowExecutionListOutput struct {
 	WorkflowExecutions []WorkflowExecution
 }
 
-func (o *WorkflowExecutionListOutput) PrintJSON() error {
-	enc := json.NewEncoder(os.Stdout)
+func (o *WorkflowExecutionListOutput) PrintJSON(w io.Writer) error {
+	if w == nil {
+		w = os.Stdout
+	}
+	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	return enc.Encode(o)
 }
 
-func (o *WorkflowExecutionListOutput) PrintTable() error {
+func (o *WorkflowExecutionListOutput) PrintTable(w io.Writer) error {
+	if w == nil {
+		w = os.Stdout
+	}
 	if len(o.WorkflowExecutions) == 0 {
-		fmt.Printf("\n%s No recent executions found\n", style.DimStyle.Render("ℹ️"))
-		fmt.Printf("%s Execute a workflow: %s\n",
+		fmt.Fprintf(w, "\n%s No recent executions found\n", style.DimStyle.Render("ℹ️"))
+		fmt.Fprintf(w, "%s Execute a workflow: %s\n",
 			style.InfoStyle.Render("💡"),
 			style.HighlightStyle.Render("kubiya workflow run <name-or-id>"))
 		return nil
 	}
 
-	fmt.Printf("\n%s\n", style.TitleStyle.Render("🕒 WORKFLOW EXECUTIONS (last 24h)"))
-	fmt.Printf("%s Found %d recent executions\n\n",
+	fmt.Fprintf(w, "\n%s\n", style.TitleStyle.Render("🕒 WORKFLOW EXECUTIONS (last 24h)"))
+	fmt.Fprintf(w, "%s Found %d recent executions\n\n",
 		style.DimStyle.Render("ℹ️"), len(o.WorkflowExecutions))
 
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
-	fmt.Fprintln(w, style.DimStyle.Render("WORKFLOW\tSTATUS\tRUNNER\tSTARTED\tDURATION\tPROGRESS"))
-	fmt.Fprintln(w, style.DimStyle.Render("────────\t──────\t──────\t───────\t────────\t────────"))
+	tw := tabwriter.NewWriter(w, 0, 0, 3, ' ', 0)
+	fmt.Fprintln(tw, style.DimStyle.Render("WORKFLOW\tSTATUS\tRUNNER\tSTARTED\tDURATION\tPROGRESS"))
+	fmt.Fprintln(tw, style.DimStyle.Render("────────\t──────\t──────\t───────\t────────\t────────"))
 
 	for _, ex := range o.WorkflowExecutions {
 		// Enhanced status styling
@@ -442,7 +448,7 @@ func (o *WorkflowExecutionListOutput) PrintTable() error {
 			}
 		}
 
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n",
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n",
 			style.HighlightStyle.Render(ex.Name),
 			statusText,
 			ex.Runner,
@@ -451,11 +457,11 @@ func (o *WorkflowExecutionListOutput) PrintTable() error {
 			progressText)
 	}
 
-	w.Flush()
+	tw.Flush()
 
-	fmt.Printf("\n%s Commands:\n", style.InfoStyle.Render("💡"))
-	fmt.Printf("  • %s - Filter by status\n", style.HighlightStyle.Render("kubiya workflow execution list --status running"))
-	fmt.Printf("  • %s - Filter by workflow\n", style.HighlightStyle.Render("kubiya workflow execution list --id <workflow-id>"))
+	fmt.Fprintf(w, "\n%s Commands:\n", style.InfoStyle.Render("💡"))
+	fmt.Fprintf(w, "  • %s - Filter by status\n", style.HighlightStyle.Render("kubiya workflow execution list --status running"))
+	fmt.Fprintf(w, "  • %s - Filter by workflow\n", style.HighlightStyle.Render("kubiya workflow execution list --id <workflow-id>"))
 
 	return nil
 }
@@ -471,7 +477,7 @@ func newWorkflowExecutionListCommand(cfg *config.Config) *cobra.Command {
 			ctx := context.Background()
 			comp := composer.NewClient(cfg)
 			params.Request.SetDefaults()
-			return listWorkflowExecutions(ctx, comp, &params)
+			return listWorkflowExecutions(ctx, comp, &params, cmd.OutOrStdout())
 		},
 	}
 
@@ -484,7 +490,7 @@ func newWorkflowExecutionListCommand(cfg *config.Config) *cobra.Command {
 	return cmd
 }
 
-func listWorkflowExecutions(ctx context.Context, comp *composer.Client, params *WorkflowExecutionListParams) error {
+func listWorkflowExecutions(ctx context.Context, comp *composer.Client, params *WorkflowExecutionListParams, w io.Writer) error {
 	// Set default time range if not provided
 	startTime := params.StartTime
 	endTime := params.EndTime
@@ -587,9 +593,9 @@ func listWorkflowExecutions(ctx context.Context, comp *composer.Client, params *
 	}
 
 	if params.JsonOutput {
-		return output.PrintJSON()
+		return output.PrintJSON(w)
 	} else {
-		return output.PrintTable()
+		return output.PrintTable(w)
 	}
 }
 
@@ -650,7 +656,7 @@ Time Range:
 			ctx := context.Background()
 			comp := composer.NewClient(cfg)
 			params.Request.SetDefaults()
-			return listWorkflowExecutions(ctx, comp, &params)
+			return listWorkflowExecutions(ctx, comp, &params, cmd.OutOrStdout())
 		},
 	}
 
