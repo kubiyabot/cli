@@ -11,12 +11,16 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/kubiyabot/cli/internal/config"
+	"github.com/kubiyabot/cli/internal/controlplane"
+	"github.com/kubiyabot/cli/internal/output"
+	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
 )
 
@@ -33,9 +37,10 @@ var requirementsTxt string
 
 type WorkerStartOptions struct {
 	// Worker configuration
-	QueueID        string
-	DeploymentType string // "docker" or "local"
-	DaemonMode     bool   // Run in background with supervision
+	QueueID         string
+	DeploymentType  string // "docker" or "local"
+	DaemonMode      bool   // Run in background with supervision
+	ControlPlaneURL string // Override control plane URL
 
 	// Docker options
 	Image     string
@@ -49,14 +54,25 @@ type WorkerStartOptions struct {
 	// Python package options
 	PackageVersion string // Version of kubiya-control-plane-api to install (default: ">=0.3.0")
 	LocalWheel     string // Path to local wheel file (for development only)
+	NoCache        bool   // Clear pip cache before installation
+
+	// Auto-update options
+	AutoUpdate           bool   // Enable automatic updates
+	UpdateCheckInterval  string // Interval for checking updates (e.g., "5m", "10m")
 
 	cfg *config.Config
 }
 
-// getControlPlaneURL returns the control plane URL, checking environment variable first
-func getControlPlaneURL() string {
-	if url := os.Getenv("CONTROL_PLANE_GATEWAY_URL"); url != "" {
-		return url
+// getControlPlaneURL returns the effective control plane URL with priority:
+// 1. --control-plane-url flag
+// 2. Config BaseURL (from context or environment variables)
+// 3. Default
+func (opts *WorkerStartOptions) getControlPlaneURL() string {
+	if opts.ControlPlaneURL != "" {
+		return opts.ControlPlaneURL
+	}
+	if opts.cfg.BaseURL != "" {
+		return opts.cfg.BaseURL
 	}
 	return defaultControlPlaneURL
 }
@@ -78,12 +94,26 @@ Deployment Types:
   • local  - Run worker locally with Python package (no Docker required)
   • docker - Run worker in Docker container (default)
 
+Environment Variables:
+  KUBIYA_WORKER_PACKAGE_VERSION  - Package version to install (e.g., "0.5.0", ">=0.3.0")
+  KUBIYA_WORKER_LOCAL_WHEEL      - Path to local wheel file for development
+
 Examples:
   # Start worker locally (no Docker)
   kubiya worker start --queue-id=<queue-id> --type=local
 
+  # Start worker with specific package version
+  kubiya worker start --queue-id=<queue-id> --package-version=0.5.0
+
+  # Using environment variable
+  export KUBIYA_WORKER_PACKAGE_VERSION=0.5.0
+  kubiya worker start --queue-id=<queue-id> --type=local
+
   # Start worker in daemon mode with supervision
   kubiya worker start --queue-id=<queue-id> --type=local -d
+
+  # Development: use local wheel file
+  kubiya worker start --queue-id=<queue-id> --local-wheel=/path/to/wheel
 
   # Start worker in Docker
   kubiya worker start --queue-id=<queue-id> --type=docker
@@ -98,13 +128,17 @@ Examples:
 	cmd.Flags().StringVar(&opts.QueueID, "queue-id", "", "Worker queue ID (required)")
 	cmd.Flags().StringVar(&opts.DeploymentType, "type", "local", "Deployment type: local or docker")
 	cmd.Flags().BoolVarP(&opts.DaemonMode, "daemon", "d", false, "Run in daemon mode with supervision and crash recovery")
+	cmd.Flags().StringVar(&opts.ControlPlaneURL, "control-plane-url", "", "Control plane URL (default: from context or https://control-plane.kubiya.ai)")
 	cmd.Flags().Int64Var(&opts.MaxLogSize, "max-log-size", defaultMaxLogSize, "Maximum log file size in bytes (daemon mode)")
 	cmd.Flags().IntVar(&opts.MaxLogBackups, "max-log-backups", defaultMaxBackups, "Maximum number of log backup files (daemon mode)")
 	cmd.Flags().StringVar(&opts.Image, "image", defaultWorkerImage, "Worker Docker image (docker mode)")
 	cmd.Flags().StringVar(&opts.ImageTag, "image-tag", defaultImageTag, "Worker image tag (docker mode)")
 	cmd.Flags().BoolVar(&opts.AutoPull, "pull", true, "Automatically pull latest image (docker mode)")
-	cmd.Flags().StringVar(&opts.PackageVersion, "package-version", "", "Version of kubiya-control-plane-api to install from PyPI (empty = latest, local mode)")
-	cmd.Flags().StringVar(&opts.LocalWheel, "local-wheel", "", "Path to local wheel file for development (local mode)")
+	cmd.Flags().StringVar(&opts.PackageVersion, "package-version", "", "Version of kubiya-control-plane-api to install from PyPI (env: KUBIYA_WORKER_PACKAGE_VERSION, empty = latest)")
+	cmd.Flags().StringVar(&opts.LocalWheel, "local-wheel", "", "Path to local wheel file for development (env: KUBIYA_WORKER_LOCAL_WHEEL)")
+	cmd.Flags().BoolVar(&opts.NoCache, "no-cache", false, "Clear pip cache before installation (useful for troubleshooting)")
+	cmd.Flags().BoolVar(&opts.AutoUpdate, "auto-update", false, "Enable automatic worker updates (config + package)")
+	cmd.Flags().StringVar(&opts.UpdateCheckInterval, "update-check-interval", "5m", "Interval for checking updates (e.g., 5m, 10m, 1h)")
 
 	cmd.MarkFlagRequired("queue-id")
 
@@ -112,6 +146,18 @@ Examples:
 }
 
 func (opts *WorkerStartOptions) Run(ctx context.Context) error {
+	// Apply environment variables if flags not set
+	if opts.PackageVersion == "" {
+		if envVersion := os.Getenv("KUBIYA_WORKER_PACKAGE_VERSION"); envVersion != "" {
+			opts.PackageVersion = envVersion
+		}
+	}
+	if opts.LocalWheel == "" {
+		if envWheel := os.Getenv("KUBIYA_WORKER_LOCAL_WHEEL"); envWheel != "" {
+			opts.LocalWheel = envWheel
+		}
+	}
+
 	// Validate deployment type
 	opts.DeploymentType = strings.ToLower(opts.DeploymentType)
 	if opts.DeploymentType != "docker" && opts.DeploymentType != "local" {
@@ -145,44 +191,61 @@ func (opts *WorkerStartOptions) RunLocal(ctx context.Context) error {
 }
 
 func (opts *WorkerStartOptions) runLocalForeground(ctx context.Context) error {
-	// Print beautiful startup banner
-	fmt.Println()
-	fmt.Println(strings.Repeat("═", 80))
-	fmt.Println("🚀  KUBIYA AGENT WORKER")
-	fmt.Println(strings.Repeat("═", 80))
-	fmt.Println()
+	// Create progress manager with auto-detected mode
+	pm := output.NewProgressManager()
+	progress := NewWorkerStartProgress(pm)
 
-	// Configuration section
-	fmt.Println("📋 CONFIGURATION")
-	fmt.Println(strings.Repeat("─", 80))
-	fmt.Printf("   Queue ID:         %s\n", opts.QueueID)
-	fmt.Printf("   Deployment Type:  Local (Python Package)\n")
-	fmt.Printf("   Control Plane:    %s\n", getControlPlaneURL())
-	fmt.Println()
+	// Show styled header with pterm
+	pm.Println("")
+
+	// Create a styled header box
+	headerContent := pterm.Sprintf(
+		"%s\n\n"+
+		"  %s  %s\n"+
+		"  %s  %s",
+		pterm.Bold.Sprint("🚀 Starting Kubiya Agent Worker"),
+		pterm.LightCyan("Queue:"),
+		pterm.Bold.Sprint(opts.QueueID),
+		pterm.LightCyan("Control Plane:"),
+		pterm.Bold.Sprint(opts.getControlPlaneURL()),
+	)
+
+	pterm.DefaultBox.
+		WithTitle("Worker Startup").
+		WithTitleTopCenter().
+		WithBoxStyle(pterm.NewStyle(pterm.FgCyan)).
+		Println(headerContent)
+
+	pm.Println("")
 
 	// Check API key
 	if opts.cfg.APIKey == "" {
-		return fmt.Errorf("❌ KUBIYA_API_KEY is required\nRun: kubiya login")
+		return fmt.Errorf("KUBIYA_API_KEY is required\nRun: kubiya login")
 	}
-	fmt.Println("✓ API Key authenticated")
 
-	// Pre-flight checks section
-	fmt.Println()
-	fmt.Println("🔍 PRE-FLIGHT CHECKS")
-	fmt.Println(strings.Repeat("─", 80))
+	// Clean pip cache if requested
+	if opts.NoCache {
+		if err := cleanPipCache(pm); err != nil {
+			pm.Warning(fmt.Sprintf("Cache cleanup failed: %v", err))
+		}
+	}
 
-	// Check Python version with comprehensive validation
+	// Check Python version silently
 	pythonCmd, pythonVersion, err := checkPythonVersion()
 	if err != nil {
 		return err
 	}
-	fmt.Printf("✓ Python found: %s\n", pythonVersion)
 
 	// Check pip is available
 	if err := checkPipAvailable(pythonCmd); err != nil {
 		return err
 	}
-	fmt.Println("✓ pip package manager available")
+
+	// Step 1: Environment
+	pterm.Print(pterm.LightCyan("[1/3] "))
+	// Extract just the version number from "Python 3.11.9"
+	versionOnly := strings.TrimPrefix(pythonVersion, "Python ")
+	pterm.Success.Printf("Environment ready • Python %s\n", pterm.Bold.Sprint(versionOnly))
 
 	// Create worker directory
 	homeDir, err := os.UserHomeDir()
@@ -195,59 +258,69 @@ func (opts *WorkerStartOptions) runLocalForeground(ctx context.Context) error {
 		return fmt.Errorf("failed to create worker directory: %w", err)
 	}
 
-	fmt.Printf("✓ Worker directory: %s\n", workerDir)
-
-	// Setup section
-	fmt.Println()
-	fmt.Println("⚙️  WORKER SETUP")
-	fmt.Println(strings.Repeat("─", 80))
-
 	// Create virtual environment if it doesn't exist
 	venvDir := fmt.Sprintf("%s/venv", workerDir)
 	if _, err := os.Stat(venvDir); os.IsNotExist(err) {
-		fmt.Println()
-		fmt.Println("📦 Creating Python virtual environment...")
+		spinner := pm.Spinner("Setting up Python environment")
+		spinner.Start()
+
 		venvCmd := exec.Command(pythonCmd, "-m", "venv", venvDir)
-		venvCmd.Stdout = os.Stdout
-		venvCmd.Stderr = os.Stderr
 		if err := venvCmd.Run(); err != nil {
-			return fmt.Errorf("❌ failed to create virtual environment: %w", err)
+			spinner.Stop()
+			return fmt.Errorf("failed to create virtual environment: %w", err)
 		}
-		fmt.Println("✓ Virtual environment created")
-	} else {
-		fmt.Println("✓ Virtual environment exists")
+		spinner.Stop()
+		pterm.Success.Println("Python environment ready")
 	}
 
 	// Determine pip path in venv (python path not needed for package binary)
 	pipPath, _ := getVenvPaths(venvDir)
 
-	// Install/upgrade pip
-	fmt.Println()
-	fmt.Println("📦 DEPENDENCIES")
-	fmt.Println(strings.Repeat("─", 80))
-	fmt.Print("   Upgrading pip... ")
-	pipUpgradeCmd := exec.Command(pipPath, "install", "--quiet", "--upgrade", "pip")
-	if err := pipUpgradeCmd.Run(); err != nil {
-		return fmt.Errorf("❌ failed to upgrade pip: %w", err)
+	// Check if pip upgrade is needed
+	needsUpgrade, _, err := checkPipVersion(venvDir, "23.0")
+	if err != nil {
+		// Continue with upgrade to be safe
+		needsUpgrade = true
 	}
-	fmt.Println("done")
+
+	if needsUpgrade {
+		spinner := pm.Spinner("Upgrading pip")
+		spinner.Start()
+
+		pipUpgradeCmd := exec.Command(pipPath, "install", "--quiet", "--upgrade", "pip")
+		if err := pipUpgradeCmd.Run(); err != nil {
+			spinner.Stop()
+			return fmt.Errorf("failed to upgrade pip: %w", err)
+		}
+
+		spinner.Stop()
+		pterm.Success.Println("pip upgraded")
+	}
 
 	// Install worker package with extras
-	fmt.Print("   Installing kubiya-control-plane-api package")
-
 	var installCmd *exec.Cmd
+	var packageSpec string
+	var installSpinner *output.Spinner
+	skipInstall := false
+
 	if opts.LocalWheel != "" {
 		// Install from local wheel (development mode) with [worker] extras
 		if _, err := os.Stat(opts.LocalWheel); os.IsNotExist(err) {
-			fmt.Println("... failed")
-			return fmt.Errorf("❌ local wheel file not found: %s", opts.LocalWheel)
+			return fmt.Errorf("local wheel file not found: %s", opts.LocalWheel)
 		}
-		installCmd = exec.Command(pipPath, "install", "--quiet", "--force-reinstall", opts.LocalWheel+"[worker]")
-		fmt.Printf(" (local: %s[worker])... ", opts.LocalWheel)
+
+		// For local wheels, always reinstall (development mode)
+		packageSpec = opts.LocalWheel + "[worker]"
+
+		// Show spinner during installation
+		installSpinner = pm.Spinner("Installing dependencies from local wheel")
+		installSpinner.Start()
+
+		installCmd = exec.Command(pipPath, "install", "--quiet", "--force-reinstall", packageSpec)
 	} else {
 		// Install from PyPI (production mode) with [worker] extras
 		// Build package spec - handle both formats: ">=0.3.0" or "0.3.0"
-		packageSpec := "kubiya-control-plane-api"
+		packageSpec = "kubiya-control-plane-api"
 		if opts.PackageVersion != "" {
 			// If version doesn't start with operator, assume ==
 			if !strings.HasPrefix(opts.PackageVersion, ">=") &&
@@ -260,108 +333,257 @@ func (opts *WorkerStartOptions) runLocalForeground(ctx context.Context) error {
 				packageSpec += opts.PackageVersion
 			}
 		}
-		// Add [worker] extras for all dependencies
-		packageSpec += "[worker]"
-		installCmd = exec.Command(pipPath, "install", "--quiet", packageSpec)
-		if opts.PackageVersion != "" {
-			fmt.Printf(" (%s)... ", packageSpec)
-		} else {
-			fmt.Print(" (latest with [worker] extras)... ")
+
+		// Check if package is already installed with correct version
+		packageName, desiredVersion := parsePackageSpec(packageSpec)
+		satisfied, _, err := checkPackageVersion(venvDir, packageName, desiredVersion)
+		if err == nil && satisfied {
+			skipInstall = true
+		}
+
+		if !skipInstall {
+			// Add [worker] extras for all dependencies
+			packageSpec += "[worker]"
+
+			// Show spinner during installation
+			installSpinner = pm.Spinner("Installing dependencies")
+			installSpinner.Start()
+
+			installCmd = exec.Command(pipPath, "install", "--quiet", packageSpec)
 		}
 	}
 
-	if err := installCmd.Run(); err != nil {
-		fmt.Println("failed")
-		if opts.LocalWheel != "" {
-			return fmt.Errorf("❌ failed to install worker package from local wheel: %w", err)
+	if !skipInstall {
+		if err := installCmd.Run(); err != nil {
+			if installSpinner != nil {
+				installSpinner.Stop()
+			}
+			if opts.LocalWheel != "" {
+				return fmt.Errorf("failed to install worker package from local wheel: %w", err)
+			}
+			return fmt.Errorf("failed to install worker package from PyPI: %w\nMake sure kubiya-control-plane-api is published", err)
 		}
-		return fmt.Errorf("❌ failed to install worker package from PyPI: %w\nMake sure kubiya-control-plane-api is published", err)
+		if installSpinner != nil {
+			installSpinner.Stop()
+		}
+		// Step 2: Dependencies
+		pterm.Print(pterm.LightCyan("[2/3] "))
+		pterm.Success.Println("Dependencies installed")
 	}
-	fmt.Println("done")
-	fmt.Println("✓ Worker package with all dependencies installed")
 
 	// Verify worker binary is available
 	workerBinary := fmt.Sprintf("%s/bin/kubiya-control-plane-worker", venvDir)
 	if _, err := os.Stat(workerBinary); os.IsNotExist(err) {
-		return fmt.Errorf("❌ worker binary not found at %s\nPackage may not have installed correctly", workerBinary)
+		return fmt.Errorf("worker binary not found at %s\nPackage may not have installed correctly", workerBinary)
 	}
-	fmt.Println("✓ Worker binary verified")
+
+	// Check if auto-update is enabled (flag or env var)
+	autoUpdateEnabled := opts.AutoUpdate || IsAutoUpdateEnabled()
+
+	// Parse update check interval
+	updateCheckInterval, err := time.ParseDuration(opts.UpdateCheckInterval)
+	if err != nil {
+		updateCheckInterval = 5 * time.Minute
+		progress.Warning("Invalid update-check-interval, using default: 5m")
+	}
+
+	// Initialize auto-update system if enabled
+	var updateMonitor *UpdateMonitor
+	var updateCoordinator *UpdateCoordinator
+	if autoUpdateEnabled {
+		// Create control plane client
+		controlPlaneClient, err := controlplane.New(opts.cfg.APIKey, false)
+		if err != nil {
+			return fmt.Errorf("failed to create control plane client: %w", err)
+		}
+
+		// Generate worker ID (in production, this should be persistent)
+		workerID := fmt.Sprintf("worker-%s", opts.QueueID)
+
+		// Create update monitor
+		updateMonitor = NewUpdateMonitor(
+			opts.QueueID,
+			workerID,
+			controlPlaneClient,
+			autoUpdateEnabled,
+			updateCheckInterval,
+			false, // debug
+		)
+
+		// Create update coordinator
+		updateCoordinator = NewUpdateCoordinator(
+			opts.QueueID,
+			workerID,
+			controlPlaneClient,
+			workerDir,
+			false, // debug
+		)
+
+		// Start update monitor
+		updateMonitor.Start(ctx)
+		defer updateMonitor.Stop()
+
+		pterm.Info.Println("Auto-update enabled")
+	}
 
 	// Setup signal handling
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 
-	// Run worker in a goroutine
+	// Start worker process
+	startSpinner := pm.Spinner("Starting worker process")
+	startSpinner.Start()
+
+	// Prepare worker command
+	controlPlaneURL := opts.getControlPlaneURL()
+	workerCmd := exec.Command(
+		workerBinary,
+		"--queue-id", opts.QueueID,
+		"--api-key", opts.cfg.APIKey,
+		"--control-plane-url", controlPlaneURL,
+	)
+
+	// Set environment variables - take precedence over CLI args
+	workerCmd.Env = append(os.Environ(),
+		fmt.Sprintf("QUEUE_ID=%s", opts.QueueID),
+		fmt.Sprintf("KUBIYA_API_KEY=%s", opts.cfg.APIKey),
+		fmt.Sprintf("CONTROL_PLANE_URL=%s", controlPlaneURL),
+	)
+
+	// Connect stdout/stderr
+	workerCmd.Stdout = os.Stdout
+	workerCmd.Stderr = os.Stderr
+
+	// Start the worker process
+	if err := workerCmd.Start(); err != nil {
+		startSpinner.Stop()
+		return fmt.Errorf("failed to start worker: %w", err)
+	}
+
+	// Give worker a moment to initialize
+	time.Sleep(500 * time.Millisecond)
+
+	startSpinner.Stop()
+
+	// Step 3: Worker launch
+	pterm.Print(pterm.LightCyan("[3/3] "))
+	pterm.Success.Println("Worker started")
+
+	pm.Println("")
+
+	// Create a styled success panel with visual elements
+	successPanel := pterm.DefaultBox.
+		WithTitle("✓ Ready").
+		WithTitleTopCenter().
+		WithBoxStyle(pterm.NewStyle(pterm.FgGreen)).
+		Sprint(
+			pterm.Sprintf(
+				"%s\n\n"+
+				"  %s  %s\n"+
+				"  %s  %s\n\n"+
+				"  %s",
+				pterm.Bold.Sprintf("🎯 Worker is polling for tasks"),
+				pterm.LightGreen("Status:"),
+				pterm.Bold.Sprint("Active ●"),
+				pterm.LightGreen("Queue: "),
+				pterm.Bold.Sprint(opts.QueueID),
+				pterm.FgGray.Sprint("Press Ctrl+C to stop gracefully"),
+			),
+		)
+
+	pterm.Println(successPanel)
+	pm.Println("")
+
+	// Wait for worker completion in goroutine
 	done := make(chan error, 1)
 	go func() {
-		// Run the worker binary from the package with both env vars and CLI args
-		controlPlaneURL := getControlPlaneURL()
-
-		// Pass both env vars (safer) and CLI args (fallback)
-		workerCmd := exec.Command(
-			workerBinary,
-			"--queue-id", opts.QueueID,
-			"--api-key", opts.cfg.APIKey,
-			"--control-plane-url", controlPlaneURL,
-		)
-
-		// Set environment variables - take precedence over CLI args
-		workerCmd.Env = append(os.Environ(),
-			fmt.Sprintf("QUEUE_ID=%s", opts.QueueID),
-			fmt.Sprintf("KUBIYA_API_KEY=%s", opts.cfg.APIKey),
-			fmt.Sprintf("CONTROL_PLANE_URL=%s", controlPlaneURL),
-		)
-
-		// Connect stdout/stderr
-		workerCmd.Stdout = os.Stdout
-		workerCmd.Stderr = os.Stderr
-
-		// Run the worker
-		if err := workerCmd.Run(); err != nil {
-			done <- fmt.Errorf("❌ worker failed: %w", err)
+		if err := workerCmd.Wait(); err != nil {
+			// Worker subprocess already printed its error to stderr
+			// Just signal that it failed without wrapping
+			done <- err
 			return
 		}
-
 		done <- nil
 	}()
 
-	// Print beautiful ready message
-	fmt.Println()
-	fmt.Println(strings.Repeat("═", 80))
-	fmt.Println("✅  WORKER READY")
-	fmt.Println(strings.Repeat("═", 80))
-	fmt.Println()
-	fmt.Printf("   🎯 Queue ID:         %s\n", opts.QueueID)
-	fmt.Printf("   🔗 Control Plane:    %s\n", getControlPlaneURL())
-	fmt.Printf("   📦 Package:          kubiya-control-plane-api[worker]\n")
-	fmt.Println()
-	fmt.Println("   The worker is now polling for tasks...")
-	fmt.Println("   Press Ctrl+C to stop gracefully")
-	fmt.Println()
-	fmt.Println(strings.Repeat("─", 80))
-	fmt.Println()
+	// Wait for signal, completion, or update trigger
+	for {
+		select {
+		case <-sigChan:
+			pm.Println("\nShutting down...")
+			progress.Info("Gracefully stopping worker")
 
-	// Wait for signal or completion
-	select {
-	case <-sigChan:
-		fmt.Println()
-		fmt.Println(strings.Repeat("─", 80))
-		fmt.Println("🛑  SHUTTING DOWN")
-		fmt.Println(strings.Repeat("─", 80))
-		fmt.Println("   Gracefully stopping worker...")
-		fmt.Println("✓  Worker stopped successfully")
-		fmt.Println()
-		return nil
-	case err := <-done:
-		if err != nil {
-			return err
+			// Terminate worker process if running
+			if workerCmd != nil && workerCmd.Process != nil {
+				workerCmd.Process.Signal(syscall.SIGTERM)
+			}
+
+			progress.Success("Worker stopped successfully")
+			return nil
+
+		case err := <-done:
+			if err != nil {
+				// Worker already printed its error to stderr
+				// Show a clean context message and exit with proper code
+				pm.Println("")
+				pterm.Error.Println("Worker process stopped unexpectedly")
+				pm.Println("")
+
+				// Exit with worker's exit code (or 1 if unknown)
+				if exitErr, ok := err.(*exec.ExitError); ok {
+					os.Exit(exitErr.ExitCode())
+				}
+				os.Exit(1)
+			}
+			progress.Info("Worker process exited")
+			return nil
+
+		case trigger := <-func() <-chan UpdateTrigger {
+			if updateMonitor != nil {
+				return updateMonitor.UpdateChan()
+			}
+			// Return a channel that never sends if monitor is nil
+			return make(chan UpdateTrigger)
+		}():
+			// Update triggered!
+			fmt.Println()
+			fmt.Println(strings.Repeat("═", 80))
+			fmt.Println("🔄  UPDATE AVAILABLE")
+			fmt.Println(strings.Repeat("═", 80))
+
+			updateTypeStr := "Configuration"
+			if trigger.Type == UpdateTypePackage {
+				updateTypeStr = "Package Version"
+				fmt.Printf("   Type:                %s\n", updateTypeStr)
+				fmt.Printf("   New Version:         %s\n", trigger.NewPackageVersion)
+			} else if trigger.Type == UpdateTypeBoth {
+				updateTypeStr = "Configuration + Package"
+				fmt.Printf("   Type:                %s\n", updateTypeStr)
+				fmt.Printf("   New Config Version:  %s\n", trigger.NewConfigVersion[:8])
+				fmt.Printf("   New Package Version: %s\n", trigger.NewPackageVersion)
+			} else {
+				fmt.Printf("   Type:                %s\n", updateTypeStr)
+				fmt.Printf("   New Config Version:  %s\n", trigger.NewConfigVersion[:8])
+			}
+
+			fmt.Println()
+			fmt.Println("   Coordinating rolling update with other workers...")
+			fmt.Println(strings.Repeat("═", 80))
+
+			// Coordinate the update
+			if err := updateCoordinator.CoordinateUpdate(ctx, trigger); err != nil {
+				fmt.Printf("⚠️  Update failed: %v\n", err)
+				fmt.Println("   Worker will continue running with current version")
+				fmt.Println()
+				continue
+			}
+
+			// If we get here, the update was successful and the process will restart
+			// The loop will exit when the process terminates
+			fmt.Println("✓  Update completed successfully")
+			fmt.Println("   Worker will restart with new version...")
+			fmt.Println()
 		}
-		fmt.Println()
-		fmt.Println(strings.Repeat("─", 80))
-		fmt.Println("✓  Worker process exited")
-		fmt.Println(strings.Repeat("─", 80))
-		fmt.Println()
-		return nil
 	}
 }
 
@@ -459,6 +681,151 @@ func getVenvPaths(venvDir string) (pipPath, pythonPath string) {
 	return
 }
 
+// parsePackageSpec extracts package name and version from specs like:
+// "package==1.2.3" -> ("package", "1.2.3")
+// "package>=1.0.0" -> ("package", "1.0.0")
+// "package" -> ("package", "")
+// "./path/to/wheel.whl" -> ("kubiya-control-plane-api", "")
+func parsePackageSpec(spec string) (string, string) {
+	// Handle local wheel files
+	if strings.HasSuffix(spec, ".whl") {
+		return "kubiya-control-plane-api", ""
+	}
+
+	// Strip [worker] extras if present
+	spec = strings.Split(spec, "[")[0]
+
+	// Handle version specifiers (==, >=, ~=, >, <)
+	for _, operator := range []string{"==", ">=", "~=", ">", "<"} {
+		if strings.Contains(spec, operator) {
+			parts := strings.Split(spec, operator)
+			if len(parts) == 2 {
+				return strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1])
+			}
+		}
+	}
+
+	// No version specified
+	return strings.TrimSpace(spec), ""
+}
+
+// checkPackageVersion checks if the correct version of the package is already installed
+func checkPackageVersion(venvPath, packageName, desiredVersion string) (bool, string, error) {
+	pipPath, _ := getVenvPaths(venvPath)
+
+	cmd := exec.Command(pipPath, "show", packageName)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		// Package not installed
+		return false, "", nil
+	}
+
+	// Parse output for Version: line
+	lines := strings.Split(string(output), "\n")
+	for _, line := range lines {
+		if strings.HasPrefix(line, "Version:") {
+			installedVersion := strings.TrimSpace(strings.TrimPrefix(line, "Version:"))
+
+			// If desiredVersion is empty, any version is OK
+			if desiredVersion == "" {
+				return true, installedVersion, nil
+			}
+
+			// Compare versions
+			if installedVersion == desiredVersion {
+				return true, installedVersion, nil
+			}
+
+			return false, installedVersion, nil
+		}
+	}
+
+	return false, "", nil
+}
+
+// compareVersions compares semantic versions (returns -1, 0, 1)
+func compareVersions(v1, v2 string) int {
+	parts1 := strings.Split(v1, ".")
+	parts2 := strings.Split(v2, ".")
+
+	for i := 0; i < len(parts1) && i < len(parts2); i++ {
+		n1, _ := strconv.Atoi(parts1[i])
+		n2, _ := strconv.Atoi(parts2[i])
+
+		if n1 < n2 {
+			return -1
+		} else if n1 > n2 {
+			return 1
+		}
+	}
+
+	if len(parts1) < len(parts2) {
+		return -1
+	} else if len(parts1) > len(parts2) {
+		return 1
+	}
+
+	return 0
+}
+
+// checkPipVersion checks if pip needs upgrading
+func checkPipVersion(venvPath string, minVersion string) (bool, string, error) {
+	pipPath, _ := getVenvPaths(venvPath)
+
+	cmd := exec.Command(pipPath, "--version")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return false, "", err
+	}
+
+	// Parse "pip X.Y.Z from ..."
+	parts := strings.Fields(string(output))
+	if len(parts) < 2 {
+		return false, "", fmt.Errorf("unexpected pip --version output")
+	}
+
+	currentVersion := parts[1]
+
+	// Compare versions
+	if compareVersions(currentVersion, minVersion) >= 0 {
+		return false, currentVersion, nil // No upgrade needed
+	}
+
+	return true, currentVersion, nil // Upgrade needed
+}
+
+// cleanPipCache removes pip cache directory
+func cleanPipCache(pm *output.ProgressManager) error {
+	spinner := pm.Spinner("Cleaning pip cache")
+	spinner.Start()
+	defer spinner.Stop()
+
+	// Get cache directory using pip cache dir
+	cmd := exec.Command("pip", "cache", "dir")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		// Try pip3 as fallback
+		cmd = exec.Command("pip3", "cache", "dir")
+		output, err = cmd.CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("failed to get cache directory: %w", err)
+		}
+	}
+
+	cacheDir := strings.TrimSpace(string(output))
+	if cacheDir == "" {
+		return fmt.Errorf("cache directory path is empty")
+	}
+
+	// Remove cache directory
+	if err := os.RemoveAll(cacheDir); err != nil {
+		return fmt.Errorf("failed to remove cache: %w", err)
+	}
+
+	pm.Success(fmt.Sprintf("Cleared pip cache at %s", cacheDir))
+	return nil
+}
+
 func (opts *WorkerStartOptions) RunDocker(ctx context.Context) error {
 	// Initialize Docker client
 	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
@@ -494,7 +861,7 @@ func (opts *WorkerStartOptions) RunDocker(ctx context.Context) error {
 	// Prepare environment variables
 	env := []string{
 		fmt.Sprintf("QUEUE_ID=%s", opts.QueueID),
-		fmt.Sprintf("CONTROL_PLANE_URL=%s", getControlPlaneURL()),
+		fmt.Sprintf("CONTROL_PLANE_URL=%s", opts.getControlPlaneURL()),
 		"LOG_LEVEL=INFO",
 	}
 
@@ -599,7 +966,7 @@ func (opts *WorkerStartOptions) runLocalDaemon(ctx context.Context) error {
 		fmt.Printf("   Queue ID:         %s\n", opts.QueueID)
 		fmt.Printf("   Deployment Type:  Local (Python Package)\n")
 		fmt.Printf("   Mode:             Daemon with supervision\n")
-		fmt.Printf("   Control Plane:    %s\n", getControlPlaneURL())
+		fmt.Printf("   Control Plane:    %s\n", opts.getControlPlaneURL())
 		fmt.Printf("   Worker Directory: %s\n", workerDir)
 		fmt.Println()
 
@@ -626,33 +993,67 @@ func (opts *WorkerStartOptions) runLocalDaemon(ctx context.Context) error {
 	venvDir := fmt.Sprintf("%s/venv", workerDir)
 	pipPath, _ := getVenvPaths(venvDir)
 
+	venvExists := true
 	if _, err := os.Stat(venvDir); os.IsNotExist(err) {
+		venvExists = false
 		venvCmd := exec.Command(pythonCmd, "-m", "venv", venvDir)
 		if err := venvCmd.Run(); err != nil {
 			return fmt.Errorf("failed to create virtual environment: %w", err)
 		}
+	}
 
-		// Install dependencies
+	// Check if pip upgrade is needed (whether venv is new or existing)
+	needsPipUpgrade := false
+	if !venvExists {
+		// New venv always needs pip upgrade
+		needsPipUpgrade = true
+	} else {
+		// Check pip version for existing venv
+		needs, _, err := checkPipVersion(venvDir, "23.0")
+		if err != nil {
+			// If we can't check, upgrade to be safe
+			needsPipUpgrade = true
+		} else {
+			needsPipUpgrade = needs
+		}
+	}
+
+	if needsPipUpgrade {
 		pipUpgradeCmd := exec.Command(pipPath, "install", "--quiet", "--upgrade", "pip")
 		if err := pipUpgradeCmd.Run(); err != nil {
 			return fmt.Errorf("failed to upgrade pip: %w", err)
 		}
+	}
 
-		// Install kubiya-control-plane-api package with worker extras
-		packageSpec := "kubiya-control-plane-api"
-		if opts.PackageVersion != "" {
-			if !strings.HasPrefix(opts.PackageVersion, ">=") &&
-				!strings.HasPrefix(opts.PackageVersion, "==") &&
-				!strings.HasPrefix(opts.PackageVersion, "~=") &&
-				!strings.HasPrefix(opts.PackageVersion, "<") &&
-				!strings.HasPrefix(opts.PackageVersion, ">") {
-				packageSpec += "==" + opts.PackageVersion
-			} else {
-				packageSpec += opts.PackageVersion
-			}
+	// Check if package installation is needed
+	packageSpec := "kubiya-control-plane-api"
+	if opts.PackageVersion != "" {
+		if !strings.HasPrefix(opts.PackageVersion, ">=") &&
+			!strings.HasPrefix(opts.PackageVersion, "==") &&
+			!strings.HasPrefix(opts.PackageVersion, "~=") &&
+			!strings.HasPrefix(opts.PackageVersion, "<") &&
+			!strings.HasPrefix(opts.PackageVersion, ">") {
+			packageSpec += "==" + opts.PackageVersion
+		} else {
+			packageSpec += opts.PackageVersion
 		}
-		packageSpec += "[worker]"
+	}
 
+	needsPackageInstall := false
+	if !venvExists {
+		// New venv always needs package install
+		needsPackageInstall = true
+	} else {
+		// Check if package version is satisfied for existing venv
+		packageName, desiredVersion := parsePackageSpec(packageSpec)
+		satisfied, _, err := checkPackageVersion(venvDir, packageName, desiredVersion)
+		if err != nil || !satisfied {
+			needsPackageInstall = true
+		}
+	}
+
+	if needsPackageInstall {
+		packageSpec += "[worker]"
 		installCmd := exec.Command(pipPath, "install", "--quiet", packageSpec)
 		if err := installCmd.Run(); err != nil {
 			return fmt.Errorf("failed to install %s: %w", packageSpec, err)
@@ -676,6 +1077,23 @@ func (opts *WorkerStartOptions) runLocalDaemon(ctx context.Context) error {
 	daemonInfo, err := supervisor.Start(workerBinPath, "", opts.cfg.APIKey)
 	if err != nil {
 		return fmt.Errorf("failed to start daemon: %w", err)
+	}
+
+	// Signal readiness to parent process
+	socketPath := os.Getenv("KUBIYA_READINESS_SOCKET")
+	if socketPath != "" {
+		readinessServer := NewReadinessServer(socketPath)
+		readinessInfo := DaemonReadinessInfo{
+			PID:             daemonInfo.PID,
+			QueueID:         daemonInfo.QueueID,
+			ControlPlaneURL: opts.getControlPlaneURL(),
+			WorkerDir:       daemonInfo.WorkerDir,
+			StartTime:       daemonInfo.StartedAt,
+		}
+		if err := readinessServer.SignalReady(readinessInfo); err != nil {
+			// Log but don't fail - parent may have timed out
+			fmt.Fprintf(os.Stderr, "Warning: failed to signal readiness to parent: %v\n", err)
+		}
 	}
 
 	// Write startup info file for parent to read

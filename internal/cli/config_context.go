@@ -120,6 +120,10 @@ func newConfigSetContextCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "set-context CONTEXT_NAME",
 		Short: "Create or update a context",
+		Long: `Create or update a context with API configuration.
+
+The api-url should point to your control plane instance (default: https://control-plane.kubiya.ai).
+For legacy V1 API, use --use-v1-api flag and set api-url to https://api.kubiya.ai/api/v1.`,
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			contextName := args[0]
