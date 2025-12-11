@@ -331,7 +331,9 @@ func TestWorkflowRunIntegration(t *testing.T) {
 			variables:  []string{},
 			expectError: true,
 			checkOutput: func(output string) bool {
-				return strings.Contains(output, "Unauthorized") || strings.Contains(output, "401")
+				return strings.Contains(output, "Unauthorized") ||
+					strings.Contains(output, "401") ||
+					strings.Contains(output, "no authentication configured")
 			},
 		},
 		{
