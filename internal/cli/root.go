@@ -39,7 +39,9 @@ Quick Start:
   • Update CLI:       kubiya update
 
 Need help? Visit: https://docs.kubiya.ai`,
-		Version: version.GetVersion(),
+		Version:       version.GetVersion(),
+		SilenceUsage:  true,  // Never show usage on errors - errors are formatted by handleError in main.go
+		SilenceErrors: false, // Let errors propagate to main.go for proper handling
 		PersistentPreRun: func(cmd *cobra.Command, args []string) {
 			// Skip update check for version and update commands
 			if cmd.Name() == "version" || cmd.Name() == "update" {
@@ -93,6 +95,7 @@ Need help? Visit: https://docs.kubiya.ai
 	// V2 Control Plane Commands
 	rootCmd.AddCommand(
 		// Core V2 Commands
+		NewExecCommand(cfg),        // V2: Smart exec with auto-planning
 		newAgentCommand(cfg),       // V2: Agents
 		newTeamCommand(cfg),        // V2: Teams
 		newExecutionCommand(cfg),   // V2: Executions (one-time task runs)
@@ -104,6 +107,7 @@ Need help? Visit: https://docs.kubiya.ai
 		newProjectCommand(cfg),     // V2: Projects
 		newOperatorCommand(cfg),    // V2: Operators (formerly runners)
 		newWorkerCommand(cfg),      // V2: Worker management
+		newGraphCommand(cfg),       // V2: Context Graph
 
 		// V1 Legacy Commands (still on api.kubiya.ai)
 		newWorkflowCommand(cfg), // V1: Workflows
@@ -139,6 +143,7 @@ func showAuthHintIfNeeded(cmd *cobra.Command, cfg *config.Config) {
 		"webhook":   true,
 		"secret":    true,
 		"knowledge": true,
+		"graph":     true,
 	}
 
 	// Check if this command or its parent requires auth

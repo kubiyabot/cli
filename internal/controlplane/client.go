@@ -19,12 +19,22 @@ type Client struct {
 }
 
 // New creates a new Control Plane API client
+// If baseURL is empty, it will use the default or environment variables
 func New(apiKey string, debug bool) (*Client, error) {
+	return NewWithURL(apiKey, "", debug)
+}
+
+// NewWithURL creates a new Control Plane API client with a specific base URL
+// If baseURL is empty, it will check environment variables and use defaults
+func NewWithURL(apiKey, baseURL string, debug bool) (*Client, error) {
 	if apiKey == "" {
 		return nil, fmt.Errorf("API key is required")
 	}
 
-	baseURL := getBaseURL()
+	// Use provided URL or fall back to environment/default
+	if baseURL == "" {
+		baseURL = getBaseURL()
+	}
 
 	httpClient := &http.Client{
 		Timeout: 60 * time.Second,
@@ -45,10 +55,19 @@ func New(apiKey string, debug bool) (*Client, error) {
 }
 
 // getBaseURL returns the base URL for the Control Plane API
-// Default: https://control-plane.kubiya.ai
-// Override with KUBIYA_CONTROL_PLANE_BASE_URL environment variable
+// Checks environment variables with priority:
+// 1. KUBIYA_CONTROL_PLANE_BASE_URL (standard)
+// 2. CONTROL_PLANE_GATEWAY_URL (backward compatibility)
+// 3. CONTROL_PLANE_URL (backward compatibility)
+// 4. Default: https://control-plane.kubiya.ai
 func getBaseURL() string {
 	if customURL := os.Getenv("KUBIYA_CONTROL_PLANE_BASE_URL"); customURL != "" {
+		return customURL
+	}
+	if customURL := os.Getenv("CONTROL_PLANE_GATEWAY_URL"); customURL != "" {
+		return customURL
+	}
+	if customURL := os.Getenv("CONTROL_PLANE_URL"); customURL != "" {
 		return customURL
 	}
 	return "https://control-plane.kubiya.ai"
@@ -216,4 +235,47 @@ func (c *Client) delete(path string) error {
 		return err
 	}
 	return c.ParseResponse(resp, nil)
+}
+
+// getExternal performs a GET request to an external URL (not via control plane)
+// Used for fetching data from external APIs like PyPI
+func (c *Client) getExternal(url string, target interface{}) error {
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+
+	if c.Debug {
+		fmt.Printf("[DEBUG] GET (external) %s\n", url)
+	}
+
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("failed to read response body: %w", err)
+	}
+
+	if c.Debug {
+		fmt.Printf("[DEBUG] External response status: %d\n", resp.StatusCode)
+		fmt.Printf("[DEBUG] External response body: %s\n", string(bodyBytes))
+	}
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("external API error (status %d): %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	if target != nil && len(bodyBytes) > 0 {
+		if err := json.Unmarshal(bodyBytes, target); err != nil {
+			return fmt.Errorf("failed to parse external response: %w", err)
+		}
+	}
+
+	return nil
 }

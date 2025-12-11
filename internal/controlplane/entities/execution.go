@@ -5,13 +5,23 @@ import (
 	"strings"
 )
 
+// ExecutionEnvironmentOverride represents execution environment overrides
+type ExecutionEnvironmentOverride struct {
+	WorkingDir string            `json:"working_dir,omitempty"`
+	EnvVars    map[string]string `json:"env_vars,omitempty"`
+	Secrets    []string          `json:"secrets,omitempty"` // Secret names to fetch server-side
+	SkillDirs  []string          `json:"skill_dirs,omitempty"`
+	Timeout    int               `json:"timeout,omitempty"`
+}
+
 // ExecuteAgentRequest represents a request to execute an agent
 type ExecuteAgentRequest struct {
-	Prompt          string                 `json:"prompt"`
-	SystemPrompt    *string                `json:"system_prompt,omitempty"`
-	WorkerQueueID   string                 `json:"worker_queue_id"` // Required: Worker queue UUID
-	Stream          *bool                  `json:"stream,omitempty"`
-	UserMetadata    map[string]interface{} `json:"user_metadata,omitempty"`
+	Prompt               string                        `json:"prompt"`
+	SystemPrompt         *string                       `json:"system_prompt,omitempty"`
+	WorkerQueueID        string                        `json:"worker_queue_id"` // Required: Worker queue UUID
+	Stream               *bool                         `json:"stream,omitempty"`
+	UserMetadata         map[string]interface{}        `json:"user_metadata,omitempty"`
+	ExecutionEnvironment *ExecutionEnvironmentOverride `json:"execution_environment,omitempty"`
 }
 
 // ExecuteTeamRequest represents a request to execute a team
