@@ -103,10 +103,11 @@ type RealizedSavings struct {
 
 // AgentInfo represents agent metadata for planning
 type AgentInfo struct {
-	ID          string   `json:"id"`
-	Name        string   `json:"name"`
-	Description string   `json:"description,omitempty"`
+	ID           string   `json:"id"`
+	Name         string   `json:"name"`
+	Description  string   `json:"description,omitempty"`
 	Capabilities []string `json:"capabilities,omitempty"`
+	ModelID      *string  `json:"model_id,omitempty"`
 }
 
 // TeamInfo represents team metadata for planning
