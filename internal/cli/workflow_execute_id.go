@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/kubiyabot/cli/internal/composer"
@@ -61,6 +60,7 @@ You can override this with the KUBIYA_COMPOSER_URL environment variable.
 
 			ctx := context.Background()
 			comp := composer.NewClient(cfg)
+			w := cmd.OutOrStdout()
 
 			workflowIdentifier := args[0]
 
@@ -80,19 +80,19 @@ You can override this with the KUBIYA_COMPOSER_URL environment variable.
 			}
 
 			if !jsonOutput {
-				fmt.Printf("%s Executing workflow: %s\n",
+				fmt.Fprintf(w, "%s Executing workflow: %s\n",
 					style.InfoStyle.Render("🚀"), style.HighlightStyle.Render(workflow.Name))
 				if workflow.Description != "" {
-					fmt.Printf("%s Description: %s\n",
+					fmt.Fprintf(w, "%s Description: %s\n",
 						style.DimStyle.Render("ℹ️"), workflow.Description)
 				}
 				if len(input) > 0 {
-					fmt.Printf("%s Input parameters:\n", style.DimStyle.Render("📝"))
+					fmt.Fprintf(w, "%s Input parameters:\n", style.DimStyle.Render("📝"))
 					for k, v := range input {
-						fmt.Printf("  • %s = %v\n", style.HighlightStyle.Render(k), v)
+						fmt.Fprintf(w, "  • %s = %v\n", style.HighlightStyle.Render(k), v)
 					}
 				}
-				fmt.Println()
+				fmt.Fprintln(w)
 			}
 
 			// Execute the workflow
@@ -121,7 +121,7 @@ For interactive use, 'kubiya login' provides a better experience`)
 
 			if jsonOutput {
 				// Output execution response as JSON
-				enc := json.NewEncoder(os.Stdout)
+				enc := json.NewEncoder(w)
 				enc.SetIndent("", "  ")
 				return enc.Encode(map[string]interface{}{
 					"workflow_id":    workflow.ID,
@@ -137,23 +137,23 @@ For interactive use, 'kubiya login' provides a better experience`)
 			}
 
 			// Display execution information
-			fmt.Printf("%s Workflow execution started successfully!\n",
+			fmt.Fprintf(w, "%s Workflow execution started successfully!\n",
 				style.SuccessStyle.Render("✅"))
-			fmt.Printf("  • Execution ID: %s\n", style.HighlightStyle.Render(execResp.ExecutionID))
+			fmt.Fprintf(w, "  • Execution ID: %s\n", style.HighlightStyle.Render(execResp.ExecutionID))
 			if execResp.RequestID != "" {
-				fmt.Printf("  • Request ID: %s\n", style.HighlightStyle.Render(execResp.RequestID))
+				fmt.Fprintf(w, "  • Request ID: %s\n", style.HighlightStyle.Render(execResp.RequestID))
 			}
-			fmt.Printf("  • Status: %s\n", execResp.Status)
-			fmt.Printf("  • Runner: kubiya-hosted\n")
+			fmt.Fprintf(w, "  • Status: %s\n", execResp.Status)
+			fmt.Fprintf(w, "  • Runner: kubiya-hosted\n")
 
 			if verbose {
-				fmt.Printf("\n%s Execution Details:\n", style.TitleStyle.Render("📊"))
-				fmt.Printf("  • Stream URL: %s\n", execResp.StreamURL)
-				fmt.Printf("  • Status URL: %s\n", execResp.StatusURL)
+				fmt.Fprintf(w, "\n%s Execution Details:\n", style.TitleStyle.Render("📊"))
+				fmt.Fprintf(w, "  • Stream URL: %s\n", execResp.StreamURL)
+				fmt.Fprintf(w, "  • Status URL: %s\n", execResp.StatusURL)
 			}
 
-			fmt.Printf("\n%s To monitor execution progress:\n", style.InfoStyle.Render("👀"))
-			fmt.Printf("  kubiya workflow execution list --id %s\n", workflow.ID)
+			fmt.Fprintf(w, "\n%s To monitor execution progress:\n", style.InfoStyle.Render("👀"))
+			fmt.Fprintf(w, "  kubiya workflow execution list --id %s\n", workflow.ID)
 
 			return nil
 		},

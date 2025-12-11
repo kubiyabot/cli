@@ -130,6 +130,7 @@ func convertAgentsToInfo(agents []*entities.Agent) []kubiya.AgentInfo {
 			ID:           agent.ID,
 			Name:         agent.Name,
 			Capabilities: agent.Capabilities,
+			ModelID:      agent.ModelID,
 		}
 
 		if agent.Description != nil {

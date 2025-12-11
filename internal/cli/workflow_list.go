@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"strconv"
 	"strings"
@@ -32,14 +33,20 @@ type WorkflowDetailsOutput struct {
 	UpdatedAt     string `json:"updated_at"`
 }
 
-func (o *WorkflowDetailsOutput) PrintJSON() error {
-	enc := json.NewEncoder(os.Stdout)
+func (o *WorkflowDetailsOutput) PrintJSON(w io.Writer) error {
+	if w == nil {
+		w = os.Stdout
+	}
+	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	return enc.Encode(o)
 }
 
-func (o *WorkflowDetailsOutput) PrintTable() error {
-	fmt.Printf("\n%s\n", style.TitleStyle.Render("📋 WORKFLOW DETAILS"))
+func (o *WorkflowDetailsOutput) PrintTable(w io.Writer) error {
+	if w == nil {
+		w = os.Stdout
+	}
+	fmt.Fprintf(w, "\n%s\n", style.TitleStyle.Render("📋 WORKFLOW DETAILS"))
 
 	// Enhanced status styling
 	statusText := o.Status
@@ -53,30 +60,30 @@ func (o *WorkflowDetailsOutput) PrintTable() error {
 	}
 
 	// Format as key-value pairs instead of table
-	fmt.Printf("\n%s: %s\n", style.DimStyle.Render("Name"), style.HighlightStyle.Render(o.Name))
-	fmt.Printf("%s: %s\n", style.DimStyle.Render("Status"), statusText)
+	fmt.Fprintf(w, "\n%s: %s\n", style.DimStyle.Render("Name"), style.HighlightStyle.Render(o.Name))
+	fmt.Fprintf(w, "%s: %s\n", style.DimStyle.Render("Status"), statusText)
 	if o.Description != "" {
-		fmt.Printf("%s: %s\n", style.DimStyle.Render("Description"), o.Description)
+		fmt.Fprintf(w, "%s: %s\n", style.DimStyle.Render("Description"), o.Description)
 	}
 	if o.CreatedBy != "" {
-		fmt.Printf("%s: %s\n", style.DimStyle.Render("Created By"), o.CreatedBy)
+		fmt.Fprintf(w, "%s: %s\n", style.DimStyle.Render("Created By"), o.CreatedBy)
 	}
 	if o.CreatedAt != "" {
-		fmt.Printf("%s: %s\n", style.DimStyle.Render("Created"), formatDate(o.CreatedAt))
+		fmt.Fprintf(w, "%s: %s\n", style.DimStyle.Render("Created"), formatDate(o.CreatedAt))
 	}
 	if o.UpdatedAt != "" {
-		fmt.Printf("%s: %s\n", style.DimStyle.Render("Updated"), formatDate(o.UpdatedAt))
+		fmt.Fprintf(w, "%s: %s\n", style.DimStyle.Render("Updated"), formatDate(o.UpdatedAt))
 	}
 	if o.LastExecution != "" {
-		fmt.Printf("%s: %s\n", style.DimStyle.Render("Last Execution"), formatDate(o.LastExecution))
+		fmt.Fprintf(w, "%s: %s\n", style.DimStyle.Render("Last Execution"), formatDate(o.LastExecution))
 	} else {
-		fmt.Printf("%s: %s\n", style.DimStyle.Render("Last Execution"), style.DimStyle.Render("never"))
+		fmt.Fprintf(w, "%s: %s\n", style.DimStyle.Render("Last Execution"), style.DimStyle.Render("never"))
 	}
 
 	// Add helpful commands
-	fmt.Printf("\n%s Commands:\n", style.InfoStyle.Render("💡"))
-	fmt.Printf("  • %s - Execute this workflow\n", style.HighlightStyle.Render("kubiya workflow run \""+o.Name+"\""))
-	fmt.Printf("  • %s - View executions\n", style.HighlightStyle.Render("kubiya workflow execution list"))
+	fmt.Fprintf(w, "\n%s Commands:\n", style.InfoStyle.Render("💡"))
+	fmt.Fprintf(w, "  • %s - Execute this workflow\n", style.HighlightStyle.Render("kubiya workflow run \""+o.Name+"\""))
+	fmt.Fprintf(w, "  • %s - View executions\n", style.HighlightStyle.Render("kubiya workflow execution list"))
 
 	return nil
 }
@@ -89,32 +96,38 @@ type WorkflowListOutput struct {
 	TotalPages int                     `json:"total_pages"`
 }
 
-func (o *WorkflowListOutput) PrintJSON() error {
-	enc := json.NewEncoder(os.Stdout)
+func (o *WorkflowListOutput) PrintJSON(w io.Writer) error {
+	if w == nil {
+		w = os.Stdout
+	}
+	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	return enc.Encode(o)
 }
 
-func (o *WorkflowListOutput) PrintTable() error {
+func (o *WorkflowListOutput) PrintTable(w io.Writer) error {
+	if w == nil {
+		w = os.Stdout
+	}
 	if len(o.Workflows) == 0 {
-		fmt.Printf("\n%s No workflows found\n", style.DimStyle.Render("ℹ️"))
-		fmt.Printf("%s Create your first workflow at: %s\n",
+		fmt.Fprintf(w, "\n%s No workflows found\n", style.DimStyle.Render("ℹ️"))
+		fmt.Fprintf(w, "%s Create your first workflow at: %s\n",
 			style.InfoStyle.Render("💡"),
 			style.HighlightStyle.Render("https://compose.kubiya.ai"))
 		return nil
 	}
 
 	// Print header with summary
-	fmt.Printf("\n%s\n", style.TitleStyle.Render("📋 WORKFLOWS"))
-	fmt.Printf("%s Found %s workflows (page %d of %d)\n\n",
+	fmt.Fprintf(w, "\n%s\n", style.TitleStyle.Render("📋 WORKFLOWS"))
+	fmt.Fprintf(w, "%s Found %s workflows (page %d of %d)\n\n",
 		style.DimStyle.Render("ℹ️"),
 		style.HighlightStyle.Render(fmt.Sprintf("%d", o.Total)),
 		o.Page, o.TotalPages)
 
 	// Enhanced table with better spacing and colors
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
-	fmt.Fprintln(w, style.DimStyle.Render("NAME\tSTATUS\tLAST EXECUTION\tCREATED\tDESCRIPTION"))
-	fmt.Fprintln(w, style.DimStyle.Render("────\t──────\t──────────────\t───────\t───────────"))
+	tw := tabwriter.NewWriter(w, 0, 0, 3, ' ', 0)
+	fmt.Fprintln(tw, style.DimStyle.Render("NAME\tSTATUS\tLAST EXECUTION\tCREATED\tDESCRIPTION"))
+	fmt.Fprintln(tw, style.DimStyle.Render("────\t──────\t──────────────\t───────\t───────────"))
 
 	for _, wf := range o.Workflows {
 		// Enhanced status styling
@@ -146,7 +159,7 @@ func (o *WorkflowListOutput) PrintTable() error {
 			description = style.DimStyle.Render("(no description)")
 		}
 
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n",
 			style.HighlightStyle.Render(wf.Name),
 			statusText,
 			lastExecution,
@@ -154,13 +167,13 @@ func (o *WorkflowListOutput) PrintTable() error {
 			description)
 	}
 
-	w.Flush()
+	tw.Flush()
 
 	// Footer with helpful commands
-	fmt.Printf("\n%s Commands:\n", style.InfoStyle.Render("💡"))
-	fmt.Printf("  • %s - Execute a workflow\n", style.HighlightStyle.Render("kubiya workflow run <name-or-id>"))
-	fmt.Printf("  • %s - View executions\n", style.HighlightStyle.Render("kubiya workflow execution list"))
-	fmt.Printf("  • %s - Next page\n", style.DimStyle.Render("kubiya workflow list --page ")+style.HighlightStyle.Render(fmt.Sprintf("%d", o.Page+1)))
+	fmt.Fprintf(w, "\n%s Commands:\n", style.InfoStyle.Render("💡"))
+	fmt.Fprintf(w, "  • %s - Execute a workflow\n", style.HighlightStyle.Render("kubiya workflow run <name-or-id>"))
+	fmt.Fprintf(w, "  • %s - View executions\n", style.HighlightStyle.Render("kubiya workflow execution list"))
+	fmt.Fprintf(w, "  • %s - Next page\n", style.DimStyle.Render("kubiya workflow list --page ")+style.HighlightStyle.Render(fmt.Sprintf("%d", o.Page+1)))
 
 	return nil
 }
@@ -198,9 +211,9 @@ You can override this with the KUBIYA_COMPOSER_URL environment variable.
 			comp := composer.NewClient(cfg)
 			params.Request.SetDefaults()
 			if len(params.WorkflowID) == 0 {
-				return listWorkflows(ctx, comp, &params)
+				return listWorkflows(ctx, comp, &params, cmd.OutOrStdout())
 			} else {
-				return getWorkflow(ctx, comp, &params)
+				return getWorkflow(ctx, comp, &params, cmd.OutOrStdout())
 			}
 		},
 	}
@@ -217,7 +230,7 @@ You can override this with the KUBIYA_COMPOSER_URL environment variable.
 	return cmd
 }
 
-func listWorkflows(ctx context.Context, comp *composer.Client, params *WorkflowListParams) error {
+func listWorkflows(ctx context.Context, comp *composer.Client, params *WorkflowListParams, w io.Writer) error {
 	resp, err := comp.ListWorkflows(ctx, params.Request)
 	if err != nil {
 		// Provide helpful authentication guidance for common errors
@@ -266,13 +279,13 @@ For interactive use, 'kubiya login' provides a better experience`)
 	}
 
 	if params.JsonOutput {
-		return output.PrintJSON()
+		return output.PrintJSON(w)
 	} else {
-		return output.PrintTable()
+		return output.PrintTable(w)
 	}
 }
 
-func getWorkflow(ctx context.Context, comp *composer.Client, params *WorkflowListParams) error {
+func getWorkflow(ctx context.Context, comp *composer.Client, params *WorkflowListParams, w io.Writer) error {
 	wf, err := comp.GetWorkflow(ctx, params.WorkflowID)
 	if err != nil {
 		return fmt.Errorf("failed to get workflow: %w", err)
@@ -289,9 +302,9 @@ func getWorkflow(ctx context.Context, comp *composer.Client, params *WorkflowLis
 	}
 
 	if params.JsonOutput {
-		return output.PrintJSON()
+		return output.PrintJSON(w)
 	} else {
-		return output.PrintTable()
+		return output.PrintTable(w)
 	}
 }
 
@@ -375,28 +388,34 @@ type WorkflowExecutionListOutput struct {
 	WorkflowExecutions []WorkflowExecution
 }
 
-func (o *WorkflowExecutionListOutput) PrintJSON() error {
-	enc := json.NewEncoder(os.Stdout)
+func (o *WorkflowExecutionListOutput) PrintJSON(w io.Writer) error {
+	if w == nil {
+		w = os.Stdout
+	}
+	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	return enc.Encode(o)
 }
 
-func (o *WorkflowExecutionListOutput) PrintTable() error {
+func (o *WorkflowExecutionListOutput) PrintTable(w io.Writer) error {
+	if w == nil {
+		w = os.Stdout
+	}
 	if len(o.WorkflowExecutions) == 0 {
-		fmt.Printf("\n%s No recent executions found\n", style.DimStyle.Render("ℹ️"))
-		fmt.Printf("%s Execute a workflow: %s\n",
+		fmt.Fprintf(w, "\n%s No recent executions found\n", style.DimStyle.Render("ℹ️"))
+		fmt.Fprintf(w, "%s Execute a workflow: %s\n",
 			style.InfoStyle.Render("💡"),
 			style.HighlightStyle.Render("kubiya workflow run <name-or-id>"))
 		return nil
 	}
 
-	fmt.Printf("\n%s\n", style.TitleStyle.Render("🕒 WORKFLOW EXECUTIONS (last 24h)"))
-	fmt.Printf("%s Found %d recent executions\n\n",
+	fmt.Fprintf(w, "\n%s\n", style.TitleStyle.Render("🕒 WORKFLOW EXECUTIONS (last 24h)"))
+	fmt.Fprintf(w, "%s Found %d recent executions\n\n",
 		style.DimStyle.Render("ℹ️"), len(o.WorkflowExecutions))
 
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
-	fmt.Fprintln(w, style.DimStyle.Render("WORKFLOW\tSTATUS\tRUNNER\tSTARTED\tDURATION\tPROGRESS"))
-	fmt.Fprintln(w, style.DimStyle.Render("────────\t──────\t──────\t───────\t────────\t────────"))
+	tw := tabwriter.NewWriter(w, 0, 0, 3, ' ', 0)
+	fmt.Fprintln(tw, style.DimStyle.Render("WORKFLOW\tSTATUS\tRUNNER\tSTARTED\tDURATION\tPROGRESS"))
+	fmt.Fprintln(tw, style.DimStyle.Render("────────\t──────\t──────\t───────\t────────\t────────"))
 
 	for _, ex := range o.WorkflowExecutions {
 		// Enhanced status styling
@@ -429,7 +448,7 @@ func (o *WorkflowExecutionListOutput) PrintTable() error {
 			}
 		}
 
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n",
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n",
 			style.HighlightStyle.Render(ex.Name),
 			statusText,
 			ex.Runner,
@@ -438,11 +457,11 @@ func (o *WorkflowExecutionListOutput) PrintTable() error {
 			progressText)
 	}
 
-	w.Flush()
+	tw.Flush()
 
-	fmt.Printf("\n%s Commands:\n", style.InfoStyle.Render("💡"))
-	fmt.Printf("  • %s - Filter by status\n", style.HighlightStyle.Render("kubiya workflow execution list --status running"))
-	fmt.Printf("  • %s - Filter by workflow\n", style.HighlightStyle.Render("kubiya workflow execution list --id <workflow-id>"))
+	fmt.Fprintf(w, "\n%s Commands:\n", style.InfoStyle.Render("💡"))
+	fmt.Fprintf(w, "  • %s - Filter by status\n", style.HighlightStyle.Render("kubiya workflow execution list --status running"))
+	fmt.Fprintf(w, "  • %s - Filter by workflow\n", style.HighlightStyle.Render("kubiya workflow execution list --id <workflow-id>"))
 
 	return nil
 }
@@ -458,7 +477,7 @@ func newWorkflowExecutionListCommand(cfg *config.Config) *cobra.Command {
 			ctx := context.Background()
 			comp := composer.NewClient(cfg)
 			params.Request.SetDefaults()
-			return listWorkflowExecutions(ctx, comp, &params)
+			return listWorkflowExecutions(ctx, comp, &params, cmd.OutOrStdout())
 		},
 	}
 
@@ -471,7 +490,7 @@ func newWorkflowExecutionListCommand(cfg *config.Config) *cobra.Command {
 	return cmd
 }
 
-func listWorkflowExecutions(ctx context.Context, comp *composer.Client, params *WorkflowExecutionListParams) error {
+func listWorkflowExecutions(ctx context.Context, comp *composer.Client, params *WorkflowExecutionListParams, w io.Writer) error {
 	// Set default time range if not provided
 	startTime := params.StartTime
 	endTime := params.EndTime
@@ -574,9 +593,9 @@ func listWorkflowExecutions(ctx context.Context, comp *composer.Client, params *
 	}
 
 	if params.JsonOutput {
-		return output.PrintJSON()
+		return output.PrintJSON(w)
 	} else {
-		return output.PrintTable()
+		return output.PrintTable(w)
 	}
 }
 
@@ -637,7 +656,7 @@ Time Range:
 			ctx := context.Background()
 			comp := composer.NewClient(cfg)
 			params.Request.SetDefaults()
-			return listWorkflowExecutions(ctx, comp, &params)
+			return listWorkflowExecutions(ctx, comp, &params, cmd.OutOrStdout())
 		},
 	}
 
