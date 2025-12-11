@@ -164,6 +164,15 @@ func newTeamInteractiveChatCommand(cfg *config.Config) *cobra.Command {
 func newAgentExecCommand(cfg *config.Config) *cobra.Command {
 	var workerQueue string
 	var systemPrompt string
+	var onDemand bool
+
+	// Environment configuration flags
+	var workingDir string
+	var envVars []string
+	var envFile string
+	var secrets []string
+	var skillDirs []string
+	var timeout int
 
 	cmd := &cobra.Command{
 		Use:     "exec <agent-id> <prompt>",
@@ -172,6 +181,26 @@ func newAgentExecCommand(cfg *config.Config) *cobra.Command {
 		Args:    cobra.MinimumNArgs(2),
 		Example: `  # Execute a task with an agent
   kubiya agent exec 8064f4c8 "Deploy to production"
+
+  # With on-demand worker (auto-provisioned, ephemeral)
+  kubiya agent exec 8064f4c8 "Deploy to production" --on-demand
+
+  # With environment variables and working directory
+  kubiya agent exec 8064f4c8 "Build project" --on-demand \
+    --workdir /path/to/project \
+    --env BUILD_ENV=production \
+    --env DEBUG=false
+
+  # With .env file and secrets
+  kubiya agent exec 8064f4c8 "Deploy app" --on-demand \
+    --env-file .env.production \
+    --secret DATABASE_PASSWORD \
+    --secret API_KEY
+
+  # With custom timeout and skill directories
+  kubiya agent exec 8064f4c8 "Run tests" --on-demand \
+    --timeout 600 \
+    --skill-dir ./custom-skills
 
   # With custom worker queue
   kubiya agent exec 8064f4c8 "Analyze logs" --queue my-queue`,
@@ -184,11 +213,55 @@ func newAgentExecCommand(cfg *config.Config) *cobra.Command {
 				return fmt.Errorf("failed to create client: %w", err)
 			}
 
-			// Get default worker queue if not specified
+			// Handle --on-demand flag
+			if onDemand {
+				// Get agent to determine environment
+				agent, err := client.GetAgent(agentID)
+				if err != nil {
+					return fmt.Errorf("failed to get agent: %w", err)
+				}
+
+				// Use agent's environment or default
+				var envID string
+				if len(agent.EnvironmentIDs) > 0 {
+					envID = agent.EnvironmentIDs[0]
+				} else {
+					envs, err := client.ListEnvironments()
+					if err != nil || len(envs) == 0 {
+						return fmt.Errorf("no environments available")
+					}
+					envID = envs[0].ID
+				}
+
+				// Execute with on-demand worker
+				executor := &OnDemandExecutor{
+					client:        client,
+					cfg:           cfg,
+					agentID:       agentID,
+					prompt:        prompt,
+					systemPrompt:  systemPrompt,
+					environmentID: envID,
+					// Environment configuration
+					workingDir: workingDir,
+					envVars:    envVars,
+					envFile:    envFile,
+					secrets:    secrets,
+					skillDirs:  skillDirs,
+					timeout:    timeout,
+				}
+
+				fmt.Println()
+				fmt.Println(style.CreateBanner("On-Demand Task Execution", "⚡"))
+				fmt.Println()
+
+				return executor.Execute(cmd.Context())
+			}
+
+			// Regular execution with pre-existing queue
 			if workerQueue == "" {
 				queues, err := client.ListWorkerQueues()
 				if err != nil || len(queues) == 0 {
-					return fmt.Errorf("no worker queues available, please create one first")
+					return fmt.Errorf("no worker queues available, please create one first or use --on-demand")
 				}
 				workerQueue = queues[0].ID
 			}
@@ -211,6 +284,15 @@ func newAgentExecCommand(cfg *config.Config) *cobra.Command {
 
 	cmd.Flags().StringVarP(&workerQueue, "queue", "q", "", "Worker queue ID to use for execution")
 	cmd.Flags().StringVar(&systemPrompt, "system-prompt", "", "Custom system prompt")
+	cmd.Flags().BoolVar(&onDemand, "on-demand", false, "Provision ephemeral worker for this execution")
+
+	// Environment configuration flags (only work with --on-demand)
+	cmd.Flags().StringVar(&workingDir, "workdir", "", "Working directory for execution (on-demand only)")
+	cmd.Flags().StringArrayVar(&envVars, "env", nil, "Environment variables in KEY=VALUE format (on-demand only, repeatable)")
+	cmd.Flags().StringVar(&envFile, "env-file", "", "Load environment variables from .env file (on-demand only)")
+	cmd.Flags().StringArrayVar(&secrets, "secret", nil, "Secret names to fetch from Kubiya API and inject as env vars (on-demand only, repeatable)")
+	cmd.Flags().StringArrayVar(&skillDirs, "skill-dir", nil, "Additional skill directories to load (on-demand only, repeatable)")
+	cmd.Flags().IntVar(&timeout, "timeout", 300, "Execution timeout in seconds (on-demand only, default: 300)")
 
 	return cmd
 }

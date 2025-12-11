@@ -110,12 +110,12 @@ func Load() (*Config, error) {
 		}
 		cfg.BaseURL = baseURL
 	} else {
-		// Use control plane URL
-		baseURL := os.Getenv("KUBIYA_CONTROL_PLANE_BASE_URL")
-		if baseURL == "" {
-			baseURL = "https://control-plane.kubiya.ai"
-		}
-		cfg.BaseURL = baseURL
+		// Use control plane URL with priority:
+		// 1. KUBIYA_CONTROL_PLANE_BASE_URL (new standard)
+		// 2. CONTROL_PLANE_GATEWAY_URL (backward compatibility - worker docs)
+		// 3. CONTROL_PLANE_URL (backward compatibility - Python worker)
+		// 4. Default
+		cfg.BaseURL = getControlPlaneURL()
 	}
 
 	// Try to decode Org and Email from JWT if API key exists
@@ -169,4 +169,25 @@ func (c *Config) ValidateAPIKey() error {
 		return fmt.Errorf("API key is required. Set KUBIYA_API_KEY or configure a context using 'kubiya config set-context'")
 	}
 	return nil
+}
+
+// getControlPlaneURL returns the control plane URL with priority:
+// 1. KUBIYA_CONTROL_PLANE_BASE_URL (new standard, recommended)
+// 2. CONTROL_PLANE_GATEWAY_URL (backward compatibility - used in worker docs)
+// 3. CONTROL_PLANE_URL (backward compatibility - used by Python worker)
+// 4. Default: https://control-plane.kubiya.ai
+func getControlPlaneURL() string {
+	// Check standard env var first
+	if url := os.Getenv("KUBIYA_CONTROL_PLANE_BASE_URL"); url != "" {
+		return url
+	}
+	// Check legacy env vars for backward compatibility
+	if url := os.Getenv("CONTROL_PLANE_GATEWAY_URL"); url != "" {
+		return url
+	}
+	if url := os.Getenv("CONTROL_PLANE_URL"); url != "" {
+		return url
+	}
+	// Return default
+	return "https://control-plane.kubiya.ai"
 }

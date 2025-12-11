@@ -238,8 +238,21 @@ func (s *ProcessSupervisor) supervisionLoop(pythonPath, workerPyPath, apiKey str
 }
 
 func (s *ProcessSupervisor) runWorker(pythonPath, workerPyPath, apiKey string) error {
-	// Get control plane URL
-	controlPlaneURL := getControlPlaneURL()
+	// Get control plane URL from environment with priority:
+	// 1. KUBIYA_CONTROL_PLANE_BASE_URL
+	// 2. CONTROL_PLANE_GATEWAY_URL
+	// 3. CONTROL_PLANE_URL
+	// 4. Default
+	controlPlaneURL := os.Getenv("KUBIYA_CONTROL_PLANE_BASE_URL")
+	if controlPlaneURL == "" {
+		controlPlaneURL = os.Getenv("CONTROL_PLANE_GATEWAY_URL")
+	}
+	if controlPlaneURL == "" {
+		controlPlaneURL = os.Getenv("CONTROL_PLANE_URL")
+	}
+	if controlPlaneURL == "" {
+		controlPlaneURL = "https://control-plane.kubiya.ai"
+	}
 
 	// Create command
 	// Pass both env vars (safer) and CLI args (fallback)

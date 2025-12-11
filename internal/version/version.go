@@ -7,6 +7,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/Masterminds/semver/v3"
 )
 
 var (
@@ -74,7 +76,36 @@ func CheckForUpdate() (string, bool, error) {
 	lastCheck = time.Now()
 	latestVersion = release.TagName
 
-	return latestVersion, latestVersion > Version && Version != "dev", nil
+	// Compare versions using semver
+	hasUpdate, err := compareVersions(Version, latestVersion)
+	if err != nil {
+		return latestVersion, false, err
+	}
+
+	return latestVersion, hasUpdate, nil
+}
+
+// compareVersions compares two semantic version strings
+// Returns true if latestVersion > currentVersion
+func compareVersions(currentVersion, latestVersion string) (bool, error) {
+	// Skip comparison for dev version
+	if currentVersion == "dev" {
+		return false, nil
+	}
+
+	// Parse versions
+	current, err := semver.NewVersion(currentVersion)
+	if err != nil {
+		return false, fmt.Errorf("failed to parse current version %s: %w", currentVersion, err)
+	}
+
+	latest, err := semver.NewVersion(latestVersion)
+	if err != nil {
+		return false, fmt.Errorf("failed to parse latest version %s: %w", latestVersion, err)
+	}
+
+	// Check if latest is greater than current
+	return latest.GreaterThan(current), nil
 }
 
 // GetUpdateMessage returns a formatted message about available updates
@@ -85,10 +116,16 @@ func GetUpdateMessage() string {
 	}
 
 	var sb strings.Builder
-	sb.WriteString("\n📢 Update available!\n")
-	sb.WriteString(fmt.Sprintf("Current version: %s\n", Version))
-	sb.WriteString(fmt.Sprintf("Latest version:  %s\n", latest))
-	sb.WriteString("Run 'kubiya update' to update to the latest version\n")
+	sb.WriteString("\n")
+	sb.WriteString("╔═══════════════════════════════════════════════════════════╗\n")
+	sb.WriteString("║  📢 UPDATE AVAILABLE!                                    ║\n")
+	sb.WriteString("╠═══════════════════════════════════════════════════════════╣\n")
+	sb.WriteString(fmt.Sprintf("║  Current version: %-39s ║\n", Version))
+	sb.WriteString(fmt.Sprintf("║  Latest version:  %-39s ║\n", latest))
+	sb.WriteString("║                                                           ║\n")
+	sb.WriteString("║  Run 'kubiya update' to update to the latest version     ║\n")
+	sb.WriteString("╚═══════════════════════════════════════════════════════════╝\n")
+	sb.WriteString("\n")
 
 	return sb.String()
 }

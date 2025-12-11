@@ -9,6 +9,7 @@ import (
 
 	"github.com/kubiyabot/cli/internal/cli"
 	"github.com/kubiyabot/cli/internal/config"
+	"github.com/kubiyabot/cli/internal/errors"
 	"github.com/kubiyabot/cli/internal/sentry"
 	"github.com/kubiyabot/cli/internal/version"
 )
@@ -81,7 +82,26 @@ func main() {
 		}, map[string]interface{}{
 			"command": os.Args,
 		})
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		exitCode := handleError(err)
+		os.Exit(exitCode)
 	}
+}
+
+// handleError processes errors and returns the appropriate exit code
+func handleError(err error) int {
+	if err == nil {
+		return errors.ExitCodeSuccess
+	}
+
+	// Check if it's a CLIError with type information
+	cliErr, ok := err.(*errors.CLIError)
+	if !ok {
+		// Not a typed error - treat as runtime error
+		fmt.Fprintf(os.Stderr, "%s\n", errors.FormatSimple(err))
+		return errors.ExitCodeRuntime
+	}
+
+	// Format and display the typed error
+	fmt.Fprintf(os.Stderr, "%s\n", errors.FormatError(cliErr))
+	return errors.ExitCode(cliErr.Type)
 }

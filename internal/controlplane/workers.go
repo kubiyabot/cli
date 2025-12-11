@@ -102,3 +102,47 @@ func (c *Client) ListQueueWorkers(queueID string) ([]*entities.Worker, error) {
 	}
 	return workers, nil
 }
+
+// ============================================================================
+// Worker Auto-Update Methods
+// ============================================================================
+
+// GetWorkerQueueConfig gets the worker queue configuration with version tracking
+func (c *Client) GetWorkerQueueConfig(queueID string) (*entities.WorkerQueueConfig, error) {
+	var config entities.WorkerQueueConfig
+	path := fmt.Sprintf("/api/v1/worker-queues/%s/config", queueID)
+	if err := c.get(path, &config); err != nil {
+		return nil, err
+	}
+	return &config, nil
+}
+
+// AcquireUpdateLock acquires an update lock for coordinated rolling updates
+func (c *Client) AcquireUpdateLock(queueID, workerID string, durationSeconds int) (*entities.UpdateLock, error) {
+	var lock entities.UpdateLock
+	req := entities.UpdateLockRequest{
+		WorkerID:            workerID,
+		LockDurationSeconds: durationSeconds,
+	}
+	path := fmt.Sprintf("/api/v1/worker-queues/%s/workers/%s/update-lock", queueID, workerID)
+	if err := c.post(path, req, &lock); err != nil {
+		return nil, err
+	}
+	return &lock, nil
+}
+
+// ReleaseUpdateLock releases an update lock after worker has completed its update
+func (c *Client) ReleaseUpdateLock(queueID, workerID string) error {
+	path := fmt.Sprintf("/api/v1/worker-queues/%s/workers/%s/update-lock", queueID, workerID)
+	return c.delete(path)
+}
+
+// GetUpdateLockStatus gets the current update lock status for a queue
+func (c *Client) GetUpdateLockStatus(queueID string) (*entities.UpdateLockStatus, error) {
+	var status entities.UpdateLockStatus
+	path := fmt.Sprintf("/api/v1/worker-queues/%s/update-lock-status", queueID)
+	if err := c.get(path, &status); err != nil {
+		return nil, err
+	}
+	return &status, nil
+}
