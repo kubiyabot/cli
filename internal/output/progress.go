@@ -5,16 +5,19 @@ import (
 	"io"
 	"os"
 	"sync"
+
+	"github.com/kubiyabot/cli/internal/pterm"
+	"github.com/kubiyabot/cli/internal/types"
 )
 
-// OutputMode represents the output style
-type OutputMode int
+// OutputMode is re-exported from types for backward compatibility
+type OutputMode = types.OutputMode
 
 const (
 	// OutputModeInteractive shows progress bars, spinners, and emojis
-	OutputModeInteractive OutputMode = iota
+	OutputModeInteractive = types.OutputModeInteractive
 	// OutputModeCI shows plain text with timestamps, no spinners
-	OutputModeCI
+	OutputModeCI = types.OutputModeCI
 )
 
 // ProgressManager manages output mode and creates appropriate indicators
@@ -141,4 +144,10 @@ func (pi *PhaseIndicator) Fail(err error) {
 	} else {
 		fmt.Fprintf(pi.writer, "==> %s: FAILED: %v\n", pi.name, err)
 	}
+}
+
+// PTermManager creates a PTerm manager configured for this ProgressManager's mode
+// This allows seamless integration with PTerm-based UI components
+func (pm *ProgressManager) PTermManager() *pterm.PTermManager {
+	return pterm.NewPTermManager(pm.mode)
 }

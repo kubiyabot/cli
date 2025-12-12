@@ -15,6 +15,7 @@ import (
 	"github.com/kubiyabot/cli/internal/controlplane"
 	"github.com/kubiyabot/cli/internal/controlplane/entities"
 	"github.com/kubiyabot/cli/internal/kubiya"
+	"github.com/kubiyabot/cli/internal/output"
 	"github.com/kubiyabot/cli/internal/style"
 	"github.com/spf13/cobra"
 )
@@ -35,6 +36,7 @@ func NewExecCommand(cfg *config.Config) *cobra.Command {
 		queueNames       []string
 		environment      string
 		parentExecution  string
+		packageSource    string // For local mode: specify worker package source
 	)
 
 	cmd := &cobra.Command{
@@ -55,6 +57,11 @@ All plans are automatically saved to ~/.kubiya/plans/ for future reference.`,
   kubiya exec "Deploy my app to production"
   kubiya exec "Analyze security vulnerabilities in my cluster"
   kubiya exec "Create a new microservice with tests" --yes
+
+  # Local execution with ephemeral worker
+  kubiya exec "task" --local
+  kubiya exec "task" --local --package-source=0.5.0
+  kubiya exec "task" --local --package-source=kubiyabot/control-plane-api@feature-branch
 
   # Load and execute existing plan
   kubiya exec --plan-file ~/.kubiya/plans/abc123.json
@@ -80,6 +87,9 @@ All plans are automatically saved to ~/.kubiya/plans/ for future reference.`,
 				autoApprove = true
 			}
 
+			// Create progress manager for UI
+			progressManager := output.NewProgressManager()
+
 			executor := &ExecCommand{
 				cfg:             cfg,
 				client:          client,
@@ -88,11 +98,13 @@ All plans are automatically saved to ~/.kubiya/plans/ for future reference.`,
 				savePlanPath:    savePlanPath,
 				nonInteractive:  nonInteractive,
 				priority:        priority,
+				progressManager: progressManager,
 				Local:           local,
 				QueueIDs:        queueIDs,
 				QueueNames:      queueNames,
 				Environment:     environment,
 				ParentExecution: parentExecution,
+				PackageSource:   packageSource,
 			}
 
 			// Route based on input
@@ -139,20 +151,22 @@ All plans are automatically saved to ~/.kubiya/plans/ for future reference.`,
 	cmd.Flags().StringSliceVar(&queueNames, "queue-name", nil, "Worker queue name(s) - alternative to IDs")
 	cmd.Flags().StringVar(&environment, "environment", "", "Environment ID for execution (auto-detected if not specified)")
 	cmd.Flags().StringVar(&parentExecution, "parent-execution", "", "Parent execution ID for conversation continuation")
+	cmd.Flags().StringVar(&packageSource, "package-source", "", "Worker package source for local mode: PyPI version, local file, git URL, or GitHub shorthand (owner/repo@ref)")
 
 	return cmd
 }
 
 // ExecCommand handles execution with auto-planning
 type ExecCommand struct {
-	cfg            *config.Config
-	client         *controlplane.Client
-	autoApprove    bool
-	outputFormat   string
-	savePlanPath   string
-	nonInteractive bool
-	priority       string
-	currentPlan    *kubiya.PlanResponse
+	cfg             *config.Config
+	client          *controlplane.Client
+	autoApprove     bool
+	outputFormat    string
+	savePlanPath    string
+	nonInteractive  bool
+	priority        string
+	currentPlan     *kubiya.PlanResponse
+	progressManager *output.ProgressManager
 
 	// New execution mode flags
 	Local           bool     // --local: Run with ephemeral local worker (uses fast planning)
@@ -160,6 +174,7 @@ type ExecCommand struct {
 	QueueNames      []string // --queue-name: Select by name instead of ID
 	Environment     string   // --environment: Environment ID for execution
 	ParentExecution string   // --parent-execution: Parent execution ID for conversation continuation
+	PackageSource   string   // --package-source: Worker package source for local mode
 }
 
 // ExecuteWithPlanning runs the full planning workflow
@@ -218,6 +233,14 @@ func (ec *ExecCommand) ExecuteWithPlanning(ctx context.Context, prompt string) e
 	}
 
 	ec.currentPlan = plan
+
+	// Debug: Log plan details in local mode
+	if ec.Local && plan != nil {
+		fmt.Printf("\n[DEBUG] Planner recommendation:\n")
+		fmt.Printf("  Entity Type: %s\n", plan.RecommendedExecution.EntityType)
+		fmt.Printf("  Entity ID:   %s\n", plan.RecommendedExecution.EntityID)
+		fmt.Printf("  Entity Name: %s\n", plan.RecommendedExecution.EntityName)
+	}
 
 	// 4. Auto-save plan
 	storage, _ := NewPlanStorageManager()
@@ -293,7 +316,10 @@ func (ec *ExecCommand) streamPlanGeneration(ctx context.Context, client *kubiya.
 
 	var plan *kubiya.PlanResponse
 	var planObj kubiya.PlanResponse // Declare outside loop to preserve across iterations
-	progressBar := NewProgressBar()
+
+	// Create PTerm-backed progress bar
+	ptermManager := ec.progressManager.PTermManager()
+	progressBar := NewPTermProgressBar(ptermManager, "Generating plan", 100)
 
 	for {
 		select {
@@ -437,6 +463,10 @@ func (ec *ExecCommand) submitAndStreamExecution(ctx context.Context, plan *kubiy
 	rec := plan.RecommendedExecution
 	streamFlag := true
 
+	// Debug: Log what we're submitting
+	fmt.Printf("\n[DEBUG] Submitting to: /api/v1/%ss/%s/execute\n",
+		rec.EntityType, rec.EntityID)
+
 	var execution *entities.AgentExecution
 	var err error
 
@@ -516,6 +546,7 @@ func (ec *ExecCommand) executeLocal(ctx context.Context, plan *kubiya.PlanRespon
 		DeploymentType:      "local",
 		DaemonMode:          false,
 		SingleExecutionMode: true, // Exit gracefully after completing the task
+		PackageSource:       ec.PackageSource,
 		cfg:                 ec.cfg,
 	}
 
@@ -547,6 +578,11 @@ func (ec *ExecCommand) executeLocal(ctx context.Context, plan *kubiya.PlanRespon
 
 	elapsed := time.Since(startTime)
 	fmt.Printf("✓ Worker ready (%.0fs)\n\n", elapsed.Seconds())
+
+	// Validate and fix agent selection before submission
+	if err := ec.validateAndFixAgentSelection(ctx, plan); err != nil {
+		return fmt.Errorf("failed to validate agent selection: %w", err)
+	}
 
 	// Submit execution and stream output
 	fmt.Println(style.CreateBanner("Executing Task", "🚀"))
@@ -580,6 +616,105 @@ func (ec *ExecCommand) executeLocal(ctx context.Context, plan *kubiya.PlanRespon
 	}
 
 	return err
+}
+
+// validateAndFixAgentSelection validates the planner's agent selection and fixes if invalid
+func (ec *ExecCommand) validateAndFixAgentSelection(ctx context.Context, plan *kubiya.PlanResponse) error {
+	rec := &plan.RecommendedExecution
+
+	// Check if the selected agent/team exists
+	var exists bool
+	var err error
+
+	if rec.EntityType == "agent" {
+		// Try to fetch the specific agent
+		_, err = ec.client.GetAgent(rec.EntityID)
+		exists = (err == nil)
+
+		if !exists {
+			fmt.Printf("⚠️  Planner selected agent '%s' (ID: %s) which doesn't exist in your organization\n",
+				rec.EntityName, rec.EntityID)
+			fmt.Println("   Looking for an alternative agent...")
+
+			// List all available agents
+			agents, listErr := ec.client.ListAgents()
+			if listErr != nil {
+				return fmt.Errorf("agent '%s' not found and failed to list alternatives: %w", rec.EntityID, listErr)
+			}
+
+			if len(agents) == 0 {
+				return fmt.Errorf("agent '%s' not found and no agents available in organization", rec.EntityID)
+			}
+
+			// Try to find a matching agent by name
+			var matchedAgent *entities.Agent
+			for _, agent := range agents {
+				if agent.Name == rec.EntityName {
+					matchedAgent = agent
+					break
+				}
+			}
+
+			// If no name match, use first available agent
+			if matchedAgent == nil {
+				matchedAgent = agents[0]
+				fmt.Printf("   No agent named '%s' found, using '%s' instead\n",
+					rec.EntityName, matchedAgent.Name)
+			} else {
+				fmt.Printf("   Found matching agent '%s' in your organization\n", matchedAgent.Name)
+			}
+
+			// Update the plan with the correct agent
+			rec.EntityID = matchedAgent.ID
+			rec.EntityName = matchedAgent.Name
+			fmt.Printf("   ✓ Using agent: %s (ID: %s)\n\n", matchedAgent.Name, matchedAgent.ID)
+		}
+
+	} else if rec.EntityType == "team" {
+		// Similar logic for teams
+		_, err = ec.client.GetTeam(rec.EntityID)
+		exists = (err == nil)
+
+		if !exists {
+			fmt.Printf("⚠️  Planner selected team '%s' (ID: %s) which doesn't exist in your organization\n",
+				rec.EntityName, rec.EntityID)
+			fmt.Println("   Looking for an alternative team...")
+
+			teams, listErr := ec.client.ListTeams()
+			if listErr != nil {
+				return fmt.Errorf("team '%s' not found and failed to list alternatives: %w", rec.EntityID, listErr)
+			}
+
+			if len(teams) == 0 {
+				return fmt.Errorf("team '%s' not found and no teams available in organization", rec.EntityID)
+			}
+
+			// Try to find a matching team by name
+			var matchedTeam *entities.Team
+			for _, team := range teams {
+				if team.Name == rec.EntityName {
+					matchedTeam = team
+					break
+				}
+			}
+
+			// If no name match, use first available team
+			if matchedTeam == nil {
+				matchedTeam = teams[0]
+				fmt.Printf("   No team named '%s' found, using '%s' instead\n",
+					rec.EntityName, matchedTeam.Name)
+			} else {
+				fmt.Printf("   Found matching team '%s' in your organization\n", matchedTeam.Name)
+			}
+
+			// Update the plan with the correct team
+			rec.EntityID = matchedTeam.ID
+			rec.EntityName = matchedTeam.Name
+			fmt.Printf("   ✓ Using team: %s (ID: %s)\n\n", matchedTeam.Name, matchedTeam.ID)
+		}
+	}
+
+	return nil
 }
 
 // createEphemeralQueue creates a temporary queue with auto-cleanup
