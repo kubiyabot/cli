@@ -113,6 +113,7 @@ Need help? Visit: https://docs.kubiya.ai
 		newKnowledgeCommand(cfg), // V1: Knowledge service
 
 		// System Commands
+		newAuthCommand(cfg),  // Authentication management
 		newLoginCommand(cfg),
 		newUpdateCommand(cfg),
 		newVersionCommand(cfg),
