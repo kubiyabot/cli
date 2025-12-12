@@ -24,13 +24,22 @@ func (c *Client) GetPolicy(id string) (*entities.Policy, error) {
 	return &policy, nil
 }
 
+// PolicyListResponse represents the paginated response from list policies API
+type PolicyListResponse struct {
+	Policies []*entities.Policy `json:"policies"`
+	Total    int                `json:"total"`
+	Page     int                `json:"page"`
+	Limit    int                `json:"limit"`
+	HasMore  bool               `json:"has_more"`
+}
+
 // ListPolicies lists all policies
 func (c *Client) ListPolicies() ([]*entities.Policy, error) {
-	var policies []*entities.Policy
-	if err := c.get("/api/v1/policies", &policies); err != nil {
+	var response PolicyListResponse
+	if err := c.get("/api/v1/policies", &response); err != nil {
 		return nil, err
 	}
-	return policies, nil
+	return response.Policies, nil
 }
 
 // UpdatePolicy updates an existing policy

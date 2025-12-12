@@ -17,7 +17,6 @@ func newWorkerCommand(cfg *config.Config) *cobra.Command {
 		newWorkerStartCommand(cfg),
 		newWorkerStatusCommand(cfg),
 		newWorkerStopCommand(cfg),
-		newWorkerOperatorCommand(cfg), // Kubernetes operator
 	)
 
 	return workerCmd
