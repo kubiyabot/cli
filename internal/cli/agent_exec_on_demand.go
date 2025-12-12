@@ -172,9 +172,16 @@ func (e *OnDemandExecutor) waitForWorkerReady(ctx context.Context, queueID strin
 // submitExecution submits the execution request to the agent
 func (e *OnDemandExecutor) submitExecution(ctx context.Context, queueID string) (*entities.AgentExecution, error) {
 	streamFlag := true
+
+	// Convert queueID string to pointer (nil if empty, backend will auto-select)
+	var queuePtr *string
+	if queueID != "" {
+		queuePtr = &queueID
+	}
+
 	req := &entities.ExecuteAgentRequest{
 		Prompt:        e.prompt,
-		WorkerQueueID: queueID,
+		WorkerQueueID: queuePtr,
 		Stream:        &streamFlag,
 	}
 	if e.systemPrompt != "" {

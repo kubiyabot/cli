@@ -33,8 +33,6 @@ Quick Start:
   • Manage policies:  kubiya policy list
   • View executions:  kubiya execution list
   • Schedule jobs:    kubiya job list
-  • Manage operators: kubiya operator list
-  • Manage webhooks:  kubiya webhook list
   • Manage workflows: kubiya workflow list|run|execute|compose
   • Update CLI:       kubiya update
 
@@ -105,14 +103,12 @@ Need help? Visit: https://docs.kubiya.ai
 		newPolicyCommand(cfg),      // V2: Policies
 		newEnvironmentCommand(cfg), // V2: Environments
 		newProjectCommand(cfg),     // V2: Projects
-		newOperatorCommand(cfg),    // V2: Operators (formerly runners)
 		newWorkerCommand(cfg),      // V2: Worker management
 		newGraphCommand(cfg),       // V2: Context Graph
 
 		// V1 Legacy Commands (still on api.kubiya.ai)
 		newWorkflowCommand(cfg), // V1: Workflows
 		newUsersCommand(cfg),    // V1: User management
-		newWebhooksCommand(cfg), // V1: Webhooks
 		newSecretsCommand(cfg),  // V1: Secrets
 		newKnowledgeCommand(cfg), // V1: Knowledge service
 
@@ -139,8 +135,6 @@ func showAuthHintIfNeeded(cmd *cobra.Command, cfg *config.Config) {
 		"model":     true,
 		"skill":     true,
 		"policy":    true,
-		"operator":  true,
-		"webhook":   true,
 		"secret":    true,
 		"knowledge": true,
 		"graph":     true,

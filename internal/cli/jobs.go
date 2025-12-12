@@ -640,3 +640,4 @@ func newJobExecutionsCommand(cfg *config.Config) *cobra.Command {
 
 	return cmd
 }
+

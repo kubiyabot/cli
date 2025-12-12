@@ -415,10 +415,16 @@ func executeSingleTask(ctx context.Context, client *controlplane.Client, entityT
 
 	streamFlag := true
 
+	// Convert workerQueue string to pointer (nil if empty, backend will auto-select)
+	var queuePtr *string
+	if workerQueue != "" {
+		queuePtr = &workerQueue
+	}
+
 	if entityType == "agent" {
 		req := &entities.ExecuteAgentRequest{
 			Prompt:        prompt,
-			WorkerQueueID: workerQueue,
+			WorkerQueueID: queuePtr,
 			Stream:        &streamFlag,
 		}
 		if systemPrompt != "" {
@@ -428,7 +434,7 @@ func executeSingleTask(ctx context.Context, client *controlplane.Client, entityT
 	} else {
 		req := &entities.ExecuteTeamRequest{
 			Prompt:        prompt,
-			WorkerQueueID: workerQueue,
+			WorkerQueueID: queuePtr,
 			Stream:        &streamFlag,
 		}
 		if systemPrompt != "" {

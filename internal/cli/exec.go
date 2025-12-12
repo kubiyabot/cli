@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/kubiyabot/cli/internal/config"
@@ -26,6 +28,13 @@ func NewExecCommand(cfg *config.Config) *cobra.Command {
 		savePlanPath   string
 		nonInteractive bool
 		priority       string
+
+		// New execution mode flags
+		local            bool
+		queueIDs         []string
+		queueNames       []string
+		environment      string
+		parentExecution  string
 	)
 
 	cmd := &cobra.Command{
@@ -72,13 +81,18 @@ All plans are automatically saved to ~/.kubiya/plans/ for future reference.`,
 			}
 
 			executor := &ExecCommand{
-				cfg:            cfg,
-				client:         client,
-				autoApprove:    autoApprove,
-				outputFormat:   outputFormat,
-				savePlanPath:   savePlanPath,
-				nonInteractive: nonInteractive,
-				priority:       priority,
+				cfg:             cfg,
+				client:          client,
+				autoApprove:     autoApprove,
+				outputFormat:    outputFormat,
+				savePlanPath:    savePlanPath,
+				nonInteractive:  nonInteractive,
+				priority:        priority,
+				Local:           local,
+				QueueIDs:        queueIDs,
+				QueueNames:      queueNames,
+				Environment:     environment,
+				ParentExecution: parentExecution,
 			}
 
 			// Route based on input
@@ -119,6 +133,13 @@ All plans are automatically saved to ~/.kubiya/plans/ for future reference.`,
 	cmd.Flags().BoolVar(&nonInteractive, "non-interactive", false, "Non-interactive mode (skip all prompts)")
 	cmd.Flags().StringVar(&priority, "priority", "medium", "Task priority: low, medium, high, critical")
 
+	// Execution mode flags
+	cmd.Flags().BoolVar(&local, "local", false, "Run execution locally with ephemeral worker (uses fast planning)")
+	cmd.Flags().StringSliceVar(&queueIDs, "queue", nil, "Worker queue ID(s) - comma-separated for parallel execution")
+	cmd.Flags().StringSliceVar(&queueNames, "queue-name", nil, "Worker queue name(s) - alternative to IDs")
+	cmd.Flags().StringVar(&environment, "environment", "", "Environment ID for execution (auto-detected if not specified)")
+	cmd.Flags().StringVar(&parentExecution, "parent-execution", "", "Parent execution ID for conversation continuation")
+
 	return cmd
 }
 
@@ -132,6 +153,13 @@ type ExecCommand struct {
 	nonInteractive bool
 	priority       string
 	currentPlan    *kubiya.PlanResponse
+
+	// New execution mode flags
+	Local           bool     // --local: Run with ephemeral local worker (uses fast planning)
+	QueueIDs        []string // --queue: Explicit queue selection (comma-separated)
+	QueueNames      []string // --queue-name: Select by name instead of ID
+	Environment     string   // --environment: Environment ID for execution
+	ParentExecution string   // --parent-execution: Parent execution ID for conversation continuation
 }
 
 // ExecuteWithPlanning runs the full planning workflow
@@ -156,17 +184,22 @@ func (ec *ExecCommand) ExecuteWithPlanning(ctx context.Context, prompt string) e
 		len(resources.Environments))
 
 	// 3. Create plan with streaming
-	fmt.Println(style.CreateHelpBox("Generating execution plan..."))
+	if ec.Local {
+		fmt.Println(style.CreateHelpBox("Quick agent/team selection for local execution..."))
+	} else {
+		fmt.Println(style.CreateHelpBox("Generating execution plan..."))
+	}
 	fmt.Println()
 
 	planReq := &kubiya.PlanRequest{
 		Description:  prompt,
 		Priority:     ec.priority,
-		Agents:       resources.Agents,
-		Teams:        resources.Teams,
+		Agents:       []kubiya.AgentInfo{},     // Let backend discover resources
+		Teams:        []kubiya.TeamInfo{},      // Let backend discover resources
 		Environments: resources.Environments,
 		WorkerQueues: resources.Queues,
 		OutputFormat: ec.outputFormat,
+		QuickMode:    ec.Local, // Use quick mode for local execution
 	}
 
 	kubiyaClient := kubiya.NewClient(ec.cfg)
@@ -208,7 +241,8 @@ func (ec *ExecCommand) ExecuteWithPlanning(ctx context.Context, prompt string) e
 	}
 
 	fmt.Println()
-	displayer := NewPlanDisplayer(plan, ec.outputFormat, !ec.nonInteractive)
+	// Displayer should be non-interactive if either --yes or --non-interactive is specified
+	displayer := NewPlanDisplayer(plan, ec.outputFormat, !ec.nonInteractive && !ec.autoApprove)
 
 	if err := displayer.DisplayPlan(); err != nil {
 		return err
@@ -228,7 +262,28 @@ func (ec *ExecCommand) ExecuteWithPlanning(ctx context.Context, prompt string) e
 		storage.MarkApproved(savedPlan)
 	}
 
-	// 7. Execute
+	// 7. Execute - route based on flags
+	if ec.Local {
+		return ec.executeLocal(ctx, plan)
+	}
+
+	// Check for explicit queue selection
+	if len(ec.QueueIDs) > 0 || len(ec.QueueNames) > 0 {
+		queueIDs, err := ec.resolveQueueIDs(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to resolve queues: %w", err)
+		}
+
+		if len(queueIDs) > 1 {
+			// Multi-queue parallel execution
+			return ec.executeMultiQueue(ctx, plan, queueIDs)
+		} else {
+			// Single queue execution
+			return ec.executeSingleQueue(ctx, plan, queueIDs[0])
+		}
+	}
+
+	// Default: use planner recommendation
 	return ec.executeFromPlan(ctx, plan, savedPlan)
 }
 
@@ -237,6 +292,7 @@ func (ec *ExecCommand) streamPlanGeneration(ctx context.Context, client *kubiya.
 	eventChan, errChan := client.StreamPlanProgress(ctx, req)
 
 	var plan *kubiya.PlanResponse
+	var planObj kubiya.PlanResponse // Declare outside loop to preserve across iterations
 	progressBar := NewProgressBar()
 
 	for {
@@ -280,14 +336,33 @@ func (ec *ExecCommand) streamPlanGeneration(ctx context.Context, client *kubiya.
 				// Extract plan from complete event
 				if planData, ok := event.Data["plan"].(map[string]interface{}); ok {
 					// Convert map to PlanResponse via JSON
-					planBytes, _ := json.Marshal(planData)
-					json.Unmarshal(planBytes, &plan)
+					planBytes, err := json.Marshal(planData)
+					if err != nil {
+						return nil, fmt.Errorf("failed to marshal plan data: %w", err)
+					}
+
+					// Unmarshal into the outer planObj variable
+					err = json.Unmarshal(planBytes, &planObj)
+					if err != nil {
+						return nil, fmt.Errorf("failed to unmarshal plan: %w", err)
+					}
+
+					// Assign pointer to plan
+					plan = &planObj
+
+					// Complete the progress bar and return the plan
+					progressBar.Complete()
+					return plan, nil
 				}
 
 			case "error":
 				if errMsg, ok := event.Data["error"].(string); ok {
 					return nil, fmt.Errorf("planning error: %s", errMsg)
 				}
+				if errMsg, ok := event.Data["message"].(string); ok {
+					return nil, fmt.Errorf("planning error: %s", errMsg)
+				}
+				return nil, fmt.Errorf("planning error: unknown error format")
 			}
 
 		case err := <-errChan:
@@ -334,30 +409,18 @@ func (ec *ExecCommand) executeFromPlan(ctx context.Context, plan *kubiya.PlanRes
 
 	rec := plan.RecommendedExecution
 
-	// Submit execution
-	streamFlag := true
-
-	var execution *entities.AgentExecution
-	var err error
-
-	if rec.EntityType == "agent" {
-		req := &entities.ExecuteAgentRequest{
-			Prompt:        plan.Summary,
-			WorkerQueueID: *rec.RecommendedWorkerQueueID,
-			Stream:        &streamFlag,
-		}
-		execution, err = ec.client.ExecuteAgentV2(rec.EntityID, req)
-	} else {
-		req := &entities.ExecuteTeamRequest{
-			Prompt:        plan.Summary,
-			WorkerQueueID: *rec.RecommendedWorkerQueueID,
-			Stream:        &streamFlag,
-		}
-		execution, err = ec.client.ExecuteTeamV2(rec.EntityID, req)
+	// Use recommended queue from plan (backend already validated it's healthy during planning)
+	// OR pass empty string to let backend auto-select
+	var queueID string
+	if rec.RecommendedWorkerQueueID != nil {
+		queueID = *rec.RecommendedWorkerQueueID
 	}
+	// If empty, backend will auto-select a healthy queue
 
+	// Submit and stream execution (backend handles queue selection if not specified)
+	execution, err := ec.submitAndStreamExecution(ctx, plan, queueID)
 	if err != nil {
-		return fmt.Errorf("failed to submit execution: %w", err)
+		return err
 	}
 
 	// Mark as executed
@@ -366,8 +429,215 @@ func (ec *ExecCommand) executeFromPlan(ctx context.Context, plan *kubiya.PlanRes
 		storage.MarkExecuted(savedPlan, execution.GetID())
 	}
 
+	return nil
+}
+
+// submitAndStreamExecution submits execution to a queue and streams output
+func (ec *ExecCommand) submitAndStreamExecution(ctx context.Context, plan *kubiya.PlanResponse, queueID string) (*entities.AgentExecution, error) {
+	rec := plan.RecommendedExecution
+	streamFlag := true
+
+	var execution *entities.AgentExecution
+	var err error
+
+	// Only set WorkerQueueID if explicitly provided, otherwise let backend auto-select
+	var queuePtr *string
+	if queueID != "" {
+		queuePtr = &queueID
+	}
+
+	// Set parent execution ID if provided (for conversation continuation)
+	var parentExecPtr *string
+	if ec.ParentExecution != "" {
+		parentExecPtr = &ec.ParentExecution
+	}
+
+	if rec.EntityType == "agent" {
+		req := &entities.ExecuteAgentRequest{
+			Prompt:            plan.Summary,
+			WorkerQueueID:     queuePtr,
+			ParentExecutionID: parentExecPtr,
+			Stream:            &streamFlag,
+		}
+		execution, err = ec.client.ExecuteAgentV2(rec.EntityID, req)
+	} else {
+		req := &entities.ExecuteTeamRequest{
+			Prompt:            plan.Summary,
+			WorkerQueueID:     queuePtr,
+			ParentExecutionID: parentExecPtr,
+			Stream:            &streamFlag,
+		}
+		execution, err = ec.client.ExecuteTeamV2(rec.EntityID, req)
+	}
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to submit execution: %w", err)
+	}
+
 	// Stream output
-	return ec.streamExecutionOutput(ctx, execution.GetID())
+	if err := ec.streamExecutionOutput(ctx, execution.GetID()); err != nil {
+		return execution, err
+	}
+
+	return execution, nil
+}
+
+// executeLocal executes plan using ephemeral local worker
+func (ec *ExecCommand) executeLocal(ctx context.Context, plan *kubiya.PlanResponse) error {
+	fmt.Println()
+	fmt.Println(style.CreateBanner("Local Execution Mode", "💻"))
+	fmt.Println()
+
+	// Get environment from plan
+	envID := plan.RecommendedExecution.RecommendedEnvironmentID
+	if envID == nil {
+		return fmt.Errorf("no environment specified in plan")
+	}
+
+	// Create ephemeral queue
+	fmt.Println("📦 Creating ephemeral worker queue...")
+	queue, err := ec.createEphemeralQueue(ctx, *envID)
+	if err != nil {
+		return fmt.Errorf("failed to create ephemeral queue: %w", err)
+	}
+	queueID := queue.ID
+	fmt.Printf("✓ Queue created: %s\n\n", queueID)
+
+	// Cleanup queue on exit
+	defer func() {
+		fmt.Println("\n🧹 Cleaning up ephemeral queue...")
+		ec.client.DeleteWorkerQueue(queueID)
+	}()
+
+	// Start local worker
+	fmt.Println("🚀 Starting local worker...")
+	workerOpts := &WorkerStartOptions{
+		QueueID:             queueID,
+		DeploymentType:      "local",
+		DaemonMode:          false,
+		SingleExecutionMode: true, // Exit gracefully after completing the task
+		cfg:                 ec.cfg,
+	}
+
+	// Start worker in background goroutine
+	workerCtx, cancelWorker := context.WithCancel(ctx)
+	defer cancelWorker()
+
+	workerErrChan := make(chan error, 1)
+	go func() {
+		err := workerOpts.Run(workerCtx)
+		if err != nil && err != context.Canceled {
+			workerErrChan <- err
+		}
+	}()
+
+	// Wait for worker to be ready
+	fmt.Println("⏳ Waiting for worker to be ready...")
+	fmt.Println("   (First run may take 1-2 minutes to install dependencies)")
+	fmt.Println()
+
+	startTime := time.Now()
+	// Increased timeout to allow for dependency installation on first run
+	// Typical first run: 40-120 seconds (venv + pip + deps + registration)
+	// Typical cached run: 5-10 seconds
+	if err := ec.waitForWorkerReady(ctx, queueID, 180*time.Second); err != nil {
+		elapsed := time.Since(startTime)
+		return fmt.Errorf("worker did not become ready after %.0fs: %w", elapsed.Seconds(), err)
+	}
+
+	elapsed := time.Since(startTime)
+	fmt.Printf("✓ Worker ready (%.0fs)\n\n", elapsed.Seconds())
+
+	// Submit execution and stream output
+	fmt.Println(style.CreateBanner("Executing Task", "🚀"))
+	fmt.Println()
+
+	_, err = ec.submitAndStreamExecution(ctx, plan, queueID)
+
+	// Give worker time to exit gracefully in single execution mode
+	// The Python worker will detect task completion and shutdown on its own
+	workerExited := make(chan struct{})
+	go func() {
+		select {
+		case <-workerErrChan:
+			close(workerExited)
+		case <-time.After(10 * time.Second):
+			// Worker didn't exit gracefully within timeout
+			close(workerExited)
+		}
+	}()
+
+	// Wait for worker to exit or timeout
+	<-workerExited
+
+	// Check for worker errors
+	select {
+	case workerErr := <-workerErrChan:
+		if err == nil && workerErr != nil && workerErr != context.Canceled {
+			err = workerErr
+		}
+	default:
+	}
+
+	return err
+}
+
+// createEphemeralQueue creates a temporary queue with auto-cleanup
+func (ec *ExecCommand) createEphemeralQueue(ctx context.Context, environmentID string) (*entities.WorkerQueue, error) {
+	trueVal := true
+	ttl := 300 // 5 minutes
+
+	req := &entities.WorkerQueueCreateRequest{
+		Name:                    fmt.Sprintf("local-exec-%s", time.Now().Format("20060102-150405")),
+		EnvironmentID:           environmentID,
+		Ephemeral:               &trueVal,
+		SingleExecutionMode:     &trueVal,
+		AutoCleanupAfterSeconds: &ttl,
+	}
+
+	queue, err := ec.client.CreateWorkerQueue(environmentID, req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create queue: %w", err)
+	}
+
+	return queue, nil
+}
+
+// waitForWorkerReady polls until worker appears in queue
+func (ec *ExecCommand) waitForWorkerReady(ctx context.Context, queueID string, timeout time.Duration) error {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	ticker := time.NewTicker(2 * time.Second) // Less frequent polling
+	defer ticker.Stop()
+
+	startTime := time.Now()
+	lastMessageTime := startTime
+	messageInterval := 10 * time.Second // Show progress every 10 seconds
+
+	for {
+		select {
+		case <-ctx.Done():
+			elapsed := time.Since(startTime)
+			return fmt.Errorf("timeout waiting for worker after %.0fs (this may be due to slow dependency installation - try running again as dependencies will be cached)", elapsed.Seconds())
+
+		case <-ticker.C:
+			workers, err := ec.client.ListQueueWorkers(queueID)
+			if err == nil && len(workers) > 0 {
+				return nil
+			}
+
+			// Show progress message periodically
+			elapsed := time.Since(startTime)
+			if time.Since(lastMessageTime) >= messageInterval {
+				fmt.Printf("   Still waiting... (%.0fs elapsed)\n", elapsed.Seconds())
+				if elapsed > 30*time.Second && elapsed < 35*time.Second {
+					fmt.Println("   Tip: First run may take longer while dependencies are installed")
+				}
+				lastMessageTime = time.Now()
+			}
+		}
+	}
 }
 
 // streamExecutionOutput streams execution output to terminal
@@ -455,7 +725,8 @@ func (ec *ExecCommand) ExecuteFromPlan(ctx context.Context, planFile string) err
 	fmt.Println()
 
 	// 3. Display plan summary
-	displayer := NewPlanDisplayer(savedPlan.Plan, ec.outputFormat, !ec.autoApprove)
+	// Displayer should be non-interactive if either --yes or --non-interactive is specified
+	displayer := NewPlanDisplayer(savedPlan.Plan, ec.outputFormat, !ec.autoApprove && !ec.nonInteractive)
 
 	if err := displayer.DisplayPlan(); err != nil {
 		return err
@@ -539,3 +810,155 @@ func (ec *ExecCommand) ExecuteDirect(ctx context.Context, entityType, entityID, 
 	// Stream output
 	return ec.streamExecutionOutput(ctx, execution.GetID())
 }
+
+// resolveQueueIDs resolves queue IDs from either --queue or --queue-name flags
+func (ec *ExecCommand) resolveQueueIDs(ctx context.Context) ([]string, error) {
+	// Priority: IDs > Names
+	if len(ec.QueueIDs) > 0 {
+		return ec.validateQueueIDs(ctx, ec.QueueIDs)
+	}
+
+	if len(ec.QueueNames) > 0 {
+		return ec.resolveQueueNames(ctx, ec.QueueNames)
+	}
+
+	return nil, fmt.Errorf("no queues specified")
+}
+
+// validateQueueIDs validates that all queue IDs exist and are accessible
+func (ec *ExecCommand) validateQueueIDs(ctx context.Context, ids []string) ([]string, error) {
+	for _, id := range ids {
+		_, err := ec.client.GetWorkerQueue(id)
+		if err != nil {
+			return nil, fmt.Errorf("invalid queue %s: %w", id, err)
+		}
+	}
+	return ids, nil
+}
+
+// resolveQueueNames converts queue names to IDs
+func (ec *ExecCommand) resolveQueueNames(ctx context.Context, names []string) ([]string, error) {
+	// Fetch all queues
+	queues, err := ec.client.ListWorkerQueues()
+	if err != nil {
+		return nil, fmt.Errorf("failed to list worker queues: %w", err)
+	}
+
+	// Build name->ID map
+	nameMap := make(map[string]string)
+	for _, q := range queues {
+		nameMap[q.Name] = q.ID
+	}
+
+	// Resolve names to IDs
+	var ids []string
+	for _, name := range names {
+		id, ok := nameMap[name]
+		if !ok {
+			return nil, fmt.Errorf("queue not found: %s", name)
+		}
+		ids = append(ids, id)
+	}
+
+	return ids, nil
+}
+
+// QueueExecutionResult tracks the result of execution on a single queue
+type QueueExecutionResult struct {
+	QueueID   string
+	QueueName string
+	Success   bool
+	Duration  time.Duration
+	Error     error
+}
+
+// executeMultiQueue executes plan across multiple queues in parallel
+func (ec *ExecCommand) executeMultiQueue(ctx context.Context, plan *kubiya.PlanResponse, queueIDs []string) error {
+	fmt.Println()
+	fmt.Println(style.CreateBanner(fmt.Sprintf("Multi-Queue Execution (%d queues)", len(queueIDs)), "🚀"))
+	fmt.Println()
+
+	// Fetch queue metadata for display
+	queueMap := make(map[string]string) // id -> name
+	for _, id := range queueIDs {
+		queue, err := ec.client.GetWorkerQueue(id)
+		if err != nil {
+			queueMap[id] = id // Fallback to ID
+		} else {
+			queueMap[id] = queue.Name
+		}
+		fmt.Printf("  • %s\n", queueMap[id])
+	}
+	fmt.Println()
+
+	// Execute in parallel goroutines
+	var wg sync.WaitGroup
+	resultChan := make(chan *QueueExecutionResult, len(queueIDs))
+
+	for _, queueID := range queueIDs {
+		wg.Add(1)
+		go func(qid string) {
+			defer wg.Done()
+
+			result := &QueueExecutionResult{
+				QueueID:   qid,
+				QueueName: queueMap[qid],
+			}
+
+			start := time.Now()
+			err := ec.executeSingleQueue(ctx, plan, qid)
+			result.Duration = time.Since(start)
+			result.Success = (err == nil)
+			result.Error = err
+
+			resultChan <- result
+		}(queueID)
+	}
+
+	wg.Wait()
+	close(resultChan)
+
+	// Display summary
+	fmt.Println()
+	fmt.Println(style.CreateBanner("Execution Summary", "📊"))
+	fmt.Println()
+
+	successCount := 0
+	var results []*QueueExecutionResult
+	for result := range resultChan {
+		results = append(results, result)
+		if result.Success {
+			successCount++
+		}
+	}
+
+	// Sort results by duration for display
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].Duration < results[j].Duration
+	})
+
+	for _, result := range results {
+		if result.Success {
+			fmt.Printf("  ✓ %s: completed (%.1fs)\n", result.QueueName, result.Duration.Seconds())
+		} else {
+			fmt.Printf("  ✗ %s: failed - %v\n", result.QueueName, result.Error)
+		}
+	}
+
+	fmt.Println()
+	fmt.Printf("Result: %d/%d succeeded\n", successCount, len(queueIDs))
+
+	if successCount < len(queueIDs) {
+		return fmt.Errorf("%d executions failed", len(queueIDs)-successCount)
+	}
+
+	return nil
+}
+
+// executeSingleQueue executes plan on a single queue
+func (ec *ExecCommand) executeSingleQueue(ctx context.Context, plan *kubiya.PlanResponse, queueID string) error {
+	// Submit and stream execution
+	_, err := ec.submitAndStreamExecution(ctx, plan, queueID)
+	return err
+}
+
