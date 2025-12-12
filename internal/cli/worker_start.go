@@ -55,13 +55,15 @@ type WorkerStartOptions struct {
 	// Python package options
 	PackageVersion string // Version of kubiya-control-plane-api to install (default: ">=0.3.0")
 	LocalWheel     string // Path to local wheel file (for development only)
+	PackageSource  string // Flexible package source: version, file path, git URL, or GitHub ref
 	NoCache        bool   // Clear pip cache before installation
 
 	// Auto-update options
 	AutoUpdate           bool   // Enable automatic updates
 	UpdateCheckInterval  string // Interval for checking updates (e.g., "5m", "10m")
 
-	cfg *config.Config
+	cfg             *config.Config
+	progressManager *output.ProgressManager
 }
 
 // getControlPlaneURL returns the effective control plane URL with priority:
@@ -97,30 +99,38 @@ Deployment Types:
 
 Environment Variables:
   KUBIYA_WORKER_PACKAGE_VERSION  - Package version to install (e.g., "0.5.0", ">=0.3.0")
+  KUBIYA_WORKER_PACKAGE_SOURCE   - Flexible package source specification
   KUBIYA_WORKER_LOCAL_WHEEL      - Path to local wheel file for development
 
 Examples:
   # Start worker locally (no Docker)
   kubiya worker start --queue-id=<queue-id> --type=local
 
-  # Start worker with specific package version
-  kubiya worker start --queue-id=<queue-id> --package-version=0.5.0
+  # Specific PyPI version
+  kubiya worker start --queue-id=<queue-id> --package-source=0.5.0
+  kubiya worker start --queue-id=<queue-id> --package-source=">=0.3.0"
 
-  # Using environment variable
-  export KUBIYA_WORKER_PACKAGE_VERSION=0.5.0
-  kubiya worker start --queue-id=<queue-id> --type=local
+  # Git commit SHA
+  kubiya worker start --queue-id=<queue-id> --package-source=git+https://github.com/kubiyabot/control-plane-api.git@abc1234
 
-  # Start worker in daemon mode with supervision
+  # Git branch
+  kubiya worker start --queue-id=<queue-id> --package-source=git+https://github.com/kubiyabot/control-plane-api.git@main
+
+  # Git tag
+  kubiya worker start --queue-id=<queue-id> --package-source=git+https://github.com/kubiyabot/control-plane-api.git@v0.5.0
+
+  # GitHub shorthand (owner/repo@ref)
+  kubiya worker start --queue-id=<queue-id> --package-source=kubiyabot/control-plane-api@abc1234
+  kubiya worker start --queue-id=<queue-id> --package-source=kubiyabot/control-plane-api@feature-branch
+
+  # Local wheel file
+  kubiya worker start --queue-id=<queue-id> --package-source=/path/to/wheel.whl
+
+  # Start worker in daemon mode
   kubiya worker start --queue-id=<queue-id> --type=local -d
 
-  # Development: use local wheel file
-  kubiya worker start --queue-id=<queue-id> --local-wheel=/path/to/wheel
-
   # Start worker in Docker
-  kubiya worker start --queue-id=<queue-id> --type=docker
-
-  # With custom image tag
-  kubiya worker start --queue-id=<queue-id> --image-tag=v1.2.3`,
+  kubiya worker start --queue-id=<queue-id> --type=docker --image-tag=v1.2.3`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return opts.Run(cmd.Context())
 		},
@@ -137,6 +147,7 @@ Examples:
 	cmd.Flags().BoolVar(&opts.AutoPull, "pull", true, "Automatically pull latest image (docker mode)")
 	cmd.Flags().StringVar(&opts.PackageVersion, "package-version", "", "Version of kubiya-control-plane-api to install from PyPI (env: KUBIYA_WORKER_PACKAGE_VERSION, empty = latest)")
 	cmd.Flags().StringVar(&opts.LocalWheel, "local-wheel", "", "Path to local wheel file for development (env: KUBIYA_WORKER_LOCAL_WHEEL)")
+	cmd.Flags().StringVar(&opts.PackageSource, "package-source", "", "Flexible package source: PyPI version, local file, git URL (git+https://github.com/org/repo.git@ref), or GitHub shorthand (owner/repo@ref) (env: KUBIYA_WORKER_PACKAGE_SOURCE)")
 	cmd.Flags().BoolVar(&opts.NoCache, "no-cache", false, "Clear pip cache before installation (useful for troubleshooting)")
 	cmd.Flags().BoolVar(&opts.AutoUpdate, "auto-update", false, "Enable automatic worker updates (config + package)")
 	cmd.Flags().StringVar(&opts.UpdateCheckInterval, "update-check-interval", "5m", "Interval for checking updates (e.g., 5m, 10m, 1h)")
@@ -148,14 +159,24 @@ Examples:
 
 func (opts *WorkerStartOptions) Run(ctx context.Context) error {
 	// Apply environment variables if flags not set
-	if opts.PackageVersion == "" {
-		if envVersion := os.Getenv("KUBIYA_WORKER_PACKAGE_VERSION"); envVersion != "" {
-			opts.PackageVersion = envVersion
+	// Priority: --package-source > env KUBIYA_WORKER_PACKAGE_SOURCE > --package-version/--local-wheel
+	if opts.PackageSource == "" {
+		if envSource := os.Getenv("KUBIYA_WORKER_PACKAGE_SOURCE"); envSource != "" {
+			opts.PackageSource = envSource
 		}
 	}
-	if opts.LocalWheel == "" {
-		if envWheel := os.Getenv("KUBIYA_WORKER_LOCAL_WHEEL"); envWheel != "" {
-			opts.LocalWheel = envWheel
+
+	// Fallback to old flags for backward compatibility
+	if opts.PackageSource == "" {
+		if opts.PackageVersion == "" {
+			if envVersion := os.Getenv("KUBIYA_WORKER_PACKAGE_VERSION"); envVersion != "" {
+				opts.PackageVersion = envVersion
+			}
+		}
+		if opts.LocalWheel == "" {
+			if envWheel := os.Getenv("KUBIYA_WORKER_LOCAL_WHEEL"); envWheel != "" {
+				opts.LocalWheel = envWheel
+			}
 		}
 	}
 
@@ -194,12 +215,14 @@ func (opts *WorkerStartOptions) RunLocal(ctx context.Context) error {
 func (opts *WorkerStartOptions) runLocalForeground(ctx context.Context) error {
 	// Create progress manager with auto-detected mode
 	pm := output.NewProgressManager()
+	opts.progressManager = pm
+	ptermManager := pm.PTermManager()
+	logger := ptermManager.Logger()
 	progress := NewWorkerStartProgress(pm)
 
-	// Show styled header with pterm
+	// Show styled header with PTerm box
 	pm.Println("")
 
-	// Create a styled header box
 	headerContent := pterm.Sprintf(
 		"%s\n\n"+
 		"  %s  %s\n"+
@@ -211,10 +234,9 @@ func (opts *WorkerStartOptions) runLocalForeground(ctx context.Context) error {
 		pterm.Bold.Sprint(opts.getControlPlaneURL()),
 	)
 
-	pterm.DefaultBox.
+	ptermManager.Box().
 		WithTitle("Worker Startup").
 		WithTitleTopCenter().
-		WithBoxStyle(pterm.NewStyle(pterm.FgCyan)).
 		Println(headerContent)
 
 	pm.Println("")
@@ -224,8 +246,11 @@ func (opts *WorkerStartOptions) runLocalForeground(ctx context.Context) error {
 		return fmt.Errorf("KUBIYA_API_KEY is required\nRun: kubiya login")
 	}
 
+	logger.Debug("Worker start initiated", "queue_id", opts.QueueID)
+
 	// Clean pip cache if requested
 	if opts.NoCache {
+		logger.Debug("Cleaning pip cache")
 		if err := cleanPipCache(pm); err != nil {
 			pm.Warning(fmt.Sprintf("Cache cleanup failed: %v", err))
 		}
@@ -247,6 +272,7 @@ func (opts *WorkerStartOptions) runLocalForeground(ctx context.Context) error {
 	// Extract just the version number from "Python 3.11.9"
 	versionOnly := strings.TrimPrefix(pythonVersion, "Python ")
 	pterm.Success.Printf("Environment ready • Python %s\n", pterm.Bold.Sprint(versionOnly))
+	logger.Debug("Environment validated", "python", versionOnly)
 
 	// Create worker directory
 	homeDir, err := os.UserHomeDir()
@@ -258,20 +284,23 @@ func (opts *WorkerStartOptions) runLocalForeground(ctx context.Context) error {
 	if err := os.MkdirAll(workerDir, 0755); err != nil {
 		return fmt.Errorf("failed to create worker directory: %w", err)
 	}
+	logger.Debug("Worker directory created", "path", workerDir)
 
 	// Create virtual environment if it doesn't exist
 	venvDir := fmt.Sprintf("%s/venv", workerDir)
 	if _, err := os.Stat(venvDir); os.IsNotExist(err) {
-		spinner := pm.Spinner("Setting up Python environment")
-		spinner.Start()
+		logger.Info("Creating virtual environment", "path", venvDir)
+		spinner := NewPTermSpinner(ptermManager, "Setting up Python environment")
 
 		venvCmd := exec.Command(pythonCmd, "-m", "venv", venvDir)
 		if err := venvCmd.Run(); err != nil {
-			spinner.Stop()
+			spinner.Fail("Failed to create virtual environment")
 			return fmt.Errorf("failed to create virtual environment: %w", err)
 		}
-		spinner.Stop()
-		pterm.Success.Println("Python environment ready")
+		spinner.Success("Python environment ready")
+		logger.Debug("Virtual environment created successfully")
+	} else {
+		logger.Debug("Using existing virtual environment", "path", venvDir)
 	}
 
 	// Determine pip path in venv (python path not needed for package binary)
@@ -285,65 +314,80 @@ func (opts *WorkerStartOptions) runLocalForeground(ctx context.Context) error {
 	}
 
 	if needsUpgrade {
-		spinner := pm.Spinner("Upgrading pip")
-		spinner.Start()
+		spinner := NewPTermSpinner(ptermManager, "Upgrading pip")
 
 		pipUpgradeCmd := exec.Command(pipPath, "install", "--quiet", "--upgrade", "pip")
 		if err := pipUpgradeCmd.Run(); err != nil {
-			spinner.Stop()
+			spinner.Fail("Failed to upgrade pip")
 			return fmt.Errorf("failed to upgrade pip: %w", err)
 		}
 
-		spinner.Stop()
-		pterm.Success.Println("pip upgraded")
+		spinner.Success("pip upgraded")
 	}
 
 	// Install worker package with extras
 	var installCmd *exec.Cmd
 	var packageSpec string
-	var installSpinner *output.Spinner
+	var installSpinner *PTermSpinner
+	var sourceDisplay string
 	skipInstall := false
+	forceReinstall := false
 
-	if opts.LocalWheel != "" {
-		// Install from local wheel (development mode) with [worker] extras
+	// Determine package source (priority: --package-source > --local-wheel > --package-version)
+	var sourceInfo *PackageSourceInfo
+	if opts.PackageSource != "" {
+		// Use new flexible package source
+		parsedSource, err := parsePackageSource(opts.PackageSource)
+		if err != nil {
+			return fmt.Errorf("failed to parse package source: %w", err)
+		}
+		sourceInfo = parsedSource
+		packageSpec = parsedSource.Spec
+		sourceDisplay = parsedSource.Display
+		logger.Debug("Using package source", "source", sourceDisplay)
+
+		// For git sources and local files, always force reinstall
+		if parsedSource.Type == PackageSourceGitURL ||
+			parsedSource.Type == PackageSourceGitHubShorthand ||
+			parsedSource.Type == PackageSourceLocalFile {
+			forceReinstall = true
+		}
+	} else if opts.LocalWheel != "" {
+		// Backward compatibility: --local-wheel
 		if _, err := os.Stat(opts.LocalWheel); os.IsNotExist(err) {
 			return fmt.Errorf("local wheel file not found: %s", opts.LocalWheel)
 		}
-
-		// For local wheels, always reinstall (development mode)
 		packageSpec = opts.LocalWheel + "[worker]"
-
-		// Show spinner during installation
-		installSpinner = pm.Spinner("Installing dependencies from local wheel")
-		installSpinner.Start()
-
-		// Add timeout context for pip install (max 300 seconds = 5 minutes)
-		installCtx, installCancel := context.WithTimeout(context.Background(), 300*time.Second)
-		defer installCancel()
-		installCmd = exec.CommandContext(installCtx, pipPath, "install", "--quiet", "--force-reinstall", packageSpec)
-	} else {
-		// Install from PyPI (production mode) with [worker] extras
-		// Build package spec - handle both formats: ">=0.3.0" or "0.3.0"
-		packageSpec = "kubiya-control-plane-api"
-		if opts.PackageVersion != "" {
-			// If version doesn't start with operator, assume ==
-			if !strings.HasPrefix(opts.PackageVersion, ">=") &&
-				!strings.HasPrefix(opts.PackageVersion, "==") &&
-				!strings.HasPrefix(opts.PackageVersion, "~=") &&
-				!strings.HasPrefix(opts.PackageVersion, "<") &&
-				!strings.HasPrefix(opts.PackageVersion, ">") {
-				packageSpec += "==" + opts.PackageVersion
-			} else {
-				packageSpec += opts.PackageVersion
-			}
+		sourceDisplay = fmt.Sprintf("local file: %s", opts.LocalWheel)
+		forceReinstall = true
+	} else if opts.PackageVersion != "" {
+		// Backward compatibility: --package-version
+		baseSpec := "kubiya-control-plane-api"
+		if !strings.HasPrefix(opts.PackageVersion, ">=") &&
+			!strings.HasPrefix(opts.PackageVersion, "==") &&
+			!strings.HasPrefix(opts.PackageVersion, "~=") &&
+			!strings.HasPrefix(opts.PackageVersion, "<") &&
+			!strings.HasPrefix(opts.PackageVersion, ">") {
+			baseSpec += "==" + opts.PackageVersion
+		} else {
+			baseSpec += opts.PackageVersion
 		}
+		packageSpec = baseSpec + "[worker]"
+		sourceDisplay = fmt.Sprintf("PyPI: %s", opts.PackageVersion)
+	} else {
+		// Default: latest from PyPI
+		packageSpec = "kubiya-control-plane-api[worker]"
+		sourceDisplay = "PyPI: latest"
+	}
 
+	// Check if we can skip installation (only for PyPI sources)
+	workerBinary := fmt.Sprintf("%s/bin/kubiya-control-plane-worker", venvDir)
+	if !forceReinstall && (sourceInfo == nil || sourceInfo.Type == PackageSourcePyPI) {
 		// Check if package is already installed with correct version
 		packageName, desiredVersion := parsePackageSpec(packageSpec)
 		satisfied, installedVersion, err := checkPackageVersion(venvDir, packageName, desiredVersion)
 
-		// Also check if worker binary exists and is executable
-		workerBinary := fmt.Sprintf("%s/bin/kubiya-control-plane-worker", venvDir)
+		// Also check if worker binary exists
 		binaryExists := false
 		if _, err := os.Stat(workerBinary); err == nil {
 			binaryExists = true
@@ -353,37 +397,43 @@ func (opts *WorkerStartOptions) runLocalForeground(ctx context.Context) error {
 		if err == nil && satisfied && binaryExists {
 			skipInstall = true
 			pterm.Info.Printf("Using cached worker (v%s)\n", installedVersion)
+			logger.Debug("Skipping installation, using cached version", "version", installedVersion)
 		} else if !binaryExists {
-			// Binary missing - force reinstall
-			skipInstall = false
 			pterm.Info.Println("Worker binary missing, reinstalling...")
 		} else if !satisfied {
-			// Version mismatch - reinstall
-			skipInstall = false
 			if installedVersion != "" {
 				pterm.Info.Printf("Upgrading worker (v%s → %s)...\n", installedVersion, desiredVersion)
 			}
 		}
-
-		if !skipInstall {
-			// Add [worker] extras for all dependencies
-			packageSpec += "[worker]"
-
-			// Show spinner during installation
-			installSpinner = pm.Spinner("Installing dependencies")
-			installSpinner.Start()
-
-			// Add timeout context for pip install (max 300 seconds = 5 minutes)
-			installCtx, installCancel := context.WithTimeout(context.Background(), 300*time.Second)
-			defer installCancel()
-			installCmd = exec.CommandContext(installCtx, pipPath, "install", "--quiet", packageSpec)
-		}
 	}
 
 	if !skipInstall {
+		// Add timeout context for pip install (max 300 seconds = 5 minutes)
+		installCtx, installCancel := context.WithTimeout(context.Background(), 300*time.Second)
+		defer installCancel()
+
+		// Build pip install command
+		pipArgs := []string{"install", "--quiet"}
+		if forceReinstall {
+			pipArgs = append(pipArgs, "--force-reinstall")
+		}
+		pipArgs = append(pipArgs, packageSpec)
+
+		installCmd = exec.CommandContext(installCtx, pipPath, pipArgs...)
+	}
+
+	if !skipInstall {
+		// Show simple, short spinner message
+		installSpinner = NewPTermSpinner(ptermManager, "Installing dependencies")
+		logger.Debug("Installing worker package", "package", packageSpec)
+
 		err := installCmd.Run()
 		if installSpinner != nil {
-			installSpinner.Stop()
+			if err != nil {
+				installSpinner.Fail("Failed to install dependencies")
+			} else {
+				installSpinner.Success("Dependencies installed")
+			}
 		}
 
 		if err != nil {
@@ -401,10 +451,10 @@ func (opts *WorkerStartOptions) runLocalForeground(ctx context.Context) error {
 		// Step 2: Dependencies
 		pterm.Print(pterm.LightCyan("[2/3] "))
 		pterm.Success.Println("Dependencies installed")
+		logger.Debug("Dependencies installed successfully", "package", packageSpec)
 	}
 
-	// Verify worker binary is available
-	workerBinary := fmt.Sprintf("%s/bin/kubiya-control-plane-worker", venvDir)
+	// Verify worker binary is available (workerBinary already declared above)
 	if _, err := os.Stat(workerBinary); os.IsNotExist(err) {
 		return fmt.Errorf("worker binary not found at %s\nPackage may not have installed correctly", workerBinary)
 	}
@@ -463,11 +513,12 @@ func (opts *WorkerStartOptions) runLocalForeground(ctx context.Context) error {
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 
 	// Start worker process
-	startSpinner := pm.Spinner("Starting worker process")
-	startSpinner.Start()
+	startSpinner := NewPTermSpinner(ptermManager, "Starting worker process")
 
 	// Prepare worker command
 	controlPlaneURL := opts.getControlPlaneURL()
+	logger.Debug("Preparing worker command", "binary", workerBinary, "queue_id", opts.QueueID)
+
 	workerCmd := exec.Command(
 		workerBinary,
 		"--queue-id", opts.QueueID,
@@ -485,6 +536,7 @@ func (opts *WorkerStartOptions) runLocalForeground(ctx context.Context) error {
 	// Enable single execution mode for ephemeral queues
 	if opts.SingleExecutionMode {
 		workerEnv = append(workerEnv, "SINGLE_EXECUTION=true")
+		logger.Debug("Single execution mode enabled")
 	}
 
 	workerCmd.Env = append(os.Environ(), workerEnv...)
@@ -495,18 +547,17 @@ func (opts *WorkerStartOptions) runLocalForeground(ctx context.Context) error {
 
 	// Start the worker process
 	if err := workerCmd.Start(); err != nil {
-		startSpinner.Stop()
+		startSpinner.Fail("Failed to start worker")
 		return fmt.Errorf("failed to start worker: %w", err)
 	}
 
 	// Give worker a moment to initialize
 	time.Sleep(500 * time.Millisecond)
 
-	startSpinner.Stop()
-
 	// Step 3: Worker launch
 	pterm.Print(pterm.LightCyan("[3/3] "))
-	pterm.Success.Println("Worker started")
+	startSpinner.Success("Worker started")
+	logger.Info("Worker process started successfully", "pid", workerCmd.Process.Pid)
 
 	pm.Println("")
 
@@ -706,6 +757,95 @@ func getPythonInstallInstructions() string {
 	default:
 		return "  Please visit https://www.python.org/downloads/ to download Python"
 	}
+}
+
+// PackageSourceType represents the type of package source
+type PackageSourceType int
+
+const (
+	PackageSourcePyPI PackageSourceType = iota
+	PackageSourceLocalFile
+	PackageSourceGitURL
+	PackageSourceGitHubShorthand
+)
+
+// PackageSourceInfo contains parsed package source information
+type PackageSourceInfo struct {
+	Type       PackageSourceType
+	Spec       string // Full pip install spec
+	Display    string // Human-readable display name
+	Repository string // For git sources
+	Ref        string // For git sources (commit, branch, tag)
+}
+
+// parsePackageSource parses a flexible package source specification
+func parsePackageSource(source string) (*PackageSourceInfo, error) {
+	if source == "" {
+		return nil, fmt.Errorf("package source is empty")
+	}
+
+	// Check if it's a local file (absolute or relative path, or ends with .whl)
+	if strings.HasSuffix(source, ".whl") || strings.Contains(source, "/") || strings.Contains(source, "\\") {
+		if _, err := os.Stat(source); err == nil {
+			return &PackageSourceInfo{
+				Type:    PackageSourceLocalFile,
+				Spec:    source + "[worker]",
+				Display: fmt.Sprintf("local file: %s", source),
+			}, nil
+		}
+		// If file doesn't exist but looks like a path, still treat as local file (will error later)
+		if strings.HasPrefix(source, "/") || strings.HasPrefix(source, "./") || strings.HasPrefix(source, "../") {
+			return &PackageSourceInfo{
+				Type:    PackageSourceLocalFile,
+				Spec:    source + "[worker]",
+				Display: fmt.Sprintf("local file: %s", source),
+			}, nil
+		}
+	}
+
+	// Check if it's a git URL (git+https://... or git+ssh://...)
+	if strings.HasPrefix(source, "git+") {
+		return &PackageSourceInfo{
+			Type:    PackageSourceGitURL,
+			Spec:    source + "#egg=kubiya-control-plane-api[worker]",
+			Display: fmt.Sprintf("git: %s", source),
+		}, nil
+	}
+
+	// Check if it's GitHub shorthand (owner/repo@ref)
+	if strings.Contains(source, "/") && strings.Contains(source, "@") {
+		parts := strings.SplitN(source, "@", 2)
+		if len(parts) == 2 {
+			repo := parts[0]
+			ref := parts[1]
+			gitURL := fmt.Sprintf("git+https://github.com/%s.git@%s", repo, ref)
+			return &PackageSourceInfo{
+				Type:       PackageSourceGitHubShorthand,
+				Spec:       gitURL + "#egg=kubiya-control-plane-api[worker]",
+				Display:    fmt.Sprintf("GitHub: %s @ %s", repo, ref),
+				Repository: repo,
+				Ref:        ref,
+			}, nil
+		}
+	}
+
+	// Otherwise treat as PyPI version specifier
+	packageSpec := "kubiya-control-plane-api"
+	if !strings.HasPrefix(source, ">=") &&
+		!strings.HasPrefix(source, "==") &&
+		!strings.HasPrefix(source, "~=") &&
+		!strings.HasPrefix(source, "<") &&
+		!strings.HasPrefix(source, ">") {
+		packageSpec += "==" + source
+	} else {
+		packageSpec += source
+	}
+
+	return &PackageSourceInfo{
+		Type:    PackageSourcePyPI,
+		Spec:    packageSpec + "[worker]",
+		Display: fmt.Sprintf("PyPI: %s", source),
+	}, nil
 }
 
 // getVenvPaths returns the pip and python paths for the given venv directory
