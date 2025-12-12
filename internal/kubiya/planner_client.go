@@ -145,13 +145,16 @@ func (pc *PlannerClient) StreamPlanProgress(ctx context.Context, req *PlanReques
 				// Send event
 				select {
 				case eventChan <- currentEvent:
+					// Event sent successfully
 				case <-ctx.Done():
 					return
 				}
 
-				// Handle complete event - end stream
+				// Handle complete event - continue reading until EOF
 				if currentEvent.Type == "complete" {
-					return
+					// Give receiver time to process the complete event before closing channel
+					// Sleep briefly to ensure the event is consumed from the channel
+					time.Sleep(100 * time.Millisecond)
 				}
 
 				// Reset for next event

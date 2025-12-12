@@ -11,6 +11,7 @@ type PlanRequest struct {
 	Environments []EnvironmentInfo   `json:"environments"`
 	WorkerQueues []WorkerQueueInfo   `json:"worker_queues"`
 	OutputFormat string              `json:"output_format,omitempty"` // json, yaml, text
+	QuickMode    bool                `json:"quick_mode,omitempty"`    // Fast planning for local execution - uses simplified LLM prompt
 }
 
 // PlanResponse represents a task plan
@@ -53,7 +54,7 @@ type TaskItem struct {
 	Description  string     `json:"description,omitempty"`
 	Status       string     `json:"status"` // pending, in_progress, done
 	Priority     string     `json:"priority"` // low, medium, high
-	Dependencies []string   `json:"dependencies,omitempty"`
+	Dependencies []int      `json:"dependencies,omitempty"` // Task IDs that must be completed first
 	Subtasks     []TaskItem `json:"subtasks,omitempty"`
 }
 

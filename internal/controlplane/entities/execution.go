@@ -18,7 +18,8 @@ type ExecutionEnvironmentOverride struct {
 type ExecuteAgentRequest struct {
 	Prompt               string                        `json:"prompt"`
 	SystemPrompt         *string                       `json:"system_prompt,omitempty"`
-	WorkerQueueID        string                        `json:"worker_queue_id"` // Required: Worker queue UUID
+	WorkerQueueID        *string                       `json:"worker_queue_id,omitempty"` // Optional: Worker queue UUID (auto-selected if not provided)
+	ParentExecutionID    *string                       `json:"parent_execution_id,omitempty"` // Optional: Parent execution ID for conversation continuation
 	Stream               *bool                         `json:"stream,omitempty"`
 	UserMetadata         map[string]interface{}        `json:"user_metadata,omitempty"`
 	ExecutionEnvironment *ExecutionEnvironmentOverride `json:"execution_environment,omitempty"`
@@ -26,11 +27,12 @@ type ExecuteAgentRequest struct {
 
 // ExecuteTeamRequest represents a request to execute a team
 type ExecuteTeamRequest struct {
-	Prompt          string                 `json:"prompt"`
-	SystemPrompt    *string                `json:"system_prompt,omitempty"`
-	WorkerQueueID   string                 `json:"worker_queue_id"` // Required: Worker queue UUID
-	Stream          *bool                  `json:"stream,omitempty"`
-	UserMetadata    map[string]interface{} `json:"user_metadata,omitempty"`
+	Prompt            string                 `json:"prompt"`
+	SystemPrompt      *string                `json:"system_prompt,omitempty"`
+	WorkerQueueID     *string                `json:"worker_queue_id,omitempty"` // Optional: Worker queue UUID (auto-selected if not provided)
+	ParentExecutionID *string                `json:"parent_execution_id,omitempty"` // Optional: Parent execution ID for conversation continuation
+	Stream            *bool                  `json:"stream,omitempty"`
+	UserMetadata      map[string]interface{} `json:"user_metadata,omitempty"`
 }
 
 // AgentExecutionStatus represents the status of an agent execution

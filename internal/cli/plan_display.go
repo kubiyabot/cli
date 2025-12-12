@@ -182,43 +182,31 @@ func (pd *PlanDisplayer) displayCostEstimate() {
 // offerDrillDown offers interactive drill-down options
 func (pd *PlanDisplayer) offerDrillDown() error {
 	for {
-		fmt.Println()
-		fmt.Println(style.HeadingStyle.Render("What would you like to see?"))
-		fmt.Println()
-
-		options := []string{
-			"1. Task Breakdown",
-			"2. Detailed Cost Analysis",
-			"3. Risks & Prerequisites",
-			"4. Full Plan (JSON)",
-			"5. Continue to Approval",
+		choice, err := ShowPlanMenu()
+		if err != nil {
+			// If menu fails, default to continuing (don't block execution)
+			fmt.Fprintf(os.Stderr, "DEBUG: Menu error: %v, continuing to approval\n", err)
+			return nil
 		}
 
-		for _, opt := range options {
-			fmt.Println("  " + opt)
-		}
-
-		fmt.Println()
-		fmt.Print(style.UserPromptStyle.Render(" Choice "))
-		fmt.Print(" ")
-
-		reader := bufio.NewReader(os.Stdin)
-		choice, _ := reader.ReadString('\n')
-		choice = strings.TrimSpace(choice)
-
+		// Handle user choice
 		switch choice {
-		case "1":
+		case -1:
+			// User quit with q or Ctrl+C
+			return fmt.Errorf("user cancelled")
+		case 0:
 			pd.displayTaskBreakdown()
-		case "2":
+		case 1:
 			pd.displayDetailedCosts()
-		case "3":
+		case 2:
 			pd.displayRisksAndPrereqs()
-		case "4":
+		case 3:
 			pd.displayJSON()
-		case "5":
+		case 4:
 			return nil // Continue to approval
 		default:
-			fmt.Println(style.CreateWarningBox("Invalid choice, please try again"))
+			// Should never happen with bubbletea, but handle gracefully
+			return nil
 		}
 	}
 }
