@@ -381,7 +381,7 @@ func TestStreamExecutionOutput(t *testing.T) {
 			// Create mock SSE server
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				assert.Equal(t, "GET", r.Method)
-				assert.Contains(t, r.URL.Path, "/api/v1/executions/"+tt.executionID+"/events")
+				assert.Contains(t, r.URL.Path, "/api/v1/executions/"+tt.executionID+"/stream")
 				assert.Equal(t, "text/event-stream", r.Header.Get("Accept"))
 
 				w.Header().Set("Content-Type", "text/event-stream")
