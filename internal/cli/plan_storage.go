@@ -8,6 +8,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/kubiyabot/cli/internal/kubiya"
 )
 
@@ -51,7 +52,15 @@ func (psm *PlanStorageManager) SavePlan(plan *kubiya.PlanResponse, prompt string
 		Prompt:  prompt,
 	}
 
-	filename := fmt.Sprintf("%s.json", plan.PlanID)
+	// Generate a fallback plan ID if empty
+	planID := plan.PlanID
+	if planID == "" {
+		planID = uuid.New().String()
+		// Update the plan with the generated ID
+		plan.PlanID = planID
+	}
+
+	filename := fmt.Sprintf("%s.json", planID)
 	filePath := filepath.Join(psm.planDir, filename)
 	saved.FilePath = filePath
 

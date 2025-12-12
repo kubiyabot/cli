@@ -241,7 +241,8 @@ func (ec *ExecCommand) ExecuteWithPlanning(ctx context.Context, prompt string) e
 	}
 
 	fmt.Println()
-	displayer := NewPlanDisplayer(plan, ec.outputFormat, !ec.nonInteractive)
+	// Displayer should be non-interactive if either --yes or --non-interactive is specified
+	displayer := NewPlanDisplayer(plan, ec.outputFormat, !ec.nonInteractive && !ec.autoApprove)
 
 	if err := displayer.DisplayPlan(); err != nil {
 		return err
@@ -724,7 +725,8 @@ func (ec *ExecCommand) ExecuteFromPlan(ctx context.Context, planFile string) err
 	fmt.Println()
 
 	// 3. Display plan summary
-	displayer := NewPlanDisplayer(savedPlan.Plan, ec.outputFormat, !ec.autoApprove)
+	// Displayer should be non-interactive if either --yes or --non-interactive is specified
+	displayer := NewPlanDisplayer(savedPlan.Plan, ec.outputFormat, !ec.autoApprove && !ec.nonInteractive)
 
 	if err := displayer.DisplayPlan(); err != nil {
 		return err
