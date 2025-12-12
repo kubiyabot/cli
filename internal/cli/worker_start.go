@@ -37,10 +37,11 @@ var requirementsTxt string
 
 type WorkerStartOptions struct {
 	// Worker configuration
-	QueueID         string
-	DeploymentType  string // "docker" or "local"
-	DaemonMode      bool   // Run in background with supervision
-	ControlPlaneURL string // Override control plane URL
+	QueueID              string
+	DeploymentType       string // "docker" or "local"
+	DaemonMode           bool   // Run in background with supervision
+	SingleExecutionMode  bool   // Exit after completing one task (for ephemeral local execution)
+	ControlPlaneURL      string // Override control plane URL
 
 	// Docker options
 	Image     string
@@ -316,7 +317,10 @@ func (opts *WorkerStartOptions) runLocalForeground(ctx context.Context) error {
 		installSpinner = pm.Spinner("Installing dependencies from local wheel")
 		installSpinner.Start()
 
-		installCmd = exec.Command(pipPath, "install", "--quiet", "--force-reinstall", packageSpec)
+		// Add timeout context for pip install (max 300 seconds = 5 minutes)
+		installCtx, installCancel := context.WithTimeout(context.Background(), 300*time.Second)
+		defer installCancel()
+		installCmd = exec.CommandContext(installCtx, pipPath, "install", "--quiet", "--force-reinstall", packageSpec)
 	} else {
 		// Install from PyPI (production mode) with [worker] extras
 		// Build package spec - handle both formats: ">=0.3.0" or "0.3.0"
@@ -336,9 +340,29 @@ func (opts *WorkerStartOptions) runLocalForeground(ctx context.Context) error {
 
 		// Check if package is already installed with correct version
 		packageName, desiredVersion := parsePackageSpec(packageSpec)
-		satisfied, _, err := checkPackageVersion(venvDir, packageName, desiredVersion)
-		if err == nil && satisfied {
+		satisfied, installedVersion, err := checkPackageVersion(venvDir, packageName, desiredVersion)
+
+		// Also check if worker binary exists and is executable
+		workerBinary := fmt.Sprintf("%s/bin/kubiya-control-plane-worker", venvDir)
+		binaryExists := false
+		if _, err := os.Stat(workerBinary); err == nil {
+			binaryExists = true
+		}
+
+		// Skip install only if version is satisfied AND binary exists
+		if err == nil && satisfied && binaryExists {
 			skipInstall = true
+			pterm.Info.Printf("Using cached worker (v%s)\n", installedVersion)
+		} else if !binaryExists {
+			// Binary missing - force reinstall
+			skipInstall = false
+			pterm.Info.Println("Worker binary missing, reinstalling...")
+		} else if !satisfied {
+			// Version mismatch - reinstall
+			skipInstall = false
+			if installedVersion != "" {
+				pterm.Info.Printf("Upgrading worker (v%s → %s)...\n", installedVersion, desiredVersion)
+			}
 		}
 
 		if !skipInstall {
@@ -349,23 +373,31 @@ func (opts *WorkerStartOptions) runLocalForeground(ctx context.Context) error {
 			installSpinner = pm.Spinner("Installing dependencies")
 			installSpinner.Start()
 
-			installCmd = exec.Command(pipPath, "install", "--quiet", packageSpec)
+			// Add timeout context for pip install (max 300 seconds = 5 minutes)
+			installCtx, installCancel := context.WithTimeout(context.Background(), 300*time.Second)
+			defer installCancel()
+			installCmd = exec.CommandContext(installCtx, pipPath, "install", "--quiet", packageSpec)
 		}
 	}
 
 	if !skipInstall {
-		if err := installCmd.Run(); err != nil {
-			if installSpinner != nil {
-				installSpinner.Stop()
+		err := installCmd.Run()
+		if installSpinner != nil {
+			installSpinner.Stop()
+		}
+
+		if err != nil {
+			// Check if error is due to timeout
+			if err == context.DeadlineExceeded || strings.Contains(err.Error(), "context deadline exceeded") {
+				return fmt.Errorf("dependency installation timed out after 5 minutes - this may indicate network issues or slow PyPI mirrors")
 			}
+
 			if opts.LocalWheel != "" {
 				return fmt.Errorf("failed to install worker package from local wheel: %w", err)
 			}
 			return fmt.Errorf("failed to install worker package from PyPI: %w\nMake sure kubiya-control-plane-api is published", err)
 		}
-		if installSpinner != nil {
-			installSpinner.Stop()
-		}
+
 		// Step 2: Dependencies
 		pterm.Print(pterm.LightCyan("[2/3] "))
 		pterm.Success.Println("Dependencies installed")
@@ -444,11 +476,18 @@ func (opts *WorkerStartOptions) runLocalForeground(ctx context.Context) error {
 	)
 
 	// Set environment variables - take precedence over CLI args
-	workerCmd.Env = append(os.Environ(),
+	workerEnv := []string{
 		fmt.Sprintf("QUEUE_ID=%s", opts.QueueID),
 		fmt.Sprintf("KUBIYA_API_KEY=%s", opts.cfg.APIKey),
 		fmt.Sprintf("CONTROL_PLANE_URL=%s", controlPlaneURL),
-	)
+	}
+
+	// Enable single execution mode for ephemeral queues
+	if opts.SingleExecutionMode {
+		workerEnv = append(workerEnv, "SINGLE_EXECUTION=true")
+	}
+
+	workerCmd.Env = append(os.Environ(), workerEnv...)
 
 	// Connect stdout/stderr
 	workerCmd.Stdout = os.Stdout

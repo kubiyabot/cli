@@ -82,7 +82,7 @@ func (c *Client) StreamExecutionOutput(ctx context.Context, executionID string) 
 
 		// For now, fall back to SSE polling endpoint
 		// TODO: Implement WebSocket support
-		sseURL := fmt.Sprintf("%s/api/v1/executions/%s/events", c.BaseURL, executionID)
+		sseURL := fmt.Sprintf("%s/api/v1/executions/%s/stream", c.BaseURL, executionID)
 
 		req, err := http.NewRequest("GET", sseURL, nil)
 		if err != nil {
@@ -96,7 +96,11 @@ func (c *Client) StreamExecutionOutput(ctx context.Context, executionID string) 
 		req.Header.Set("Connection", "keep-alive")
 		req.Header.Set("Authorization", "Bearer "+c.APIKey)
 
-		resp, err := c.HTTPClient.Do(req)
+		// Use a client with no timeout for SSE streaming
+		streamClient := &http.Client{
+			Timeout: 0, // No timeout for SSE streams
+		}
+		resp, err := streamClient.Do(req)
 		if err != nil {
 			errChan <- fmt.Errorf("failed to connect to stream: %w", err)
 			return
