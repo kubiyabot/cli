@@ -526,6 +526,12 @@ func (opts *WorkerStartOptions) runLocalForeground(ctx context.Context) error {
 		"--control-plane-url", controlPlaneURL,
 	)
 
+	// Set process group so we can kill all child processes
+	// This is critical for Python processes that may spawn subprocesses
+	workerCmd.SysProcAttr = &syscall.SysProcAttr{
+		Setpgid: true, // Create new process group
+	}
+
 	// Set environment variables - take precedence over CLI args
 	workerEnv := []string{
 		fmt.Sprintf("QUEUE_ID=%s", opts.QueueID),
@@ -596,19 +602,104 @@ func (opts *WorkerStartOptions) runLocalForeground(ctx context.Context) error {
 		done <- nil
 	}()
 
-	// Wait for signal, completion, or update trigger
+	// Wait for signal, completion, update trigger, or context cancellation
 	for {
 		select {
+		case <-ctx.Done():
+			// Context cancelled (e.g., by parent process)
+			pm.Println("\nContext cancelled, shutting down...")
+			progress.Info("Gracefully stopping worker")
+
+			// Terminate worker process if running (same cleanup as SIGINT)
+			if workerCmd != nil && workerCmd.Process != nil {
+				// Send SIGTERM to entire process group
+				pgid := workerCmd.Process.Pid
+				if err := syscall.Kill(-pgid, syscall.SIGTERM); err != nil {
+					// Fallback to single process if process group kill fails
+					pm.Warning(fmt.Sprintf("Failed to send SIGTERM to process group: %v", err))
+					if err := workerCmd.Process.Signal(syscall.SIGTERM); err != nil {
+						pm.Warning(fmt.Sprintf("Failed to send SIGTERM to process: %v", err))
+					}
+				}
+
+				// Wait for process to exit gracefully (with shorter timeout for context cancellation)
+				shutdownTimer := time.NewTimer(10 * time.Second)
+				select {
+				case err := <-done:
+					shutdownTimer.Stop()
+					if err != nil {
+						progress.Info("Worker process stopped")
+					} else {
+						progress.Success("Worker stopped successfully")
+					}
+				case <-shutdownTimer.C:
+					// Timeout - force kill
+					pm.Warning("Worker did not stop gracefully, forcing shutdown...")
+					if err := syscall.Kill(-pgid, syscall.SIGKILL); err != nil {
+						if err := workerCmd.Process.Kill(); err != nil {
+							pm.Warning(fmt.Sprintf("Failed to kill process: %v", err))
+						}
+					}
+					time.Sleep(500 * time.Millisecond)
+					select {
+					case <-done:
+					default:
+					}
+					progress.Info("Worker process terminated")
+				}
+			}
+			return ctx.Err()
+
 		case <-sigChan:
 			pm.Println("\nShutting down...")
 			progress.Info("Gracefully stopping worker")
 
 			// Terminate worker process if running
 			if workerCmd != nil && workerCmd.Process != nil {
-				workerCmd.Process.Signal(syscall.SIGTERM)
+				// Send SIGTERM to entire process group (negative PID)
+				// This ensures all child processes are also terminated
+				pgid := workerCmd.Process.Pid
+				if err := syscall.Kill(-pgid, syscall.SIGTERM); err != nil {
+					// Fallback to single process if process group kill fails
+					pm.Warning(fmt.Sprintf("Failed to send SIGTERM to process group: %v", err))
+					if err := workerCmd.Process.Signal(syscall.SIGTERM); err != nil {
+						pm.Warning(fmt.Sprintf("Failed to send SIGTERM to process: %v", err))
+					}
+				}
+
+				// Wait for process to exit gracefully (with timeout)
+				// The 'done' channel is already waiting on workerCmd.Wait()
+				shutdownTimer := time.NewTimer(30 * time.Second)
+				select {
+				case err := <-done:
+					// Process exited
+					shutdownTimer.Stop()
+					if err != nil {
+						progress.Info("Worker process stopped")
+					} else {
+						progress.Success("Worker stopped successfully")
+					}
+				case <-shutdownTimer.C:
+					// Timeout - force kill entire process group
+					pm.Warning("Worker did not stop gracefully, forcing shutdown...")
+					if err := syscall.Kill(-pgid, syscall.SIGKILL); err != nil {
+						// Fallback to single process kill
+						if err := workerCmd.Process.Kill(); err != nil {
+							pm.Warning(fmt.Sprintf("Failed to kill process: %v", err))
+						}
+					}
+					// Wait a bit for the kill to take effect and drain done channel
+					time.Sleep(500 * time.Millisecond)
+					select {
+					case <-done:
+						// Process finally exited
+					default:
+						// Process still not responding
+					}
+					progress.Info("Worker process terminated")
+				}
 			}
 
-			progress.Success("Worker stopped successfully")
 			return nil
 
 		case err := <-done:
