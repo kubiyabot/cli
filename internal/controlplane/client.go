@@ -279,3 +279,21 @@ func (c *Client) getExternal(url string, target interface{}) error {
 
 	return nil
 }
+
+// ClientConfig represents configuration for the CLI client
+type ClientConfig struct {
+	ContextGraphAPIBase string `json:"context_graph_api_base"`
+	OrganizationID      string `json:"organization_id"`
+	OrganizationName    string `json:"organization_name"`
+}
+
+// GetClientConfig fetches client configuration from the control plane
+// This allows CLI to discover backend service URLs and connect directly
+func (c *Client) GetClientConfig() (*ClientConfig, error) {
+	var config ClientConfig
+	err := c.get("/api/v1/client/config", &config)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch client config: %w", err)
+	}
+	return &config, nil
+}

@@ -184,6 +184,58 @@ func (pb *PTermProgressBar) ShowResourcesSummary(summary string) {
 	box.Println(summary)
 }
 
+// ShowToolResult displays the result of a tool execution
+func (pb *PTermProgressBar) ShowToolResult(toolName string, status string, duration float64) {
+	pb.mu.Lock()
+	defer pb.mu.Unlock()
+
+	if pb.manager.IsDisabled() {
+		if status == "success" {
+			fmt.Printf("  ✓ %s completed (%.2fs)\n", toolName, duration)
+		} else {
+			fmt.Printf("  ✗ %s failed (%.2fs)\n", toolName, duration)
+		}
+		return
+	}
+
+	logger := pb.manager.Logger()
+	if status == "success" {
+		logger.Success(fmt.Sprintf("✓ %s completed (%.2fs)", toolName, duration))
+	} else {
+		logger.Error(fmt.Sprintf("✗ %s failed (%.2fs)", toolName, duration))
+	}
+}
+
+// ShowStepStarted displays when a workflow step starts
+func (pb *PTermProgressBar) ShowStepStarted(stepName string, stepDescription string) {
+	pb.mu.Lock()
+	defer pb.mu.Unlock()
+
+	if pb.manager.IsDisabled() {
+		fmt.Printf("\n▶ %s\n  %s\n", stepName, stepDescription)
+		return
+	}
+
+	// Use PTerm section for step changes
+	ptermlib.DefaultSection.Println(fmt.Sprintf("⚙️  %s", stepName))
+	logger := pb.manager.Logger()
+	logger.Info(stepDescription)
+}
+
+// ShowStepCompleted displays when a workflow step completes
+func (pb *PTermProgressBar) ShowStepCompleted(stepName string) {
+	pb.mu.Lock()
+	defer pb.mu.Unlock()
+
+	if pb.manager.IsDisabled() {
+		fmt.Printf("  ✓ %s complete\n", stepName)
+		return
+	}
+
+	logger := pb.manager.Logger()
+	logger.Success(fmt.Sprintf("✓ %s complete", stepName))
+}
+
 // ShowError displays an error message
 func (pb *PTermProgressBar) ShowError(message string) {
 	pb.mu.Lock()

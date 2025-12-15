@@ -1,12 +1,14 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
 
 	"github.com/kubiyabot/cli/internal/config"
+	"github.com/kubiyabot/cli/internal/contextgraph"
 	"github.com/kubiyabot/cli/internal/controlplane"
 	"github.com/kubiyabot/cli/internal/style"
 	"github.com/spf13/cobra"
@@ -54,6 +56,7 @@ Use this to understand your organization's infrastructure and context.`,
 		newGraphIntegrationsCommand(cfg),
 		newGraphSubgraphCommand(cfg),
 		newGraphQueryCommand(cfg),
+		newGraphSearchCommand(cfg),
 	)
 
 	return cmd
@@ -815,4 +818,246 @@ func printGraphJSON(data interface{}) error {
 	encoder := json.NewEncoder(os.Stdout)
 	encoder.SetIndent("", "  ")
 	return encoder.Encode(data)
+}
+
+// newGraphSearchCommand creates the intelligent search command
+func newGraphSearchCommand(cfg *config.Config) *cobra.Command {
+	var (
+		maxTurns             int
+		model                string
+		temperature          float64
+		integration          string
+		labelFilter          string
+		enableSemanticSearch bool
+		enableCypherQueries  bool
+		strategy             string
+		sessionID            string
+		stream               bool
+		outputFormat         string
+	)
+
+	cmd := &cobra.Command{
+		Use:   "search <query>",
+		Short: "Perform AI-powered intelligent graph search",
+		Long: `AI-powered intelligent search using natural language to query the context graph.
+
+Features:
+  🤖 AI-powered: Claude-based agent with custom graph tools
+  🎯 Flexible: Configurable model, temperature, and search parameters
+  🔍 Smart tools: 10 graph operations (property search, relationships, subgraphs, etc.)
+  📡 Streaming: Real-time progress updates (use --stream flag)
+
+The agent has access to specialized tools:
+  - search_nodes_by_property - Exact property matching
+  - search_nodes_by_text_pattern - Regex pattern matching
+  - get_node_by_id - Retrieve specific node
+  - get_node_relationships - Explore connections
+  - get_subgraph - Extract neighborhood
+  - get_available_labels - Schema discovery
+  - get_available_relationship_types - Relationship types
+  - get_graph_statistics - High-level metrics
+  - search_nodes_semantic - AI semantic search (conditional)
+  - execute_read_only_cypher - Custom queries (conditional)`,
+		Example: `  # Simple search
+  kubiya graph search "Find all production environments in AWS"
+
+  # Search with streaming
+  kubiya graph search "Show me critical security issues" --stream
+
+  # Advanced search with parameters
+  kubiya graph search "Find Kubernetes clusters" \
+    --max-turns 10 \
+    --model kubiya/claude-opus-4 \
+    --temperature 0.5 \
+    --integration AWS
+
+  # Continue a conversation
+  kubiya graph search "Tell me more about the first one" --session abc-123-def
+
+  # Search in JSON format
+  kubiya graph search "List all teams" --output json`,
+		Args: cobra.MinimumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			query := strings.Join(args, " ")
+
+			// Get control plane client to fetch config
+			cpClient, err := controlplane.New(cfg.APIKey, cfg.Debug)
+			if err != nil {
+				return fmt.Errorf("failed to create control plane client: %w", err)
+			}
+
+			// Fetch client config to get context graph API URL
+			config, err := cpClient.GetClientConfig()
+			if err != nil {
+				return fmt.Errorf("failed to get client config: %w", err)
+			}
+
+			req := &controlplane.IntelligentSearchRequest{
+				Keywords:              query,
+				MaxTurns:              maxTurns,
+				Model:                 model,
+				Temperature:           temperature,
+				Integration:           integration,
+				LabelFilter:           labelFilter,
+				EnableSemanticSearch:  enableSemanticSearch,
+				EnableCypherQueries:   enableCypherQueries,
+				Strategy:              strategy,
+				SessionID:             sessionID,
+			}
+
+			// Streaming search
+			if stream {
+				return performStreamingSearch(config.ContextGraphAPIBase, cfg.APIKey, req, outputFormat)
+			}
+
+			// Non-streaming search
+			return performNonStreamingSearch(cpClient, req, outputFormat)
+		},
+	}
+
+	cmd.Flags().IntVar(&maxTurns, "max-turns", 5, "Maximum agent conversation turns (1-20)")
+	cmd.Flags().StringVar(&model, "model", "", "LiteLLM model name (default: kubiya/claude-sonnet-4)")
+	cmd.Flags().Float64Var(&temperature, "temperature", 0.7, "Model temperature (0.0-2.0)")
+	cmd.Flags().StringVar(&integration, "integration", "", "Filter by integration (e.g., AWS, Azure, Slack)")
+	cmd.Flags().StringVar(&labelFilter, "label", "", "Filter by node label")
+	cmd.Flags().BoolVar(&enableSemanticSearch, "semantic", false, "Enable semantic search")
+	cmd.Flags().BoolVar(&enableCypherQueries, "cypher", false, "Enable custom Cypher queries")
+	cmd.Flags().StringVar(&strategy, "strategy", "", "Agent strategy (claude_sdk or agno)")
+	cmd.Flags().StringVar(&sessionID, "session", "", "Continue previous conversation session")
+	cmd.Flags().BoolVar(&stream, "stream", true, "Enable streaming mode with real-time updates")
+	cmd.Flags().StringVarP(&outputFormat, "output", "o", "text", "Output format (text, json)")
+
+	return cmd
+}
+
+// performStreamingSearch executes streaming intelligent search with bubbletea TUI
+func performStreamingSearch(graphAPIBase, apiKey string, req *controlplane.IntelligentSearchRequest, outputFormat string) error {
+	// Create direct context graph client
+	graphClient := contextgraph.NewClient(graphAPIBase, apiKey)
+
+	// Convert request to contextgraph format
+	graphReq := contextgraph.IntelligentSearchRequest{
+		Keywords:    req.Keywords,
+		MaxTurns:    req.MaxTurns,
+		SessionID:   req.SessionID,
+		Model:       req.Model,
+		Temperature: req.Temperature,
+	}
+
+	// Start streaming search
+	ctx := context.Background()
+	eventChan, err := graphClient.StreamSearch(ctx, graphReq)
+	if err != nil {
+		return fmt.Errorf("failed to start streaming search: %w", err)
+	}
+
+	// Run bubbletea TUI for real-time progress display
+	result, err := runGraphSearchTUI(ctx, req.Keywords, eventChan)
+	if err != nil {
+		return err
+	}
+
+	if result == nil {
+		return fmt.Errorf("search completed but no result was returned")
+	}
+
+	// Handle JSON output
+	if outputFormat == "json" {
+		jsonResult := map[string]interface{}{
+			"answer":      result.answer,
+			"tool_calls":  result.toolCalls,
+			"turns_used":  result.turnsUsed,
+			"confidence":  result.confidence,
+			"suggestions": result.suggestions,
+			"session_id":  result.sessionID,
+		}
+		return printGraphJSON(jsonResult)
+	}
+
+	// Text output is already rendered by the TUI
+	return nil
+}
+
+// performNonStreamingSearch executes non-streaming intelligent search
+func performNonStreamingSearch(client *controlplane.Client, req *controlplane.IntelligentSearchRequest, outputFormat string) error {
+	fmt.Println()
+	fmt.Println(style.HeadingStyle.Render("🔍 Intelligent Search"))
+	fmt.Println()
+	fmt.Printf("  %s Query: %s\n", style.RobotIconStyle.Render("💬"), style.HighlightStyle.Render(req.Keywords))
+	fmt.Printf("  %s Searching...\n", style.RobotIconStyle.Render("⚡"))
+	fmt.Println()
+
+	result, err := client.IntelligentSearch(req)
+	if err != nil {
+		return fmt.Errorf("search failed: %w", err)
+	}
+
+	if outputFormat == "json" {
+		return printGraphJSON(result)
+	}
+
+	// Pretty print results
+	fmt.Println(style.HeadingStyle.Render("Answer"))
+	fmt.Println()
+	fmt.Println(style.DimStyle.Render(result.Answer))
+	fmt.Println()
+
+	if len(result.ToolCalls) > 0 {
+		fmt.Println(style.HeadingStyle.Render(fmt.Sprintf("Tools Used (%d)", len(result.ToolCalls))))
+		fmt.Println()
+		for i, tc := range result.ToolCalls {
+			fmt.Printf("  %s %s\n", style.DimStyle.Render(fmt.Sprintf("%d.", i+1)), style.HighlightStyle.Render(tc.ToolName))
+			if tc.ResultSummary != "" {
+				fmt.Printf("    %s\n", tc.ResultSummary)
+			}
+		}
+		fmt.Println()
+	}
+
+	if len(result.Nodes) > 0 {
+		fmt.Println(style.HeadingStyle.Render(fmt.Sprintf("Nodes Found (%d)", len(result.Nodes))))
+		fmt.Println()
+		for i, node := range result.Nodes {
+			if i >= 5 {
+				fmt.Printf("  %s ... and %d more\n", style.DimStyle.Render("•"), len(result.Nodes)-5)
+				break
+			}
+			fmt.Printf("  %s %s (%s)\n", style.BulletStyle.Render("•"), style.HighlightStyle.Render(node.ID), strings.Join(node.Labels, ", "))
+		}
+		fmt.Println()
+	}
+
+	if len(result.Relationships) > 0 {
+		fmt.Println(style.HeadingStyle.Render(fmt.Sprintf("Relationships Found (%d)", len(result.Relationships))))
+		fmt.Println()
+		for i, rel := range result.Relationships {
+			if i >= 5 {
+				fmt.Printf("  %s ... and %d more\n", style.DimStyle.Render("•"), len(result.Relationships)-5)
+				break
+			}
+			fmt.Printf("  %s %s → %s (%s)\n", style.BulletStyle.Render("•"), rel.StartNode, rel.EndNode, rel.Type)
+		}
+		fmt.Println()
+	}
+
+	if result.Confidence != "" {
+		confidenceIcon := "✓"
+		if result.Confidence == "low" {
+			confidenceIcon = "⚠"
+		}
+		fmt.Printf("  %s Confidence: %s\n", style.RobotIconStyle.Render(confidenceIcon), style.HighlightStyle.Render(result.Confidence))
+		fmt.Printf("  %s Turns: %s\n", style.RobotIconStyle.Render("🔄"), style.HighlightStyle.Render(fmt.Sprintf("%d", result.TurnsUsed)))
+		fmt.Println()
+	}
+
+	if len(result.Suggestions) > 0 {
+		fmt.Println(style.HeadingStyle.Render("Follow-up Suggestions"))
+		fmt.Println()
+		for _, sug := range result.Suggestions {
+			fmt.Printf("  %s %s\n", style.BulletStyle.Render("•"), sug)
+		}
+		fmt.Println()
+	}
+
+	return nil
 }
