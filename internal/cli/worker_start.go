@@ -56,6 +56,7 @@ type WorkerStartOptions struct {
 	LocalWheel     string // Path to local wheel file (for development only)
 	PackageSource  string // Flexible package source: version, file path, git URL, or GitHub ref
 	NoCache        bool   // Clear pip cache before installation
+	ForceUpdate    bool   // Force update to latest version from PyPI, bypassing cache
 
 	// Auto-update options
 	AutoUpdate           bool   // Enable automatic updates
@@ -148,6 +149,7 @@ Examples:
 	cmd.Flags().StringVar(&opts.LocalWheel, "local-wheel", "", "Path to local wheel file for development (env: KUBIYA_WORKER_LOCAL_WHEEL)")
 	cmd.Flags().StringVar(&opts.PackageSource, "package-source", "", "Flexible package source: PyPI version, local file, git URL (git+https://github.com/org/repo.git@ref), or GitHub shorthand (owner/repo@ref) (env: KUBIYA_WORKER_PACKAGE_SOURCE)")
 	cmd.Flags().BoolVar(&opts.NoCache, "no-cache", false, "Clear pip cache before installation (useful for troubleshooting)")
+	cmd.Flags().BoolVar(&opts.ForceUpdate, "force-update", false, "Force update to latest version from PyPI, bypassing cache")
 	cmd.Flags().BoolVar(&opts.AutoUpdate, "auto-update", false, "Enable automatic worker updates (config + package)")
 	cmd.Flags().StringVar(&opts.UpdateCheckInterval, "update-check-interval", "5m", "Interval for checking updates (e.g., 5m, 10m, 1h)")
 
@@ -386,12 +388,27 @@ func (opts *WorkerStartOptions) runLocalForeground(ctx context.Context) error {
 		sourceDisplay = "PyPI: latest"
 	}
 
+	// Handle --force-update flag
+	if opts.ForceUpdate {
+		logger.Info("Force update requested, fetching latest version from PyPI...")
+		latestVersion, err := GetLatestPackageVersion("kubiya-control-plane-api")
+		if err != nil {
+			return fmt.Errorf("failed to fetch latest version from PyPI: %w", err)
+		}
+		packageSpec = fmt.Sprintf("kubiya-control-plane-api[worker]==%s", latestVersion)
+		sourceDisplay = fmt.Sprintf("PyPI: %s (latest)", latestVersion)
+		forceReinstall = true
+		logger.Info("Latest version found", "version", latestVersion)
+	}
+
 	// Check if we can skip installation (only for PyPI sources)
 	workerBinary := fmt.Sprintf("%s/bin/kubiya-control-plane-worker", venvDir)
 	if !forceReinstall && (sourceInfo == nil || sourceInfo.Type == PackageSourcePyPI) {
 		// Check if package is already installed with correct version
 		packageName, desiredVersion := parsePackageSpec(packageSpec)
-		satisfied, installedVersion, err := checkPackageVersion(venvDir, packageName, desiredVersion)
+
+		// Use enhanced version checking with optional PyPI check
+		versionInfo, err := checkPackageVersionEx(venvDir, packageName, desiredVersion, true)
 
 		// Also check if worker binary exists
 		binaryExists := false
@@ -400,15 +417,26 @@ func (opts *WorkerStartOptions) runLocalForeground(ctx context.Context) error {
 		}
 
 		// Skip install only if version is satisfied AND binary exists
-		if err == nil && satisfied && binaryExists {
+		if err == nil && versionInfo.SatisfiesRequest && binaryExists {
 			skipInstall = true
-			pterm.Info.Printf("Using cached worker (v%s)\n", installedVersion)
-			logger.Debug("Skipping installation, using cached version", "version", installedVersion)
+
+			// Check if cached version is outdated compared to PyPI
+			if versionInfo.IsOutdated && versionInfo.Latest != "" {
+				pterm.Warning.Printf("⚠️  Cached worker v%s is available, but v%s is available on PyPI\n",
+					versionInfo.Installed, versionInfo.Latest)
+				pterm.Info.Println("    Run with --force-update to install the latest version")
+			} else if versionInfo.Latest != "" && !versionInfo.IsOutdated {
+				pterm.Info.Printf("✓ Using cached worker (v%s, latest)\n", versionInfo.Installed)
+			} else {
+				// PyPI check failed or returned no data, use simple message
+				pterm.Info.Printf("Using cached worker (v%s)\n", versionInfo.Installed)
+			}
+			logger.Debug("Skipping installation, using cached version", "version", versionInfo.Installed)
 		} else if !binaryExists {
 			pterm.Info.Println("Worker binary missing, reinstalling...")
-		} else if !satisfied {
-			if installedVersion != "" {
-				pterm.Info.Printf("Upgrading worker (v%s → %s)...\n", installedVersion, desiredVersion)
+		} else if !versionInfo.SatisfiesRequest {
+			if versionInfo.Installed != "" && desiredVersion != "" {
+				pterm.Info.Printf("Upgrading worker (v%s → %s)...\n", versionInfo.Installed, desiredVersion)
 			}
 		}
 	}
@@ -1005,6 +1033,73 @@ func checkPackageVersion(venvPath, packageName, desiredVersion string) (bool, st
 	}
 
 	return false, "", nil
+}
+
+// PackageVersionInfo contains comprehensive version information for a package
+type PackageVersionInfo struct {
+	Installed        string
+	Requested        string
+	Latest           string
+	IsInstalled      bool
+	SatisfiesRequest bool
+	IsOutdated       bool
+}
+
+// checkPackageVersionEx checks package version and optionally queries PyPI for latest version
+func checkPackageVersionEx(venvPath, packageName, desiredVersion string, checkPyPI bool) (*PackageVersionInfo, error) {
+	info := &PackageVersionInfo{
+		Requested: desiredVersion,
+	}
+
+	pipPath, _ := getVenvPaths(venvPath)
+
+	// Check installed version
+	cmd := exec.Command(pipPath, "show", packageName)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		// Package not installed
+		info.IsInstalled = false
+		info.SatisfiesRequest = false
+		return info, nil
+	}
+
+	// Parse output for Version: line
+	lines := strings.Split(string(output), "\n")
+	for _, line := range lines {
+		if strings.HasPrefix(line, "Version:") {
+			info.Installed = strings.TrimSpace(strings.TrimPrefix(line, "Version:"))
+			info.IsInstalled = true
+			break
+		}
+	}
+
+	if !info.IsInstalled {
+		return info, nil
+	}
+
+	// Check if installed version satisfies requested version
+	if desiredVersion == "" {
+		info.SatisfiesRequest = true
+	} else {
+		info.SatisfiesRequest = (info.Installed == desiredVersion)
+	}
+
+	// Query PyPI for latest version if requested
+	if checkPyPI {
+		latestVersion, err := GetLatestPackageVersion(packageName)
+		if err != nil {
+			// If PyPI check fails (offline, network error, etc.), don't fail the whole operation
+			// Just continue without latest version info (silently handle error)
+		} else {
+			info.Latest = latestVersion
+			// Compare installed vs latest
+			if info.Installed != "" && info.Latest != "" {
+				info.IsOutdated = compareVersions(info.Installed, info.Latest) < 0
+			}
+		}
+	}
+
+	return info, nil
 }
 
 // compareVersions compares semantic versions (returns -1, 0, 1)
