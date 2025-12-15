@@ -104,7 +104,7 @@ Need help? Visit: https://docs.kubiya.ai
 		newEnvironmentCommand(cfg), // V2: Environments
 		newProjectCommand(cfg),     // V2: Projects
 		newWorkerCommand(cfg),      // V2: Worker management
-		newGraphCommand(cfg),       // V2: Context Graph
+		newGraphCommand(cfg),       // V2: Context Graph (includes intelligent search)
 
 		// V1 Legacy Commands (still on api.kubiya.ai)
 		newWorkflowCommand(cfg), // V1: Workflows
