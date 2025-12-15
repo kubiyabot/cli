@@ -78,7 +78,15 @@ func (pc *PlannerClient) StreamPlanProgress(ctx context.Context, req *PlanReques
 		httpReq.Header.Set("Cache-Control", "no-cache")
 		httpReq.Header.Set("Connection", "keep-alive")
 
+		// IMPORTANT: Add Authorization header (required for backend)
+		// The backend expects: "Authorization: Bearer <token>" or "Authorization: UserKey <token>"
+		if pc.client.cfg.APIKey != "" {
+			httpReq.Header.Set("Authorization", fmt.Sprintf("UserKey %s", pc.client.cfg.APIKey))
+		}
+
 		// Execute request with no timeout for streaming
+		// Note: We can't use pc.client.client here because it has a 30s timeout
+		// SSE streams need no timeout, but we need the auth header added above
 		httpClient := &http.Client{
 			Timeout: 0, // No timeout for SSE streams
 		}

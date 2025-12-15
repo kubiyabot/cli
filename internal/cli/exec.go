@@ -3,12 +3,13 @@ package cli
 import (
 	"bufio"
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
+	"os/signal"
 	"sort"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/kubiyabot/cli/internal/config"
@@ -179,32 +180,22 @@ type ExecCommand struct {
 
 // ExecuteWithPlanning runs the full planning workflow
 func (ec *ExecCommand) ExecuteWithPlanning(ctx context.Context, prompt string) error {
-	// 1. Show planning banner
-	fmt.Println()
-	fmt.Println(style.CreateBanner("Intelligent Task Planning", "🤖"))
-	fmt.Println()
+	// Show execution mode banner
+	if ec.Local {
+		fmt.Println()
+		fmt.Println(style.CreateBanner("Local Execution Mode", "💻"))
+		fmt.Println()
+		fmt.Println("🚀 Running with ephemeral local worker")
+		fmt.Println("⚡ Using fast planning mode")
+		fmt.Println()
+	}
 
-	// 2. Fetch resources
-	fmt.Println(style.CreateHelpBox("Discovering available resources..."))
+	// Fetch resources (this is quick, no need for spinner)
 	fetcher := NewResourceFetcher(ec.client)
 	resources, err := fetcher.FetchAllResources(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to fetch resources: %w", err)
 	}
-
-	fmt.Printf("  %s Found %d agents, %d teams, %d environments\n\n",
-		style.SuccessStyle.Render("✓"),
-		len(resources.Agents),
-		len(resources.Teams),
-		len(resources.Environments))
-
-	// 3. Create plan with streaming
-	if ec.Local {
-		fmt.Println(style.CreateHelpBox("Quick agent/team selection for local execution..."))
-	} else {
-		fmt.Println(style.CreateHelpBox("Generating execution plan..."))
-	}
-	fmt.Println()
 
 	planReq := &kubiya.PlanRequest{
 		Description:  prompt,
@@ -223,7 +214,7 @@ func (ec *ExecCommand) ExecuteWithPlanning(ctx context.Context, prompt string) e
 	// Stream plan generation
 	var plan *kubiya.PlanResponse
 	if !ec.nonInteractive {
-		plan, err = ec.streamPlanGeneration(ctx, plannerClient, planReq)
+		plan, err = ec.streamPlanGeneration(ctx, plannerClient, planReq, resources)
 	} else {
 		plan, err = plannerClient.CreatePlan(ctx, planReq)
 	}
@@ -310,94 +301,17 @@ func (ec *ExecCommand) ExecuteWithPlanning(ctx context.Context, prompt string) e
 	return ec.executeFromPlan(ctx, plan, savedPlan)
 }
 
-// streamPlanGeneration streams plan with progress updates
-func (ec *ExecCommand) streamPlanGeneration(ctx context.Context, client *kubiya.PlannerClient, req *kubiya.PlanRequest) (*kubiya.PlanResponse, error) {
+// streamPlanGeneration streams plan with progress updates using bubbletea TUI
+func (ec *ExecCommand) streamPlanGeneration(ctx context.Context, client *kubiya.PlannerClient, req *kubiya.PlanRequest, resources *PlanningResources) (*kubiya.PlanResponse, error) {
 	eventChan, errChan := client.StreamPlanProgress(ctx, req)
 
-	var plan *kubiya.PlanResponse
-	var planObj kubiya.PlanResponse // Declare outside loop to preserve across iterations
-
-	// Create PTerm-backed progress bar
-	ptermManager := ec.progressManager.PTermManager()
-	progressBar := NewPTermProgressBar(ptermManager, "Generating plan", 100)
-
-	for {
-		select {
-		case event, ok := <-eventChan:
-			if !ok {
-				progressBar.Complete()
-				if plan == nil {
-					return nil, fmt.Errorf("plan generation completed but no plan was received from the planner service")
-				}
-				return plan, nil
-			}
-
-			switch event.Type {
-			case "progress":
-				if stage, ok := event.Data["stage"].(string); ok {
-					progressBar.SetStage(stage)
-				}
-				if message, ok := event.Data["message"].(string); ok {
-					if progress, ok := event.Data["progress"].(float64); ok {
-						progressBar.Update(int(progress), message)
-					}
-				}
-
-			case "thinking":
-				if content, ok := event.Data["content"].(string); ok {
-					progressBar.ShowThinking(content)
-				}
-
-			case "tool_call":
-				if toolName, ok := event.Data["tool_name"].(string); ok {
-					progressBar.ShowToolCall(toolName)
-				}
-
-			case "resources_summary":
-				if summary, ok := event.Data["summary"].(string); ok {
-					progressBar.ShowResourcesSummary(summary)
-				}
-
-			case "complete":
-				// Extract plan from complete event
-				if planData, ok := event.Data["plan"].(map[string]interface{}); ok {
-					// Convert map to PlanResponse via JSON
-					planBytes, err := json.Marshal(planData)
-					if err != nil {
-						return nil, fmt.Errorf("failed to marshal plan data: %w", err)
-					}
-
-					// Unmarshal into the outer planObj variable
-					err = json.Unmarshal(planBytes, &planObj)
-					if err != nil {
-						return nil, fmt.Errorf("failed to unmarshal plan: %w", err)
-					}
-
-					// Assign pointer to plan
-					plan = &planObj
-
-					// Complete the progress bar and return the plan
-					progressBar.Complete()
-					return plan, nil
-				}
-
-			case "error":
-				if errMsg, ok := event.Data["error"].(string); ok {
-					return nil, fmt.Errorf("planning error: %s", errMsg)
-				}
-				if errMsg, ok := event.Data["message"].(string); ok {
-					return nil, fmt.Errorf("planning error: %s", errMsg)
-				}
-				return nil, fmt.Errorf("planning error: unknown error format")
-			}
-
-		case err := <-errChan:
-			return nil, err
-
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		}
+	// Run bubbletea TUI for real-time progress display
+	plan, err := runPlanProgressTUI(ctx, eventChan, errChan, resources)
+	if err != nil {
+		return nil, err
 	}
+
+	return plan, nil
 }
 
 // askApproval prompts user for approval
@@ -514,15 +428,16 @@ func (ec *ExecCommand) submitAndStreamExecution(ctx context.Context, plan *kubiy
 
 // executeLocal executes plan using ephemeral local worker
 func (ec *ExecCommand) executeLocal(ctx context.Context, plan *kubiya.PlanResponse) error {
-	fmt.Println()
-	fmt.Println(style.CreateBanner("Local Execution Mode", "💻"))
-	fmt.Println()
-
 	// Get environment from plan
 	envID := plan.RecommendedExecution.RecommendedEnvironmentID
 	if envID == nil {
 		return fmt.Errorf("no environment specified in plan")
 	}
+
+	// Section divider
+	fmt.Println()
+	fmt.Println(style.CreateDivider(80))
+	fmt.Println()
 
 	// Create ephemeral queue
 	fmt.Println("📦 Creating ephemeral worker queue...")
@@ -531,13 +446,65 @@ func (ec *ExecCommand) executeLocal(ctx context.Context, plan *kubiya.PlanRespon
 		return fmt.Errorf("failed to create ephemeral queue: %w", err)
 	}
 	queueID := queue.ID
-	fmt.Printf("✓ Queue created: %s\n\n", queueID)
+	fmt.Printf("✓ Queue created: %s\n", queueID)
+	fmt.Println()
 
-	// Cleanup queue on exit
-	defer func() {
-		fmt.Println("\n🧹 Cleaning up ephemeral queue...")
-		ec.client.DeleteWorkerQueue(queueID)
-	}()
+	// Track cleanup state to prevent double cleanup
+	cleanupDone := false
+	var cleanupMutex sync.Mutex
+
+	// Cleanup function - ensures queue is deleted
+	cleanup := func() {
+		cleanupMutex.Lock()
+		defer cleanupMutex.Unlock()
+
+		if cleanupDone {
+			return // Already cleaned up
+		}
+		cleanupDone = true
+
+		// Delete ephemeral queue with retry logic
+		// Worker may need time to fully unregister from queue
+		fmt.Println("🧹 Cleaning up ephemeral queue...")
+
+		maxRetries := 5
+		retryDelay := 2 * time.Second
+
+		for i := 0; i < maxRetries; i++ {
+			// Check if there are still workers registered
+			workers, err := ec.client.ListQueueWorkers(queueID)
+			if err == nil && len(workers) > 0 {
+				if i == 0 {
+					fmt.Println("   Waiting for worker to unregister...")
+				} else {
+					fmt.Printf("   Still waiting... (%d workers active)\n", len(workers))
+				}
+				time.Sleep(retryDelay)
+				continue
+			}
+
+			// Try to delete queue
+			if err := ec.client.DeleteWorkerQueue(queueID); err != nil {
+				if i < maxRetries-1 {
+					// Retry
+					time.Sleep(retryDelay)
+					continue
+				}
+				// Final attempt failed
+				fmt.Printf("⚠️  Warning: Failed to delete queue after %d attempts: %v\n", maxRetries, err)
+				return
+			}
+
+			// Success!
+			fmt.Println("✓ Queue cleaned up")
+			return
+		}
+
+		fmt.Println("⚠️  Warning: Queue cleanup timed out (will auto-cleanup after TTL)")
+	}
+
+	// Ensure cleanup runs on exit (normal, error, or panic)
+	defer cleanup()
 
 	// Start local worker
 	fmt.Println("🚀 Starting local worker...")
@@ -550,16 +517,32 @@ func (ec *ExecCommand) executeLocal(ctx context.Context, plan *kubiya.PlanRespon
 		cfg:                 ec.cfg,
 	}
 
-	// Start worker in background goroutine
+	// Setup signal handling for graceful shutdown
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+
+	// Shutdown channel to coordinate graceful exit
+	shutdownChan := make(chan string, 1)
+
+	// Create cancellable context for worker
 	workerCtx, cancelWorker := context.WithCancel(ctx)
 	defer cancelWorker()
 
+	// Start worker in background goroutine
 	workerErrChan := make(chan error, 1)
 	go func() {
 		err := workerOpts.Run(workerCtx)
 		if err != nil && err != context.Canceled {
 			workerErrChan <- err
 		}
+	}()
+
+	// Handle signals for graceful shutdown
+	go func() {
+		<-sigChan
+		fmt.Println("\n\n⚠️  Interrupt received, shutting down gracefully...")
+		cancelWorker() // Cancel worker context
+		shutdownChan <- "interrupted"
 	}()
 
 	// Wait for worker to be ready
@@ -591,20 +574,33 @@ func (ec *ExecCommand) executeLocal(ctx context.Context, plan *kubiya.PlanRespon
 	_, err = ec.submitAndStreamExecution(ctx, plan, queueID)
 
 	// Give worker time to exit gracefully in single execution mode
-	// The Python worker will detect task completion and shutdown on its own
+	// The Python worker monitors execution status and shuts down automatically
+	fmt.Println()
+	fmt.Println("⏳ Waiting for worker to shut down...")
+
 	workerExited := make(chan struct{})
 	go func() {
 		select {
 		case <-workerErrChan:
 			close(workerExited)
-		case <-time.After(10 * time.Second):
-			// Worker didn't exit gracefully within timeout
+		case <-time.After(15 * time.Second):
+			// Worker should exit within 15 seconds after execution completes
+			// If it doesn't, proceed with cleanup anyway
 			close(workerExited)
 		}
 	}()
 
-	// Wait for worker to exit or timeout
-	<-workerExited
+	// Wait for worker to exit, timeout, or interrupt
+	select {
+	case <-workerExited:
+		fmt.Println("✓ Worker shut down")
+		// Give worker a moment to fully unregister from queue
+		fmt.Println("   (allowing worker to unregister...)")
+		time.Sleep(3 * time.Second)
+	case reason := <-shutdownChan:
+		fmt.Printf("⚠️  Shutdown triggered: %s\n", reason)
+		return fmt.Errorf("execution interrupted")
+	}
 
 	// Check for worker errors
 	select {
