@@ -196,10 +196,31 @@ var (
 
 // Helper functions for creating beautiful UI elements
 
-// CreateBanner creates a beautiful banner for chat sessions
+// CreateBanner creates a clean banner without boxes
 func CreateBanner(title string, icon string) string {
 	content := fmt.Sprintf("%s  %s", icon, title)
-	return ChatBannerStyle.Render(content)
+	// Use simple style without borders
+	simpleStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("#A78BFA")).
+		Padding(0, 1)
+	return simpleStyle.Render(content)
+}
+
+// CreateTaskHeader creates a prominent task header showing what's being executed
+func CreateTaskHeader(prompt string) string {
+	headerStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("#60A5FA"))
+
+	promptStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#D1D5DB")).
+		Italic(false)
+
+	header := headerStyle.Render("Executing task:")
+	task := promptStyle.Render(fmt.Sprintf(" \"%s\"", prompt))
+
+	return header + task
 }
 
 // CreateMetadataBox creates a styled metadata display
