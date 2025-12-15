@@ -38,6 +38,8 @@ func NewExecCommand(cfg *config.Config) *cobra.Command {
 		environment      string
 		parentExecution  string
 		packageSource    string // For local mode: specify worker package source
+		localWheel       string // For local mode: path to local wheel file
+		cwd              string // Working directory for execution
 	)
 
 	cmd := &cobra.Command{
@@ -64,6 +66,7 @@ All plans are automatically saved to ~/.kubiya/plans/ for future reference.`,
   kubiya exec "task" --local --environment <env-id>
   kubiya exec "task" --local --package-source=0.5.0
   kubiya exec "task" --local --package-source=kubiyabot/control-plane-api@feature-branch
+  kubiya exec "task" --local --local-wheel=/path/to/wheel.whl
 
   # Load and execute existing plan
   kubiya exec --plan-file ~/.kubiya/plans/abc123.json
@@ -107,6 +110,8 @@ All plans are automatically saved to ~/.kubiya/plans/ for future reference.`,
 				Environment:     environment,
 				ParentExecution: parentExecution,
 				PackageSource:   packageSource,
+				LocalWheel:      localWheel,
+				Cwd:             cwd,
 			}
 
 			// Route based on input
@@ -154,6 +159,8 @@ All plans are automatically saved to ~/.kubiya/plans/ for future reference.`,
 	cmd.Flags().StringVar(&environment, "environment", "", "Environment ID for execution (required for --local, auto-detected otherwise)")
 	cmd.Flags().StringVar(&parentExecution, "parent-execution", "", "Parent execution ID for conversation continuation")
 	cmd.Flags().StringVar(&packageSource, "package-source", "", "Worker package source for local mode: PyPI version, local file, git URL, or GitHub shorthand (owner/repo@ref)")
+	cmd.Flags().StringVar(&localWheel, "local-wheel", "", "Path to local wheel file for local mode (for development/testing)")
+	cmd.Flags().StringVar(&cwd, "cwd", "", "Working directory for execution (overrides default workspace)")
 
 	return cmd
 }
@@ -177,25 +184,46 @@ type ExecCommand struct {
 	Environment     string   // --environment: Environment ID for execution
 	ParentExecution string   // --parent-execution: Parent execution ID for conversation continuation
 	PackageSource   string   // --package-source: Worker package source for local mode
+	LocalWheel      string   // --local-wheel: Path to local wheel file for local mode
+	Cwd             string   // --cwd: Working directory for execution
 }
 
 // ExecuteWithPlanning runs the full planning workflow
 func (ec *ExecCommand) ExecuteWithPlanning(ctx context.Context, prompt string) error {
-	// Show execution mode banner
+	// Show task header prominently at the start
+	fmt.Println()
+	fmt.Println(style.CreateTaskHeader(prompt))
+	fmt.Println()
+
+	// Show execution mode info cleanly
 	if ec.Local {
-		fmt.Println()
-		fmt.Println(style.CreateBanner("Local Execution Mode", "💻"))
-		fmt.Println()
-		fmt.Println("🚀 Running with ephemeral local worker")
-		fmt.Println("⚡ Using fast planning mode")
+		fmt.Println("💻 Local Execution Mode")
+		fmt.Println("   • Running with ephemeral local worker")
+		fmt.Println("   • Using fast planning mode")
 		fmt.Println()
 	}
 
-	// Fetch resources (this is quick, no need for spinner)
-	fetcher := NewResourceFetcher(ec.client)
-	resources, err := fetcher.FetchAllResources(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to fetch resources: %w", err)
+	// Fetch resources with spinner
+	var resources *PlanningResources
+	var err error
+	if !ec.nonInteractive {
+		spinner := ec.progressManager.Spinner("Discovering available resources")
+		spinner.Start()
+		resources, err = NewResourceFetcher(ec.client).FetchAllResources(ctx)
+		spinner.Stop()
+		if err != nil {
+			ec.progressManager.Error(fmt.Sprintf("Failed to fetch resources: %v", err))
+			return fmt.Errorf("failed to fetch resources: %w", err)
+		}
+		ec.progressManager.Success(fmt.Sprintf("Found %d agents, %d teams, %d environments",
+			len(resources.Agents), len(resources.Teams), len(resources.Environments)))
+		fmt.Println()
+	} else {
+		// Non-interactive mode
+		resources, err = NewResourceFetcher(ec.client).FetchAllResources(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to fetch resources: %w", err)
+		}
 	}
 
 	planReq := &kubiya.PlanRequest{
@@ -345,7 +373,9 @@ func (ec *ExecCommand) getTotalEstimatedTime() float64 {
 // executeFromPlan executes the approved plan
 func (ec *ExecCommand) executeFromPlan(ctx context.Context, plan *kubiya.PlanResponse, savedPlan *SavedPlan) error {
 	fmt.Println()
-	fmt.Println(style.CreateBanner("Executing Plan", "🚀"))
+	fmt.Println(style.CreateDivider(80))
+	fmt.Println()
+	fmt.Printf("🚀 %s\n", style.BoldStyle.Render("Executing Plan"))
 	fmt.Println()
 
 	rec := plan.RecommendedExecution
@@ -397,20 +427,30 @@ func (ec *ExecCommand) submitAndStreamExecution(ctx context.Context, plan *kubiy
 		parentExecPtr = &ec.ParentExecution
 	}
 
+	// Set execution environment if cwd is provided
+	var execEnv *entities.ExecutionEnvironmentOverride
+	if ec.Cwd != "" {
+		execEnv = &entities.ExecutionEnvironmentOverride{
+			WorkingDir: ec.Cwd,
+		}
+	}
+
 	if rec.EntityType == "agent" {
 		req := &entities.ExecuteAgentRequest{
-			Prompt:            plan.Summary,
-			WorkerQueueID:     queuePtr,
-			ParentExecutionID: parentExecPtr,
-			Stream:            &streamFlag,
+			Prompt:               plan.Summary,
+			WorkerQueueID:        queuePtr,
+			ParentExecutionID:    parentExecPtr,
+			Stream:               &streamFlag,
+			ExecutionEnvironment: execEnv,
 		}
 		execution, err = ec.client.ExecuteAgentV2(rec.EntityID, req)
 	} else {
 		req := &entities.ExecuteTeamRequest{
-			Prompt:            plan.Summary,
-			WorkerQueueID:     queuePtr,
-			ParentExecutionID: parentExecPtr,
-			Stream:            &streamFlag,
+			Prompt:               plan.Summary,
+			WorkerQueueID:        queuePtr,
+			ParentExecutionID:    parentExecPtr,
+			Stream:               &streamFlag,
+			ExecutionEnvironment: execEnv,
 		}
 		execution, err = ec.client.ExecuteTeamV2(rec.EntityID, req)
 	}
@@ -548,6 +588,7 @@ func (ec *ExecCommand) executeLocal(ctx context.Context, plan *kubiya.PlanRespon
 		DaemonMode:          false,
 		SingleExecutionMode: true, // Exit gracefully after completing the task
 		PackageSource:       ec.PackageSource,
+		LocalWheel:          ec.LocalWheel,
 		cfg:                 ec.cfg,
 	}
 
@@ -606,7 +647,10 @@ func (ec *ExecCommand) executeLocal(ctx context.Context, plan *kubiya.PlanRespon
 	}
 
 	// Submit execution and stream output
-	fmt.Println(style.CreateBanner("Executing Task", "🚀"))
+	fmt.Println()
+	fmt.Println(style.CreateDivider(80))
+	fmt.Println()
+	fmt.Printf("🚀 %s\n", style.BoldStyle.Render("Executing Task"))
 	fmt.Println()
 
 	_, err = ec.submitAndStreamExecution(ctx, plan, queueID)
@@ -964,11 +1008,18 @@ func (ec *ExecCommand) ExecuteFromPlan(ctx context.Context, planFile string) err
 // ExecuteDirect executes directly without planning
 func (ec *ExecCommand) ExecuteDirect(ctx context.Context, entityType, entityID, prompt string) error {
 	fmt.Println()
-	fmt.Println(style.CreateBanner("Direct Execution", "⚡"))
+	fmt.Println(style.CreateTaskHeader(prompt))
+	fmt.Println()
+	fmt.Println(style.CreateDivider(80))
+	fmt.Println()
+	fmt.Printf("⚡ %s\n", style.BoldStyle.Render("Direct Execution"))
 	fmt.Println()
 
-	fmt.Printf("Executing %s: %s\n", entityType, style.HighlightStyle.Render(entityID))
-	fmt.Printf("Prompt: %s\n\n", style.DimStyle.Render(prompt))
+	entityIcon := "🤖"
+	if entityType == "team" {
+		entityIcon = "👥"
+	}
+	fmt.Printf("%s Using %s: %s\n\n", entityIcon, entityType, style.HighlightStyle.Render(entityID))
 
 	// Submit execution (use default queue for the entity's environment)
 	streamFlag := true
@@ -1062,7 +1113,9 @@ type QueueExecutionResult struct {
 // executeMultiQueue executes plan across multiple queues in parallel
 func (ec *ExecCommand) executeMultiQueue(ctx context.Context, plan *kubiya.PlanResponse, queueIDs []string) error {
 	fmt.Println()
-	fmt.Println(style.CreateBanner(fmt.Sprintf("Multi-Queue Execution (%d queues)", len(queueIDs)), "🚀"))
+	fmt.Println(style.CreateDivider(80))
+	fmt.Println()
+	fmt.Printf("🚀 %s (%d queues)\n", style.BoldStyle.Render("Multi-Queue Execution"), len(queueIDs))
 	fmt.Println()
 
 	// Fetch queue metadata for display
@@ -1107,7 +1160,9 @@ func (ec *ExecCommand) executeMultiQueue(ctx context.Context, plan *kubiya.PlanR
 
 	// Display summary
 	fmt.Println()
-	fmt.Println(style.CreateBanner("Execution Summary", "📊"))
+	fmt.Println(style.CreateDivider(80))
+	fmt.Println()
+	fmt.Printf("📊 %s\n", style.BoldStyle.Render("Execution Summary"))
 	fmt.Println()
 
 	successCount := 0

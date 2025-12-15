@@ -241,8 +241,13 @@ func (m planProgressModel) View() string {
 
 	var output strings.Builder
 
-	// Header
-	output.WriteString(stageStyle.Render("🤖 Intelligent Task Planning"))
+	// Header - clean without boxes
+	header := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("#A78BFA")).
+		Render("🤖 Intelligent Task Planning")
+
+	output.WriteString(header)
 	output.WriteString("\n\n")
 
 	// Resource discovery phase
@@ -277,9 +282,15 @@ func (m planProgressModel) View() string {
 	output.WriteString(fmt.Sprintf(" (%d%%)", int(m.progressPercent)))
 	output.WriteString("\n")
 
-	// Current message
+	// Current message - handle long text better
 	if m.message != "" && m.message != m.stage {
-		output.WriteString(messageStyle.Render(fmt.Sprintf("  %s", m.message)))
+		// Truncate message if too long
+		displayMessage := m.message
+		maxLength := 80
+		if len(displayMessage) > maxLength {
+			displayMessage = displayMessage[:maxLength-3] + "..."
+		}
+		output.WriteString(messageStyle.Render(fmt.Sprintf("  %s", displayMessage)))
 		output.WriteString("\n")
 	}
 
@@ -288,9 +299,14 @@ func (m planProgressModel) View() string {
 		output.WriteString("\n")
 		for _, line := range m.reasoningLines {
 			if line != "" {
-				// Format with [PLANNER]: prefix
-				output.WriteString(dimStyle.Render("  [PLANNER]: "))
-				output.WriteString(messageStyle.Render(line))
+				// Truncate long reasoning lines
+				displayLine := line
+				maxLength := 100
+				if len(displayLine) > maxLength {
+					displayLine = displayLine[:maxLength-3] + "..."
+				}
+				// Format with dimmed style for thinking process
+				output.WriteString(dimStyle.Render("  💭 " + displayLine))
 				output.WriteString("\n")
 			}
 		}
@@ -299,8 +315,8 @@ func (m planProgressModel) View() string {
 	// Recent tool calls
 	if len(m.toolCalls) > 0 {
 		output.WriteString("\n")
-		output.WriteString(dimStyle.Render("  Tools: "))
-		output.WriteString(dimStyle.Render(strings.Join(m.toolCalls, ", ")))
+		output.WriteString(dimStyle.Render("  🔧 Tools: "))
+		output.WriteString(messageStyle.Render(strings.Join(m.toolCalls, ", ")))
 		output.WriteString("\n")
 	}
 
@@ -327,18 +343,21 @@ func waitForSSEEvent(eventChan <-chan kubiya.PlanStreamEvent, errChan <-chan err
 	}
 }
 
-// createSpinner creates a configured spinner
+// createSpinner creates a configured spinner with better animation
 func createSpinner() spinner.Model {
 	s := spinner.New()
-	s.Spinner = spinner.Dot
-	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("69"))
+	// Use a more animated spinner (similar to minikube)
+	s.Spinner = spinner.Points
+	s.Style = lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#60A5FA")).
+		Bold(true)
 	return s
 }
 
-// createProgressBar creates a configured progress bar
+// createProgressBar creates a configured progress bar with custom colors
 func createProgressBar() progress.Model {
 	p := progress.New(
-		progress.WithDefaultGradient(),
+		progress.WithGradient("#60A5FA", "#A78BFA"), // Blue to purple gradient
 		progress.WithWidth(80),
 		progress.WithoutPercentage(),
 	)
@@ -414,19 +433,19 @@ func runPlanProgressLogger(ctx context.Context, eventChan <-chan kubiya.PlanStre
 	var plan *kubiya.PlanResponse
 	var planObj kubiya.PlanResponse
 
-	// Print header
+	// Print header - cleaner for CI/CD
 	fmt.Println()
 	fmt.Println("🤖 Intelligent Task Planning")
 	fmt.Println()
 
 	// Show resources
 	if resources != nil {
-		fmt.Printf("✓ Found %d agents, %d teams, %d environments\n",
+		fmt.Printf("✓ Discovered %d agents, %d teams, %d environments\n",
 			len(resources.Agents), len(resources.Teams), len(resources.Environments))
 		fmt.Println()
 	}
 
-	fmt.Println("Generating plan...")
+	fmt.Println("⚙️  Generating execution plan...")
 	fmt.Println()
 
 	// Process events in real-time
@@ -540,17 +559,28 @@ func printPlanCompletionLog(plan *kubiya.PlanResponse) {
 	fmt.Println()
 
 	if plan.RecommendedExecution.EntityType != "" {
-		fmt.Printf("  Recommended: %s '%s'\n",
+		entityTypeIcon := "🤖"
+		if plan.RecommendedExecution.EntityType == "team" {
+			entityTypeIcon = "👥"
+		}
+		fmt.Printf("  %s Using %s: %s\n",
+			entityTypeIcon,
 			plan.RecommendedExecution.EntityType,
 			plan.RecommendedExecution.EntityName)
 	}
 
 	if plan.Summary != "" {
-		fmt.Printf("  Summary: %s\n", plan.Summary)
+		// Truncate summary if too long
+		summary := plan.Summary
+		maxLen := 120
+		if len(summary) > maxLen {
+			summary = summary[:maxLen-3] + "..."
+		}
+		fmt.Printf("  📋 Summary: %s\n", summary)
 	}
 
 	if plan.CostEstimate.EstimatedCostUSD > 0 {
-		fmt.Printf("  Estimated cost: $%.2f\n", plan.CostEstimate.EstimatedCostUSD)
+		fmt.Printf("  💰 Estimated cost: $%.2f\n", plan.CostEstimate.EstimatedCostUSD)
 	}
 
 	fmt.Println()
