@@ -10,7 +10,6 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/docker/docker/api/types/container"
@@ -510,7 +509,7 @@ func (opts *WorkerStartOptions) runLocalForeground(ctx context.Context) error {
 
 	// Setup signal handling
 	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+	signal.Notify(sigChan, getShutdownSignals()...)
 
 	// Start worker process
 	startSpinner := NewPTermSpinner(ptermManager, "Starting worker process")
@@ -528,9 +527,7 @@ func (opts *WorkerStartOptions) runLocalForeground(ctx context.Context) error {
 
 	// Set process group so we can kill all child processes
 	// This is critical for Python processes that may spawn subprocesses
-	workerCmd.SysProcAttr = &syscall.SysProcAttr{
-		Setpgid: true, // Create new process group
-	}
+	setupProcessGroup(workerCmd)
 
 	// Set environment variables - take precedence over CLI args
 	workerEnv := []string{
@@ -614,11 +611,11 @@ func (opts *WorkerStartOptions) runLocalForeground(ctx context.Context) error {
 			if workerCmd != nil && workerCmd.Process != nil {
 				// Send SIGTERM to entire process group
 				pgid := workerCmd.Process.Pid
-				if err := syscall.Kill(-pgid, syscall.SIGTERM); err != nil {
+				if err := killProcessGroup(pgid, true); err != nil {
 					// Fallback to single process if process group kill fails
-					pm.Warning(fmt.Sprintf("Failed to send SIGTERM to process group: %v", err))
-					if err := workerCmd.Process.Signal(syscall.SIGTERM); err != nil {
-						pm.Warning(fmt.Sprintf("Failed to send SIGTERM to process: %v", err))
+					pm.Warning(fmt.Sprintf("Failed to terminate process group: %v", err))
+					if err := workerCmd.Process.Kill(); err != nil {
+						pm.Warning(fmt.Sprintf("Failed to terminate process: %v", err))
 					}
 				}
 
@@ -635,7 +632,7 @@ func (opts *WorkerStartOptions) runLocalForeground(ctx context.Context) error {
 				case <-shutdownTimer.C:
 					// Timeout - force kill
 					pm.Warning("Worker did not stop gracefully, forcing shutdown...")
-					if err := syscall.Kill(-pgid, syscall.SIGKILL); err != nil {
+					if err := killProcessGroup(pgid, false); err != nil {
 						if err := workerCmd.Process.Kill(); err != nil {
 							pm.Warning(fmt.Sprintf("Failed to kill process: %v", err))
 						}
@@ -659,11 +656,11 @@ func (opts *WorkerStartOptions) runLocalForeground(ctx context.Context) error {
 				// Send SIGTERM to entire process group (negative PID)
 				// This ensures all child processes are also terminated
 				pgid := workerCmd.Process.Pid
-				if err := syscall.Kill(-pgid, syscall.SIGTERM); err != nil {
+				if err := killProcessGroup(pgid, true); err != nil {
 					// Fallback to single process if process group kill fails
-					pm.Warning(fmt.Sprintf("Failed to send SIGTERM to process group: %v", err))
-					if err := workerCmd.Process.Signal(syscall.SIGTERM); err != nil {
-						pm.Warning(fmt.Sprintf("Failed to send SIGTERM to process: %v", err))
+					pm.Warning(fmt.Sprintf("Failed to terminate process group: %v", err))
+					if err := workerCmd.Process.Kill(); err != nil {
+						pm.Warning(fmt.Sprintf("Failed to terminate process: %v", err))
 					}
 				}
 
@@ -682,7 +679,7 @@ func (opts *WorkerStartOptions) runLocalForeground(ctx context.Context) error {
 				case <-shutdownTimer.C:
 					// Timeout - force kill entire process group
 					pm.Warning("Worker did not stop gracefully, forcing shutdown...")
-					if err := syscall.Kill(-pgid, syscall.SIGKILL); err != nil {
+					if err := killProcessGroup(pgid, false); err != nil {
 						// Fallback to single process kill
 						if err := workerCmd.Process.Kill(); err != nil {
 							pm.Warning(fmt.Sprintf("Failed to kill process: %v", err))
@@ -1169,7 +1166,7 @@ func (opts *WorkerStartOptions) RunDocker(ctx context.Context) error {
 
 	// Setup signal handling
 	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+	signal.Notify(sigChan, getShutdownSignals()...)
 
 	// Start container
 	if err := cli.ContainerStart(ctx, containerID, container.StartOptions{}); err != nil {
@@ -1414,7 +1411,7 @@ func (opts *WorkerStartOptions) runLocalDaemon(ctx context.Context) error {
 
 	// Setup signal handling for graceful shutdown
 	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+	signal.Notify(sigChan, getShutdownSignals()...)
 
 	// Wait for termination signal
 	<-sigChan
