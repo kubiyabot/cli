@@ -26,11 +26,11 @@ func NewSpinner(message string, mode OutputMode) *Spinner {
 	}
 
 	if mode == OutputModeInteractive {
-		// Use a nice animated spinner (CharSet 11 is line spinner - looks great!)
-		s.spinner = spinner.New(spinner.CharSets[11], 80*time.Millisecond)
+		// Use an animated spinner (CharSet 14 is dots - smooth and clean!)
+		s.spinner = spinner.New(spinner.CharSets[14], 100*time.Millisecond)
 		s.spinner.Suffix = " " + message
 		s.spinner.Writer = s.writer
-		s.spinner.Color("cyan", "bold")
+		s.spinner.Color("blue", "bold")
 	}
 
 	return s
