@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/kubiyabot/cli/internal/kubiya"
+	"github.com/kubiyabot/cli/internal/util"
 )
 
 // PlanStorageManager manages plan file storage and lifecycle
@@ -76,19 +78,33 @@ func (psm *PlanStorageManager) SavePlan(plan *kubiya.PlanResponse, prompt string
 	return saved, nil
 }
 
-// LoadPlan loads a plan from disk
-func (psm *PlanStorageManager) LoadPlan(path string) (*SavedPlan, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read plan file: %w", err)
+// LoadPlan loads a plan from disk or remote source
+func (psm *PlanStorageManager) LoadPlan(source string) (*SavedPlan, error) {
+	var data []byte
+	var err error
+
+	// Check if source is remote (URL, git repo, etc.)
+	if util.IsRemoteSource(source) {
+		// Fetch from remote
+		data, err = util.FetchRemoteContent(context.Background(), source)
+		if err != nil {
+			return nil, fmt.Errorf("failed to fetch remote plan: %w", err)
+		}
+	} else {
+		// Read from local filesystem
+		data, err = os.ReadFile(source)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read plan file: %w", err)
+		}
 	}
 
+	// Parse JSON
 	var saved SavedPlan
 	if err := json.Unmarshal(data, &saved); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal plan: %w", err)
 	}
 
-	saved.FilePath = path
+	saved.FilePath = source
 	return &saved, nil
 }
 

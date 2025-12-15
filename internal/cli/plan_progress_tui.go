@@ -62,6 +62,7 @@ type planProgressModel struct {
 	stepName        string
 	stepDescription string
 	toolCalls       []string // Last 3 tool calls
+	reasoningLines  []string // Last 5 reasoning sentences from planner
 
 	// Control
 	done  bool
@@ -144,7 +145,20 @@ func (m planProgressModel) handleSSEEvent(event kubiya.PlanStreamEvent) (tea.Mod
 		}
 
 	case "thinking":
-		// Silently skip thinking events (too verbose)
+		// Extract and display reasoning from planner
+		if content, ok := event.Data["content"].(string); ok && content != "" {
+			// Split content into sentences (rough approximation)
+			// Split on ., !, ? followed by space or newline
+			sentences := splitIntoSentences(content)
+
+			// Add new sentences to reasoning lines
+			m.reasoningLines = append(m.reasoningLines, sentences...)
+
+			// Keep only last 5 sentences
+			if len(m.reasoningLines) > 5 {
+				m.reasoningLines = m.reasoningLines[len(m.reasoningLines)-5:]
+			}
+		}
 
 	case "tool_call":
 		// Record tool call
@@ -267,6 +281,19 @@ func (m planProgressModel) View() string {
 	if m.message != "" && m.message != m.stage {
 		output.WriteString(messageStyle.Render(fmt.Sprintf("  %s", m.message)))
 		output.WriteString("\n")
+	}
+
+	// Planner reasoning (last 5 sentences)
+	if len(m.reasoningLines) > 0 {
+		output.WriteString("\n")
+		for _, line := range m.reasoningLines {
+			if line != "" {
+				// Format with [PLANNER]: prefix
+				output.WriteString(dimStyle.Render("  [PLANNER]: "))
+				output.WriteString(messageStyle.Render(line))
+				output.WriteString("\n")
+			}
+		}
 	}
 
 	// Recent tool calls
@@ -429,6 +456,17 @@ func runPlanProgressLogger(ctx context.Context, eventChan <-chan kubiya.PlanStre
 					fmt.Printf("  Progress: %d%%\n", int(progress))
 				}
 
+			case "thinking":
+				// Display planner reasoning with [PLANNER]: prefix
+				if content, ok := event.Data["content"].(string); ok && content != "" {
+					sentences := splitIntoSentences(content)
+					for _, sentence := range sentences {
+						if sentence != "" {
+							fmt.Printf("  [PLANNER]: %s\n", sentence)
+						}
+					}
+				}
+
 			case "tool_call":
 				if toolName, ok := event.Data["tool_name"].(string); ok {
 					fmt.Printf("  🔧 Tool: %s\n", toolName)
@@ -516,4 +554,42 @@ func printPlanCompletionLog(plan *kubiya.PlanResponse) {
 	}
 
 	fmt.Println()
+}
+
+// splitIntoSentences splits text into sentences, handling common punctuation
+func splitIntoSentences(text string) []string {
+	if text == "" {
+		return nil
+	}
+
+	var sentences []string
+	var currentSentence strings.Builder
+
+	runes := []rune(text)
+	for i := 0; i < len(runes); i++ {
+		r := runes[i]
+		currentSentence.WriteRune(r)
+
+		// Check if we hit a sentence-ending punctuation
+		if r == '.' || r == '!' || r == '?' {
+			// Look ahead to see if followed by space, newline, or end of string
+			if i+1 >= len(runes) || runes[i+1] == ' ' || runes[i+1] == '\n' || runes[i+1] == '\r' {
+				sentence := strings.TrimSpace(currentSentence.String())
+				if sentence != "" && len(sentence) > 3 { // Filter out very short fragments
+					sentences = append(sentences, sentence)
+				}
+				currentSentence.Reset()
+			}
+		}
+	}
+
+	// Add any remaining text as a sentence
+	if currentSentence.Len() > 0 {
+		sentence := strings.TrimSpace(currentSentence.String())
+		if sentence != "" && len(sentence) > 3 {
+			sentences = append(sentences, sentence)
+		}
+	}
+
+	return sentences
 }
