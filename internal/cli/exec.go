@@ -61,6 +61,7 @@ All plans are automatically saved to ~/.kubiya/plans/ for future reference.`,
 
   # Local execution with ephemeral worker
   kubiya exec "task" --local
+  kubiya exec "task" --local --environment <env-id>
   kubiya exec "task" --local --package-source=0.5.0
   kubiya exec "task" --local --package-source=kubiyabot/control-plane-api@feature-branch
 
@@ -139,7 +140,7 @@ All plans are automatically saved to ~/.kubiya/plans/ for future reference.`,
 	}
 
 	// Flags
-	cmd.Flags().StringVar(&planFile, "plan-file", "", "Execute from saved plan file")
+	cmd.Flags().StringVar(&planFile, "plan-file", "", "Execute from plan file (local path, URL, or GitHub: user/repo//path)")
 	cmd.Flags().BoolVarP(&autoApprove, "yes", "y", false, "Auto-approve plan without confirmation")
 	cmd.Flags().StringVarP(&outputFormat, "output", "o", "text", "Output format: text, json, yaml")
 	cmd.Flags().StringVar(&savePlanPath, "save-plan", "", "Custom path to save plan (default: ~/.kubiya/plans/<plan-id>.json)")
@@ -150,7 +151,7 @@ All plans are automatically saved to ~/.kubiya/plans/ for future reference.`,
 	cmd.Flags().BoolVar(&local, "local", false, "Run execution locally with ephemeral worker (uses fast planning)")
 	cmd.Flags().StringSliceVar(&queueIDs, "queue", nil, "Worker queue ID(s) - comma-separated for parallel execution")
 	cmd.Flags().StringSliceVar(&queueNames, "queue-name", nil, "Worker queue name(s) - alternative to IDs")
-	cmd.Flags().StringVar(&environment, "environment", "", "Environment ID for execution (auto-detected if not specified)")
+	cmd.Flags().StringVar(&environment, "environment", "", "Environment ID for execution (required for --local, auto-detected otherwise)")
 	cmd.Flags().StringVar(&parentExecution, "parent-execution", "", "Parent execution ID for conversation continuation")
 	cmd.Flags().StringVar(&packageSource, "package-source", "", "Worker package source for local mode: PyPI version, local file, git URL, or GitHub shorthand (owner/repo@ref)")
 
@@ -428,10 +429,43 @@ func (ec *ExecCommand) submitAndStreamExecution(ctx context.Context, plan *kubiy
 
 // executeLocal executes plan using ephemeral local worker
 func (ec *ExecCommand) executeLocal(ctx context.Context, plan *kubiya.PlanResponse) error {
-	// Get environment from plan
-	envID := plan.RecommendedExecution.RecommendedEnvironmentID
-	if envID == nil {
-		return fmt.Errorf("no environment specified in plan")
+	// Get environment with smart fallback logic:
+	// 1. CLI --environment flag (highest priority)
+	// 2. Planner's recommendation (if available)
+	// 3. First available environment (auto-fetch fallback)
+	var envID string
+	var envName string
+
+	if ec.Environment != "" {
+		// Priority 1: User explicitly specified environment via --environment flag
+		envID = ec.Environment
+		fmt.Printf("📍 Using environment from CLI flag: %s\n", envID)
+	} else if plan.RecommendedExecution.RecommendedEnvironmentID != nil {
+		// Priority 2: Use planner's recommendation
+		envID = *plan.RecommendedExecution.RecommendedEnvironmentID
+		if plan.RecommendedExecution.RecommendedEnvironmentName != nil {
+			envName = *plan.RecommendedExecution.RecommendedEnvironmentName
+		}
+		fmt.Printf("📍 Using environment from planner: %s", envID)
+		if envName != "" {
+			fmt.Printf(" (%s)", envName)
+		}
+		fmt.Println()
+	} else {
+		// Priority 3: Fallback - fetch first available environment
+		fmt.Println("⚠️  No environment specified, fetching first available environment...")
+		environments, err := ec.client.ListEnvironments()
+		if err != nil {
+			return fmt.Errorf("no environment specified and failed to list environments: %w", err)
+		}
+		if len(environments) == 0 {
+			return fmt.Errorf("no environments available in organization. Please create an environment first")
+		}
+
+		firstEnv := environments[0]
+		envID = firstEnv.ID
+		envName = firstEnv.Name
+		fmt.Printf("📍 Auto-selected first available environment: %s (%s)\n", envID, envName)
 	}
 
 	// Section divider
@@ -441,7 +475,7 @@ func (ec *ExecCommand) executeLocal(ctx context.Context, plan *kubiya.PlanRespon
 
 	// Create ephemeral queue
 	fmt.Println("📦 Creating ephemeral worker queue...")
-	queue, err := ec.createEphemeralQueue(ctx, *envID)
+	queue, err := ec.createEphemeralQueue(ctx, envID)
 	if err != nil {
 		return fmt.Errorf("failed to create ephemeral queue: %w", err)
 	}
@@ -541,7 +575,11 @@ func (ec *ExecCommand) executeLocal(ctx context.Context, plan *kubiya.PlanRespon
 	go func() {
 		<-sigChan
 		fmt.Println("\n\n⚠️  Interrupt received, shutting down gracefully...")
-		cancelWorker() // Cancel worker context
+		fmt.Println("   Stopping worker process...")
+		cancelWorker() // Cancel worker context - this will trigger cleanup in runLocalForeground
+
+		// Wait a moment for worker to start cleanup
+		time.Sleep(500 * time.Millisecond)
 		shutdownChan <- "interrupted"
 	}()
 
@@ -599,6 +637,20 @@ func (ec *ExecCommand) executeLocal(ctx context.Context, plan *kubiya.PlanRespon
 		time.Sleep(3 * time.Second)
 	case reason := <-shutdownChan:
 		fmt.Printf("⚠️  Shutdown triggered: %s\n", reason)
+
+		// Wait for worker goroutine to complete cleanup (with timeout)
+		fmt.Println("   Waiting for worker cleanup to complete...")
+		workerCleanupTimer := time.NewTimer(15 * time.Second)
+		select {
+		case <-workerErrChan:
+			// Worker goroutine completed
+			workerCleanupTimer.Stop()
+			fmt.Println("   ✓ Worker cleanup completed")
+		case <-workerCleanupTimer.C:
+			// Timeout - worker didn't clean up in time
+			fmt.Println("   ⚠️  Worker cleanup timed out, proceeding with queue cleanup")
+		}
+
 		return fmt.Errorf("execution interrupted")
 	}
 
@@ -901,7 +953,11 @@ func (ec *ExecCommand) ExecuteFromPlan(ctx context.Context, planFile string) err
 		storage.MarkApproved(savedPlan)
 	}
 
-	// 6. Execute
+	// 6. Execute - route based on --local flag
+	if ec.Local {
+		return ec.executeLocal(ctx, savedPlan.Plan)
+	}
+
 	return ec.executeFromPlan(ctx, savedPlan.Plan, savedPlan)
 }
 
