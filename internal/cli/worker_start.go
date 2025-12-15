@@ -247,11 +247,14 @@ func (opts *WorkerStartOptions) runLocalForeground(ctx context.Context) error {
 
 	logger.Debug("Worker start initiated", "queue_id", opts.QueueID)
 
-	// Clean pip cache if requested
+	// Clean package manager cache if requested
 	if opts.NoCache {
-		logger.Debug("Cleaning pip cache")
-		if err := cleanPipCache(pm); err != nil {
+		pkgMgr := NewPackageManager()
+		logger.Debug("Cleaning package cache", "manager", pkgMgr.Name())
+		if err := pkgMgr.ClearCache(); err != nil {
 			pm.Warning(fmt.Sprintf("Cache cleanup failed: %v", err))
+		} else {
+			pm.Success(fmt.Sprintf("%s cache cleared", pkgMgr.Name()))
 		}
 	}
 
@@ -302,30 +305,34 @@ func (opts *WorkerStartOptions) runLocalForeground(ctx context.Context) error {
 		logger.Debug("Using existing virtual environment", "path", venvDir)
 	}
 
-	// Determine pip path in venv (python path not needed for package binary)
-	pipPath, _ := getVenvPaths(venvDir)
+	// Initialize package manager
+	pkgMgr := NewPackageManager()
+	logger.Info("Package manager detected", "manager", pkgMgr.Name())
 
-	// Check if pip upgrade is needed
-	needsUpgrade, _, err := checkPipVersion(venvDir, "23.0")
-	if err != nil {
-		// Continue with upgrade to be safe
-		needsUpgrade = true
-	}
-
-	if needsUpgrade {
-		spinner := NewPTermSpinner(ptermManager, "Upgrading pip")
-
-		pipUpgradeCmd := exec.Command(pipPath, "install", "--quiet", "--upgrade", "pip")
-		if err := pipUpgradeCmd.Run(); err != nil {
-			spinner.Fail("Failed to upgrade pip")
-			return fmt.Errorf("failed to upgrade pip: %w", err)
+	// Only upgrade pip if using pip (uv doesn't need pip upgrade)
+	if _, ok := pkgMgr.(*PipPackageManager); ok {
+		// Check if pip upgrade is needed
+		needsUpgrade, _, err := checkPipVersion(venvDir, "23.0")
+		if err != nil {
+			// Continue with upgrade to be safe
+			needsUpgrade = true
 		}
 
-		spinner.Success("pip upgraded")
+		if needsUpgrade {
+			spinner := NewPTermSpinner(ptermManager, "Upgrading pip")
+
+			if err := UpgradePip(venvDir, true); err != nil {
+				spinner.Fail("Failed to upgrade pip")
+				return fmt.Errorf("failed to upgrade pip: %w", err)
+			}
+
+			spinner.Success("pip upgraded")
+		}
+	} else {
+		logger.Debug("Using uv, skipping pip upgrade")
 	}
 
 	// Install worker package with extras
-	var installCmd *exec.Cmd
 	var packageSpec string
 	var installSpinner *PTermSpinner
 	var sourceDisplay string
@@ -407,26 +414,16 @@ func (opts *WorkerStartOptions) runLocalForeground(ctx context.Context) error {
 	}
 
 	if !skipInstall {
-		// Add timeout context for pip install (max 300 seconds = 5 minutes)
+		// Add timeout context for package install (max 300 seconds = 5 minutes)
 		installCtx, installCancel := context.WithTimeout(context.Background(), 300*time.Second)
 		defer installCancel()
 
-		// Build pip install command
-		pipArgs := []string{"install", "--quiet"}
-		if forceReinstall {
-			pipArgs = append(pipArgs, "--force-reinstall")
-		}
-		pipArgs = append(pipArgs, packageSpec)
+		// Show spinner with package manager info
+		installSpinner = NewPTermSpinner(ptermManager, fmt.Sprintf("Installing dependencies (%s)", pkgMgr.Name()))
+		logger.Debug("Installing worker package", "package", packageSpec, "manager", pkgMgr.Name())
 
-		installCmd = exec.CommandContext(installCtx, pipPath, pipArgs...)
-	}
+		err := pkgMgr.Install(installCtx, venvDir, packageSpec, true, forceReinstall)
 
-	if !skipInstall {
-		// Show simple, short spinner message
-		installSpinner = NewPTermSpinner(ptermManager, "Installing dependencies")
-		logger.Debug("Installing worker package", "package", packageSpec)
-
-		err := installCmd.Run()
 		if installSpinner != nil {
 			if err != nil {
 				installSpinner.Fail("Failed to install dependencies")
@@ -444,7 +441,7 @@ func (opts *WorkerStartOptions) runLocalForeground(ctx context.Context) error {
 			if opts.LocalWheel != "" {
 				return fmt.Errorf("failed to install worker package from local wheel: %w", err)
 			}
-			return fmt.Errorf("failed to install worker package from PyPI: %w\nMake sure kubiya-control-plane-api is published", err)
+			return fmt.Errorf("failed to install worker package: %w\nMake sure kubiya-control-plane-api is available", err)
 		}
 
 		// Step 2: Dependencies
