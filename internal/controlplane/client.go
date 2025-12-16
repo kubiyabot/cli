@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -87,7 +88,12 @@ func (c *Client) DoRequest(method, path string, body interface{}) (*http.Respons
 		bodyReader = bytes.NewBuffer(jsonBody)
 	}
 
-	fullURL := c.BaseURL + path
+	// Check if path is already a full URL (starts with http:// or https://)
+	fullURL := path
+	if !strings.HasPrefix(path, "http://") && !strings.HasPrefix(path, "https://") {
+		fullURL = c.BaseURL + path
+	}
+
 	req, err := http.NewRequest(method, fullURL, bodyReader)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
