@@ -105,6 +105,7 @@ Need help? Visit: https://docs.kubiya.ai
 		newProjectCommand(cfg),     // V2: Projects
 		newWorkerCommand(cfg),      // V2: Worker management
 		newGraphCommand(cfg),       // V2: Context Graph (includes intelligent search)
+		newMemoryCommand(cfg),      // V2: Cognitive memory management
 
 		// V1 Legacy Commands (still on api.kubiya.ai)
 		newWorkflowCommand(cfg), // V1: Workflows
