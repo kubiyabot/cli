@@ -183,6 +183,7 @@ func newMemoryRecallCommand(cfg *config.Config) *cobra.Command {
 		tags         []string
 		topK         int
 		minScore     float64
+		searchType   string
 		outputFormat string
 	)
 
@@ -201,6 +202,11 @@ and set minimum similarity scores.`,
 
   # Recall with minimum score
   kubiya memory recall "deployment process" --min-score 0.7
+
+  # Recall with specific search type
+  kubiya memory recall "kubernetes architecture" --search-type GRAPH_COMPLETION
+  kubiya memory recall "recent changes" --search-type TEMPORAL
+  kubiya memory recall "feedback" --search-type FEEDBACK
 
   # Output as JSON
   kubiya memory recall "kubernetes config" --output json`,
@@ -223,10 +229,11 @@ and set minimum similarity scores.`,
 
 			// Build request
 			req := &entities.MemoryRecallRequest{
-				Query:    query,
-				Tags:     tags,
-				TopK:     topK,
-				MinScore: minScore,
+				Query:      query,
+				Tags:       tags,
+				TopK:       topK,
+				MinScore:   minScore,
+				SearchType: searchType,
 			}
 
 			// Recall memories
@@ -252,27 +259,41 @@ and set minimum similarity scores.`,
 				}
 
 				for i, result := range resp.Results {
-					fmt.Printf("%s. %s (score: %.2f)\n",
+					// Display result number and score
+					fmt.Printf("%s. Score: %s\n",
 						style.BoldStyle.Render(fmt.Sprintf("%d", i+1)),
-						style.HighlightStyle.Render(result.Memory.Context.Title),
-						result.Score)
+						style.HighlightStyle.Render(fmt.Sprintf("%.4f", result.SimilarityScore)))
 
-					fmt.Printf("   Memory ID: %s\n", style.DimStyle.Render(result.Memory.MemoryID))
-
-					if len(result.Memory.Context.Tags) > 0 {
-						fmt.Printf("   Tags: %s\n", strings.Join(result.Memory.Context.Tags, ", "))
+					// Display node ID if available
+					if result.NodeID != nil && *result.NodeID != "" {
+						fmt.Printf("   Node ID: %s\n", style.DimStyle.Render(*result.NodeID))
 					}
 
-					if result.Memory.CreatedAt != nil {
-						fmt.Printf("   Created: %s\n", result.Memory.CreatedAt.Format("2006-01-02 15:04"))
+					// Display source
+					if result.Source != "" {
+						fmt.Printf("   Source: %s\n", style.DimStyle.Render(result.Source))
 					}
 
-					// Show content preview (first 200 chars)
-					content := result.Memory.Context.Content
-					if len(content) > 200 {
-						content = content[:200] + "..."
+					// Display metadata if present
+					if len(result.Metadata) > 0 {
+						if title, ok := result.Metadata["title"].(string); ok && title != "" {
+							fmt.Printf("   Title: %s\n", style.HighlightStyle.Render(title))
+						}
+						if tags, ok := result.Metadata["tags"].([]interface{}); ok && len(tags) > 0 {
+							tagStrs := make([]string, len(tags))
+							for i, tag := range tags {
+								tagStrs[i] = fmt.Sprintf("%v", tag)
+							}
+							fmt.Printf("   Tags: %s\n", strings.Join(tagStrs, ", "))
+						}
 					}
-					fmt.Printf("   %s\n", style.DimStyle.Render(content))
+
+					// Show content preview (first 300 chars)
+					content := result.Content
+					if len(content) > 300 {
+						content = content[:300] + "..."
+					}
+					fmt.Printf("   Content: %s\n", style.DimStyle.Render(content))
 
 					if i < len(resp.Results)-1 {
 						fmt.Println()
@@ -288,6 +309,7 @@ and set minimum similarity scores.`,
 	cmd.Flags().StringSliceVar(&tags, "tags", nil, "Filter by tags (comma-separated)")
 	cmd.Flags().IntVar(&topK, "top-k", 10, "Number of results to return")
 	cmd.Flags().Float64Var(&minScore, "min-score", 0.0, "Minimum similarity score (0.0-1.0)")
+	cmd.Flags().StringVar(&searchType, "search-type", "", "Search type: GRAPH_COMPLETION, TEMPORAL, FEEDBACK, RAG_COMPLETION, CHUNKS")
 	cmd.Flags().StringVarP(&outputFormat, "output", "o", "", "Output format (json, yaml)")
 
 	return cmd
@@ -475,7 +497,10 @@ different access scopes (user, organization, or role-based).`,
 		newDatasetListCommand(cfg),
 		newDatasetGetCommand(cfg),
 		newDatasetDeleteCommand(cfg),
+		newDatasetPurgeCommand(cfg),
 		newDatasetGetDataCommand(cfg),
+		newDatasetCodeCommand(cfg),
+		newDatasetUploadCommand(cfg),
 	)
 
 	return cmd
@@ -766,6 +791,74 @@ func newDatasetDeleteCommand(cfg *config.Config) *cobra.Command {
 			return nil
 		},
 	}
+
+	return cmd
+}
+
+func newDatasetPurgeCommand(cfg *config.Config) *cobra.Command {
+	var outputFormat string
+
+	cmd := &cobra.Command{
+		Use:   "purge <dataset-id>",
+		Short: "Purge all data from a dataset",
+		Long: `Clear all data items from a dataset while preserving the dataset container.
+
+This operation removes all memories, knowledge, and data entries from the dataset
+but keeps the dataset itself with its permissions and metadata intact.
+
+This is useful when you want to refresh the dataset content without recreating it.`,
+		Example: `  # Purge all data from a dataset
+  kubiya memory dataset purge abc-123
+
+  # Purge with JSON output
+  kubiya memory dataset purge abc-123 --output json`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			datasetID := args[0]
+
+			// Create client
+			client, err := controlplane.New(cfg.APIKey, cfg.Debug)
+			if err != nil {
+				return fmt.Errorf("failed to create client: %w", err)
+			}
+
+			if outputFormat != "json" {
+				fmt.Printf("🗑️  Purging dataset data\n")
+				fmt.Printf("  Dataset: %s\n", style.HighlightStyle.Render(datasetID))
+				fmt.Println()
+			}
+
+			// Purge dataset data
+			resp, err := client.PurgeDatasetData(datasetID)
+			if err != nil {
+				return fmt.Errorf("failed to purge dataset data: %w", err)
+			}
+
+			// Output results
+			switch outputFormat {
+			case "json":
+				data, _ := json.MarshalIndent(resp, "", "  ")
+				fmt.Println(string(data))
+			default:
+				fmt.Println()
+				fmt.Printf("%s Purge initiated successfully\n", style.SuccessStyle.Render("✓"))
+				fmt.Printf("  Dataset ID: %s\n", style.DimStyle.Render(resp.DatasetID))
+				fmt.Printf("  Items to purge: %s\n", style.DimStyle.Render(fmt.Sprintf("%d", resp.EstimatedCount)))
+
+				if resp.JobID != nil && *resp.JobID != "" {
+					fmt.Printf("  Job ID: %s\n", style.DimStyle.Render(*resp.JobID))
+					fmt.Printf("  Status: %s\n\n", style.HighlightStyle.Render(resp.Status))
+					fmt.Printf("  💡 Track progress: kubiya memory status %s\n", *resp.JobID)
+				} else {
+					fmt.Printf("  Status: %s\n", style.SuccessStyle.Render("completed"))
+				}
+			}
+
+			return nil
+		},
+	}
+
+	cmd.Flags().StringVarP(&outputFormat, "output", "o", "", "Output format (json)")
 
 	return cmd
 }
