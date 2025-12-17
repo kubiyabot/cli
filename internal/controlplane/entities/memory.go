@@ -33,16 +33,21 @@ type MemoryStoreResponse struct {
 
 // MemoryRecallRequest represents the request to recall memories
 type MemoryRecallRequest struct {
-	Query    string   `json:"query"`
-	TopK     int      `json:"top_k,omitempty"`
-	Tags     []string `json:"tags,omitempty"`
-	MinScore float64  `json:"min_score,omitempty"`
+	Query      string   `json:"query"`
+	TopK       int      `json:"top_k,omitempty"`
+	Tags       []string `json:"tags,omitempty"`
+	MinScore   float64  `json:"min_score,omitempty"`
+	SearchType string   `json:"search_type,omitempty"`
 }
 
 // MemorySearchResult represents a single memory search result
+// This matches the SemanticSearchResult from the API
 type MemorySearchResult struct {
-	Memory Memory  `json:"memory"`
-	Score  float64 `json:"score"`
+	NodeID          *string                `json:"node_id,omitempty"`
+	Content         string                 `json:"content"`
+	SimilarityScore float64                `json:"similarity_score"`
+	Metadata        map[string]interface{} `json:"metadata"`
+	Source          string                 `json:"source"`
 }
 
 // MemoryRecallResponse represents the response from recalling memories
@@ -101,4 +106,12 @@ type DatasetDataResponse struct {
 	DatasetID string             `json:"dataset_id"`
 	Data      []DatasetDataEntry `json:"data"`
 	Count     int                `json:"count"`
+}
+
+// PurgeResponse represents the response from purging dataset data
+type PurgeResponse struct {
+	JobID          *string `json:"job_id,omitempty"`
+	DatasetID      string  `json:"dataset_id"`
+	EstimatedCount int     `json:"estimated_count"`
+	Status         string  `json:"status"`
 }

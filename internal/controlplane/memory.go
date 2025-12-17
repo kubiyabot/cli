@@ -32,7 +32,8 @@ func (c *Client) RecallMemory(req *entities.MemoryRecallRequest) (*entities.Memo
 		return nil, fmt.Errorf("failed to get client config: %w", err)
 	}
 
-	path := config.ContextGraphAPIBase + "/api/v1/graph/memory/recall"
+	// Use /graph/search endpoint (same as Composer UI)
+	path := config.ContextGraphAPIBase + "/api/v1/graph/search"
 
 	var resp entities.MemoryRecallResponse
 	if err := c.post(path, req, &resp); err != nil {
@@ -169,4 +170,28 @@ func (c *Client) GetDatasetData(id string) (*entities.DatasetDataResponse, error
 	}
 
 	return &dataResp, nil
+}
+
+// PurgeDatasetData clears all data from a dataset while keeping the dataset
+func (c *Client) PurgeDatasetData(id string) (*entities.PurgeResponse, error) {
+	// Get context graph API base URL
+	config, err := c.GetClientConfig()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get client config: %w", err)
+	}
+
+	path := fmt.Sprintf("%s/api/v1/graph/datasets/%s/data", config.ContextGraphAPIBase, id)
+
+	// Use DoRequest directly since DELETE returns a response body
+	resp, err := c.DoRequest("DELETE", path, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to purge dataset data: %w", err)
+	}
+
+	var response entities.PurgeResponse
+	if err := c.ParseResponse(resp, &response); err != nil {
+		return nil, fmt.Errorf("failed to parse purge response: %w", err)
+	}
+
+	return &response, nil
 }
