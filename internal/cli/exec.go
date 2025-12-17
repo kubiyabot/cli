@@ -607,7 +607,9 @@ func (ec *ExecCommand) executeLocal(ctx context.Context, plan *kubiya.PlanRespon
 	workerErrChan := make(chan error, 1)
 	go func() {
 		err := workerOpts.Run(workerCtx)
-		if err != nil && err != context.Canceled {
+		// Always signal worker exit (nil for success, error for failure)
+		// Don't signal if context was canceled (cleanup already in progress)
+		if err != context.Canceled {
 			workerErrChan <- err
 		}
 	}()
