@@ -615,15 +615,24 @@ func (ec *ExecCommand) executeLocal(ctx context.Context, plan *kubiya.PlanRespon
 	}()
 
 	// Handle signals for graceful shutdown
+	// Note: The worker process is managed by workerOpts.Run() which handles its own signal processing
+	// We just need to cancel the context and let the worker handle cleanup
 	go func() {
 		<-sigChan
 		fmt.Println("\n\n⚠️  Interrupt received, shutting down gracefully...")
 		fmt.Println("   Stopping worker process...")
+		fmt.Println("   (Press Ctrl+C again to force shutdown)")
 		cancelWorker() // Cancel worker context - this will trigger cleanup in runLocalForeground
 
 		// Wait a moment for worker to start cleanup
 		time.Sleep(500 * time.Millisecond)
 		shutdownChan <- "interrupted"
+
+		// Listen for second interrupt to force kill
+		// On second interrupt, we exit immediately without waiting
+		<-sigChan
+		fmt.Println("\n\n⚠️  Force shutdown requested...")
+		shutdownChan <- "force-killed"
 	}()
 
 	// Wait for worker to be ready
@@ -658,7 +667,8 @@ func (ec *ExecCommand) executeLocal(ctx context.Context, plan *kubiya.PlanRespon
 	_, err = ec.submitAndStreamExecution(ctx, plan, queueID)
 
 	// Give worker time to exit gracefully in single execution mode
-	// The Python worker monitors execution status and shuts down automatically
+	// The Python worker monitors execution status (checks every 3s) and shuts down automatically
+	// Expected shutdown time: 2-5 seconds after execution completes
 	fmt.Println()
 	fmt.Println("⏳ Waiting for worker to shut down...")
 
@@ -667,8 +677,10 @@ func (ec *ExecCommand) executeLocal(ctx context.Context, plan *kubiya.PlanRespon
 		select {
 		case <-workerErrChan:
 			close(workerExited)
-		case <-time.After(15 * time.Second):
-			// Worker should exit within 15 seconds after execution completes
+		case <-time.After(7 * time.Second):
+			// Worker should exit within 5-7 seconds after execution completes:
+			// - 2s sleep after detecting completion in Python worker
+			// - 3s for final cleanup and process exit
 			// If it doesn't, proceed with cleanup anyway
 			close(workerExited)
 		}
@@ -678,15 +690,30 @@ func (ec *ExecCommand) executeLocal(ctx context.Context, plan *kubiya.PlanRespon
 	select {
 	case <-workerExited:
 		fmt.Println("✓ Worker shut down")
-		// Give worker a moment to fully unregister from queue
-		fmt.Println("   (allowing worker to unregister...)")
-		time.Sleep(3 * time.Second)
+		// Brief pause to allow worker to fully unregister from queue
+		// Reduced from 3s to 1s since Python worker handles cleanup
+		time.Sleep(1 * time.Second)
 	case reason := <-shutdownChan:
+		if reason == "force-killed" {
+			// Force kill was triggered - give worker process a brief moment to be killed
+			// then exit immediately without waiting for full cleanup
+			fmt.Println("   ⚠️  Forcing immediate shutdown...")
+			forceTimer := time.NewTimer(1 * time.Second)
+			select {
+			case <-workerErrChan:
+				forceTimer.Stop()
+				fmt.Println("   ✓ Worker process terminated")
+			case <-forceTimer.C:
+				fmt.Println("   ⚠️  Exiting without waiting for worker cleanup")
+			}
+			return fmt.Errorf("execution force terminated")
+		}
+
 		fmt.Printf("⚠️  Shutdown triggered: %s\n", reason)
 
-		// Wait for worker goroutine to complete cleanup (with timeout)
+		// Wait for worker goroutine to complete cleanup (with shorter timeout)
 		fmt.Println("   Waiting for worker cleanup to complete...")
-		workerCleanupTimer := time.NewTimer(15 * time.Second)
+		workerCleanupTimer := time.NewTimer(5 * time.Second)
 		select {
 		case <-workerErrChan:
 			// Worker goroutine completed
@@ -694,7 +721,7 @@ func (ec *ExecCommand) executeLocal(ctx context.Context, plan *kubiya.PlanRespon
 			fmt.Println("   ✓ Worker cleanup completed")
 		case <-workerCleanupTimer.C:
 			// Timeout - worker didn't clean up in time
-			fmt.Println("   ⚠️  Worker cleanup timed out, proceeding with queue cleanup")
+			fmt.Println("   ⚠️  Worker cleanup timed out (5s), proceeding with queue cleanup")
 		}
 
 		return fmt.Errorf("execution interrupted")

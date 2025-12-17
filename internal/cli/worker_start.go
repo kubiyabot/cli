@@ -631,6 +631,7 @@ func (opts *WorkerStartOptions) runLocalForeground(ctx context.Context) error {
 			// Context cancelled (e.g., by parent process)
 			pm.Println("\nContext cancelled, shutting down...")
 			progress.Info("Gracefully stopping worker")
+			pm.Println("   (Press Ctrl+C to force shutdown)")
 
 			// Terminate worker process if running (same cleanup as SIGINT)
 			if workerCmd != nil && workerCmd.Process != nil {
@@ -646,6 +647,15 @@ func (opts *WorkerStartOptions) runLocalForeground(ctx context.Context) error {
 
 				// Wait for process to exit gracefully (with shorter timeout for context cancellation)
 				shutdownTimer := time.NewTimer(10 * time.Second)
+
+				// Create a goroutine to listen for interrupt during context cancellation
+				forceShutdown := make(chan struct{}, 1)
+				go func() {
+					<-sigChan
+					pm.Println("\n\n⚠️  Force shutdown requested...")
+					close(forceShutdown)
+				}()
+
 				select {
 				case err := <-done:
 					shutdownTimer.Stop()
@@ -654,6 +664,21 @@ func (opts *WorkerStartOptions) runLocalForeground(ctx context.Context) error {
 					} else {
 						progress.Success("Worker stopped successfully")
 					}
+				case <-forceShutdown:
+					// User pressed Ctrl+C - force kill immediately
+					shutdownTimer.Stop()
+					pm.Warning("Force killing worker process...")
+					if err := killProcessGroup(pgid, false); err != nil {
+						if err := workerCmd.Process.Kill(); err != nil {
+							pm.Warning(fmt.Sprintf("Failed to kill process: %v", err))
+						}
+					}
+					time.Sleep(200 * time.Millisecond)
+					select {
+					case <-done:
+					default:
+					}
+					progress.Info("Worker process force terminated")
 				case <-shutdownTimer.C:
 					// Timeout - force kill
 					pm.Warning("Worker did not stop gracefully, forcing shutdown...")
@@ -675,6 +700,7 @@ func (opts *WorkerStartOptions) runLocalForeground(ctx context.Context) error {
 		case <-sigChan:
 			pm.Println("\nShutting down...")
 			progress.Info("Gracefully stopping worker")
+			pm.Println("   (Press Ctrl+C again to force shutdown)")
 
 			// Terminate worker process if running
 			if workerCmd != nil && workerCmd.Process != nil {
@@ -692,6 +718,15 @@ func (opts *WorkerStartOptions) runLocalForeground(ctx context.Context) error {
 				// Wait for process to exit gracefully (with timeout)
 				// The 'done' channel is already waiting on workerCmd.Wait()
 				shutdownTimer := time.NewTimer(30 * time.Second)
+
+				// Create a goroutine to listen for second interrupt
+				forceShutdown := make(chan struct{}, 1)
+				go func() {
+					<-sigChan
+					pm.Println("\n\n⚠️  Force shutdown requested...")
+					close(forceShutdown)
+				}()
+
 				select {
 				case err := <-done:
 					// Process exited
@@ -701,9 +736,26 @@ func (opts *WorkerStartOptions) runLocalForeground(ctx context.Context) error {
 					} else {
 						progress.Success("Worker stopped successfully")
 					}
+				case <-forceShutdown:
+					// User pressed Ctrl+C again - force kill immediately
+					shutdownTimer.Stop()
+					pm.Warning("Force killing worker process...")
+					if err := killProcessGroup(pgid, false); err != nil {
+						// Fallback to single process kill
+						if err := workerCmd.Process.Kill(); err != nil {
+							pm.Warning(fmt.Sprintf("Failed to kill process: %v", err))
+						}
+					}
+					// Wait a brief moment and drain done channel
+					time.Sleep(200 * time.Millisecond)
+					select {
+					case <-done:
+					default:
+					}
+					progress.Info("Worker process force terminated")
 				case <-shutdownTimer.C:
 					// Timeout - force kill entire process group
-					pm.Warning("Worker did not stop gracefully, forcing shutdown...")
+					pm.Warning("Worker did not stop gracefully after 30s, forcing shutdown...")
 					if err := killProcessGroup(pgid, false); err != nil {
 						// Fallback to single process kill
 						if err := workerCmd.Process.Kill(); err != nil {
