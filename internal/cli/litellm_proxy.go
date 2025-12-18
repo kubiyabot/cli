@@ -96,9 +96,10 @@ func (s *LiteLLMProxySupervisor) Start(ctx context.Context) (*LiteLLMProxyInfo, 
 	s.port = port
 	s.healthCheckURL = fmt.Sprintf("http://%s:%d/health/readiness", s.host, s.port)
 
-	// Prepare LiteLLM command
+	// Prepare LiteLLM command - use venv's litellm binary
+	litellmBinary := filepath.Join(s.workerDir, "venv", "bin", "litellm")
 	s.cmd = exec.Command(
-		"litellm",
+		litellmBinary,
 		"--config", s.configPath,
 		"--host", s.host,
 		"--port", fmt.Sprintf("%d", s.port),
