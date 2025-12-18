@@ -58,7 +58,7 @@ type WorkerStartOptions struct {
 	LocalWheel     string // Path to local wheel file (for development only)
 	PackageSource  string // Flexible package source: version, file path, git URL, or GitHub ref
 	NoCache        bool   // Clear pip cache before installation
-	ForceUpdate    bool   // Force update to latest version from PyPI, bypassing cache
+	NoUpdate       bool   // Skip update check and use cached version if available
 
 	// Auto-update options
 	AutoUpdate           bool   // Enable automatic updates
@@ -99,6 +99,9 @@ func newWorkerStartCommand(cfg *config.Config) *cobra.Command {
 
 The worker will run in the foreground by default. Press Ctrl+C to stop.
 Use -d flag to run in daemon mode with automatic crash recovery.
+
+By default, the worker will always fetch and install the latest version from PyPI.
+Use --no-update to skip version checks and use the cached installation if available.
 
 Deployment Types:
   • local  - Run worker locally with Python package (no Docker required)
@@ -197,7 +200,7 @@ Examples:
 	cmd.Flags().StringVar(&opts.LocalWheel, "local-wheel", "", "Path to local wheel file for development (env: KUBIYA_WORKER_LOCAL_WHEEL)")
 	cmd.Flags().StringVar(&opts.PackageSource, "package-source", "", "Flexible package source: PyPI version, local file, git URL (git+https://github.com/org/repo.git@ref), or GitHub shorthand (owner/repo@ref) (env: KUBIYA_WORKER_PACKAGE_SOURCE)")
 	cmd.Flags().BoolVar(&opts.NoCache, "no-cache", false, "Clear pip cache before installation (useful for troubleshooting)")
-	cmd.Flags().BoolVar(&opts.ForceUpdate, "force-update", false, "Force update to latest version from PyPI, bypassing cache")
+	cmd.Flags().BoolVar(&opts.NoUpdate, "no-update", false, "Skip update check and use cached version if available")
 	cmd.Flags().BoolVar(&opts.AutoUpdate, "auto-update", false, "Enable automatic worker updates (config + package)")
 	cmd.Flags().StringVar(&opts.UpdateCheckInterval, "update-check-interval", "5m", "Interval for checking updates (e.g., 5m, 10m, 1h)")
 
@@ -478,22 +481,26 @@ func (opts *WorkerStartOptions) runLocalForeground(ctx context.Context) error {
 		sourceDisplay = "PyPI: latest"
 	}
 
-	// Handle --force-update flag
-	if opts.ForceUpdate {
-		logger.Info("Force update requested, fetching latest version from PyPI...")
+	// Default behavior: Always fetch latest unless --no-update is set
+	if !opts.NoUpdate && (sourceInfo == nil || sourceInfo.Type == PackageSourcePyPI) {
+		logger.Info("Fetching latest version from PyPI...")
 		latestVersion, err := GetLatestPackageVersion("kubiya-control-plane-api")
 		if err != nil {
-			return fmt.Errorf("failed to fetch latest version from PyPI: %w", err)
+			// Fall back to current behavior on error
+			pterm.Warning.Printf("Failed to fetch latest version from PyPI: %v\n", err)
+			pterm.Info.Println("Proceeding with current package spec")
+			logger.Debug("Failed to fetch latest version from PyPI, proceeding with current spec", "error", err)
+		} else {
+			packageSpec = fmt.Sprintf("kubiya-control-plane-api[worker]==%s", latestVersion)
+			sourceDisplay = fmt.Sprintf("PyPI: %s (latest)", latestVersion)
+			forceReinstall = true
+			logger.Info("Latest version found", "version", latestVersion)
 		}
-		packageSpec = fmt.Sprintf("kubiya-control-plane-api[worker]==%s", latestVersion)
-		sourceDisplay = fmt.Sprintf("PyPI: %s (latest)", latestVersion)
-		forceReinstall = true
-		logger.Info("Latest version found", "version", latestVersion)
 	}
 
-	// Check if we can skip installation (only for PyPI sources)
+	// Only skip installation if --no-update is set
 	workerBinary := fmt.Sprintf("%s/bin/kubiya-control-plane-worker", venvDir)
-	if !forceReinstall && (sourceInfo == nil || sourceInfo.Type == PackageSourcePyPI) {
+	if opts.NoUpdate && (sourceInfo == nil || sourceInfo.Type == PackageSourcePyPI) {
 		// Check if package is already installed with correct version
 		packageName, desiredVersion := parsePackageSpec(packageSpec)
 
@@ -514,14 +521,14 @@ func (opts *WorkerStartOptions) runLocalForeground(ctx context.Context) error {
 			if versionInfo.IsOutdated && versionInfo.Latest != "" {
 				pterm.Warning.Printf("⚠️  Cached worker v%s is available, but v%s is available on PyPI\n",
 					versionInfo.Installed, versionInfo.Latest)
-				pterm.Info.Println("    Run with --force-update to install the latest version")
+				pterm.Info.Println("    Run without --no-update to install the latest version")
 			} else if versionInfo.Latest != "" && !versionInfo.IsOutdated {
 				pterm.Info.Printf("✓ Using cached worker (v%s, latest)\n", versionInfo.Installed)
 			} else {
 				// PyPI check failed or returned no data, use simple message
 				pterm.Info.Printf("Using cached worker (v%s)\n", versionInfo.Installed)
 			}
-			logger.Debug("Skipping installation, using cached version", "version", versionInfo.Installed)
+			logger.Debug("Skipping installation, using cached version (--no-update flag set)", "version", versionInfo.Installed)
 		} else if !binaryExists {
 			pterm.Info.Println("Worker binary missing, reinstalling...")
 		} else if !versionInfo.SatisfiesRequest {
@@ -1741,17 +1748,37 @@ func (opts *WorkerStartOptions) runLocalDaemon(ctx context.Context) error {
 		}
 	}
 
+	// Default behavior: Always fetch latest unless --no-update is set
+	forceReinstall := false
+	if !opts.NoUpdate && opts.PackageVersion == "" {
+		// Only fetch latest if no specific version requested
+		latestVersion, err := GetLatestPackageVersion("kubiya-control-plane-api")
+		if err != nil {
+			// Fall back to current behavior on error
+			fmt.Fprintf(os.Stderr, "Warning: failed to fetch latest version from PyPI: %v\n", err)
+		} else {
+			packageSpec = fmt.Sprintf("kubiya-control-plane-api==%s", latestVersion)
+			forceReinstall = true
+		}
+	}
+
 	needsPackageInstall := false
 	if !venvExists {
 		// New venv always needs package install
 		needsPackageInstall = true
-	} else {
-		// Check if package version is satisfied for existing venv
+	} else if forceReinstall {
+		// Force reinstall if we fetched the latest version
+		needsPackageInstall = true
+	} else if opts.NoUpdate {
+		// With --no-update, check if package version is satisfied for existing venv
 		packageName, desiredVersion := parsePackageSpec(packageSpec)
 		satisfied, _, err := checkPackageVersion(venvDir, packageName, desiredVersion)
 		if err != nil || !satisfied {
 			needsPackageInstall = true
 		}
+	} else {
+		// Default: reinstall to ensure latest
+		needsPackageInstall = true
 	}
 
 	if needsPackageInstall {
