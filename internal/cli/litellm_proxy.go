@@ -106,7 +106,10 @@ func (s *LiteLLMProxySupervisor) Start(ctx context.Context) (*LiteLLMProxyInfo, 
 	)
 
 	// Set environment from current process
-	s.cmd.Env = os.Environ()
+	env := os.Environ()
+	// Force Python to unbuffer output for immediate logging
+	env = append(env, "PYTHONUNBUFFERED=1")
+	s.cmd.Env = env
 
 	// Set working directory
 	s.cmd.Dir = s.workerDir
