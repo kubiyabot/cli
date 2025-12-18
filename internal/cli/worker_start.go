@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -572,6 +573,28 @@ func (opts *WorkerStartOptions) runLocalForeground(ctx context.Context) error {
 		return fmt.Errorf("worker binary not found at %s\nPackage may not have installed correctly", workerBinary)
 	}
 
+	// Install litellm[proxy] if local proxy is enabled
+	if opts.EnableLocalProxy || (os.Getenv("KUBIYA_ENABLE_LOCAL_PROXY") != "" && os.Getenv("KUBIYA_ENABLE_LOCAL_PROXY") != "false") {
+		liteLLMSpinner := NewPTermSpinner(ptermManager, "Installing litellm proxy dependencies")
+		logger.Info("Local proxy enabled, installing litellm[proxy]")
+
+		liteLLMCtx, liteLLMCancel := context.WithTimeout(context.Background(), 120*time.Second)
+		defer liteLLMCancel()
+
+		err := pkgMgr.Install(liteLLMCtx, venvDir, "litellm[proxy]", false, false)
+		if err != nil {
+			if liteLLMSpinner != nil {
+				liteLLMSpinner.Fail("Failed to install litellm proxy dependencies")
+			}
+			return fmt.Errorf("failed to install litellm[proxy]: %w\nLocal proxy requires litellm with proxy extras", err)
+		}
+
+		if liteLLMSpinner != nil {
+			liteLLMSpinner.Success("LiteLLM proxy dependencies installed")
+		}
+		logger.Debug("LiteLLM proxy dependencies installed successfully")
+	}
+
 	// Check if auto-update is enabled (flag or env var)
 	autoUpdateEnabled := opts.AutoUpdate || IsAutoUpdateEnabled()
 
@@ -659,7 +682,7 @@ func (opts *WorkerStartOptions) runLocalForeground(ctx context.Context) error {
 				opts.QueueID,
 				workerDir,
 				proxyConfig,
-				10, // default timeout
+				30, // timeout seconds (LiteLLM can take 15-20s to start)
 				3,  // default retries
 			)
 			if err != nil {
@@ -669,21 +692,27 @@ func (opts *WorkerStartOptions) runLocalForeground(ctx context.Context) error {
 				// Start proxy
 				proxyInfo, err := liteLLMSupervisor.Start(ctx)
 				if err != nil {
-					pm.Warning(fmt.Sprintf("Failed to start LiteLLM proxy: %v", err))
-					pm.Warning("Worker will use control plane proxy as fallback")
-					liteLLMSupervisor = nil
-				} else {
-					logger.Info("LiteLLM proxy started from CLI config", "pid", proxyInfo.PID, "port", proxyInfo.Port)
-					if err := liteLLMSupervisor.WaitReady(ctx); err != nil {
-						pm.Warning(fmt.Sprintf("LiteLLM proxy failed health check: %v", err))
-						pm.Warning("Worker will use control plane proxy as fallback")
-						liteLLMSupervisor.Stop()
-						liteLLMSupervisor = nil
-					} else {
-						liteLLMProxyURL = proxyInfo.BaseURL
-						pterm.Success.Printfln("Local LLM proxy ready at %s", liteLLMProxyURL)
-					}
+					logPath := filepath.Join(workerDir, "litellm_proxy.log")
+					pm.Error(fmt.Sprintf("Failed to start LiteLLM proxy: %v", err))
+					pm.Error(fmt.Sprintf("Check logs at: %s", logPath))
+					return fmt.Errorf("local LiteLLM proxy failed to start (required with --enable-local-proxy flag)")
 				}
+
+				logger.Info("LiteLLM proxy started from CLI config", "pid", proxyInfo.PID, "port", proxyInfo.Port)
+				pterm.Info.Printfln("LiteLLM Proxy started (PID: %d, Port: %d)", proxyInfo.PID, proxyInfo.Port)
+				pterm.Info.Printfln("Proxy logs: %s", filepath.Join(workerDir, "litellm_proxy.log"))
+
+				// Wait for proxy health check
+				if err := liteLLMSupervisor.WaitReady(ctx); err != nil {
+					logPath := filepath.Join(workerDir, "litellm_proxy.log")
+					pm.Error(fmt.Sprintf("LiteLLM proxy failed health check: %v", err))
+					pm.Error(fmt.Sprintf("Check logs at: %s", logPath))
+					liteLLMSupervisor.Stop()
+					return fmt.Errorf("local LiteLLM proxy health check failed (PID: %d)", proxyInfo.PID)
+				}
+
+				liteLLMProxyURL = proxyInfo.BaseURL
+				pterm.Success.Printfln("✓ Local LLM proxy ready at %s", liteLLMProxyURL)
 			}
 		}
 	}
@@ -727,18 +756,24 @@ func (opts *WorkerStartOptions) runLocalForeground(ctx context.Context) error {
 						// Start proxy
 						proxyInfo, err := liteLLMSupervisor.Start(ctx)
 						if err != nil {
+							logPath := filepath.Join(workerDir, "litellm_proxy.log")
 							pm.Warning(fmt.Sprintf("Failed to start LiteLLM proxy: %v", err))
+							pm.Warning(fmt.Sprintf("Check logs at: %s", logPath))
 							pm.Warning("Worker will use control plane proxy as fallback")
 							liteLLMSupervisor = nil
 						} else {
 							logger.Info("LiteLLM proxy started", "pid", proxyInfo.PID, "port", proxyInfo.Port)
+							pterm.Info.Printfln("LiteLLM Proxy started (PID: %d, Port: %d)", proxyInfo.PID, proxyInfo.Port)
+							pterm.Info.Printfln("Proxy logs: %s", filepath.Join(workerDir, "litellm_proxy.log"))
 
 							// Wait for proxy to be ready
 							spinner := NewPTermSpinner(ptermManager, "Waiting for local LLM proxy")
 							err := liteLLMSupervisor.WaitReady(ctx)
 							if err != nil {
 								spinner.Fail("Local LLM proxy failed to start")
+								logPath := filepath.Join(workerDir, "litellm_proxy.log")
 								pm.Warning(fmt.Sprintf("LiteLLM proxy health check failed: %v", err))
+								pm.Warning(fmt.Sprintf("Check logs at: %s", logPath))
 								pm.Warning("Worker will use control plane proxy as fallback")
 								liteLLMSupervisor.Stop()
 								liteLLMSupervisor = nil
@@ -746,7 +781,7 @@ func (opts *WorkerStartOptions) runLocalForeground(ctx context.Context) error {
 								spinner.Success("Local LLM proxy ready")
 								liteLLMProxyURL = proxyInfo.BaseURL
 								logger.Info("LiteLLM proxy ready", "url", liteLLMProxyURL)
-								pterm.Success.Println(fmt.Sprintf("  Local proxy: %s", liteLLMProxyURL))
+								pterm.Success.Printfln("✓ Local LLM proxy ready at %s", liteLLMProxyURL)
 							}
 						}
 					}
