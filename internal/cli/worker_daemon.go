@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,6 +12,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/kubiyabot/cli/internal/controlplane"
 )
 
 const (
@@ -136,14 +139,15 @@ func (w *RotatingLogWriter) Close() error {
 
 // ProcessSupervisor manages a worker process with crash recovery
 type ProcessSupervisor struct {
-	queueID        string
-	workerDir      string
-	logWriter      *RotatingLogWriter
-	daemonInfo     *DaemonInfo
-	stopChan       chan struct{}
-	restartCount   int
-	lastRestart    time.Time
-	mu             sync.Mutex
+	queueID           string
+	workerDir         string
+	logWriter         *RotatingLogWriter
+	daemonInfo        *DaemonInfo
+	stopChan          chan struct{}
+	restartCount      int
+	lastRestart       time.Time
+	mu                sync.Mutex
+	liteLLMSupervisor *LiteLLMProxySupervisor
 }
 
 // NewProcessSupervisor creates a new process supervisor
@@ -254,6 +258,52 @@ func (s *ProcessSupervisor) runWorker(pythonPath, workerPyPath, apiKey string) e
 		controlPlaneURL = "https://control-plane.kubiya.ai"
 	}
 
+	// Setup local LiteLLM proxy if enabled
+	var liteLLMProxyURL string
+	controlPlaneClient, err := controlplane.New(apiKey, false)
+	if err == nil {
+		queueConfig, err := controlPlaneClient.GetWorkerQueueConfig(s.queueID)
+		if err == nil && queueConfig.Settings != nil && IsLocalProxyEnabled(queueConfig.Settings) {
+			s.log("Local LiteLLM proxy enabled in queue config")
+
+			// Parse config
+			proxyConfig, err := ParseLiteLLMConfigFromSettings(queueConfig.Settings)
+			if err == nil {
+				// Get timeout settings
+				timeoutSeconds, maxRetries := GetProxyTimeoutSettings(queueConfig.Settings)
+
+				// Create supervisor
+				liteLLMSupervisor, err := NewLiteLLMProxySupervisor(
+					s.queueID,
+					s.workerDir,
+					proxyConfig,
+					timeoutSeconds,
+					maxRetries,
+				)
+				if err == nil {
+					// Start proxy
+					ctx := context.Background()
+					proxyInfo, err := liteLLMSupervisor.Start(ctx)
+					if err == nil && liteLLMSupervisor.WaitReady(ctx) == nil {
+						liteLLMProxyURL = proxyInfo.BaseURL
+						s.log("Local LiteLLM proxy started at %s (PID: %d)", liteLLMProxyURL, proxyInfo.PID)
+
+						// Store supervisor reference for cleanup
+						s.mu.Lock()
+						s.liteLLMSupervisor = liteLLMSupervisor
+						s.mu.Unlock()
+					} else {
+						s.log("LiteLLM proxy failed to start: %v", err)
+					}
+				} else {
+					s.log("Failed to create LiteLLM proxy supervisor: %v", err)
+				}
+			} else {
+				s.log("Failed to parse LiteLLM config: %v", err)
+			}
+		}
+	}
+
 	// Create command
 	// Pass both env vars (safer) and CLI args (fallback)
 	cmd := exec.Command(
@@ -265,12 +315,23 @@ func (s *ProcessSupervisor) runWorker(pythonPath, workerPyPath, apiKey string) e
 	)
 
 	// Set environment variables - take precedence over CLI args
-	cmd.Env = append(os.Environ(),
+	envVars := []string{
 		fmt.Sprintf("QUEUE_ID=%s", s.queueID),
 		fmt.Sprintf("KUBIYA_API_KEY=%s", apiKey),
 		fmt.Sprintf("CONTROL_PLANE_URL=%s", controlPlaneURL),
 		"LOG_LEVEL=INFO",
-	)
+	}
+
+	// Add LiteLLM proxy env vars if available
+	if liteLLMProxyURL != "" {
+		envVars = append(envVars,
+			fmt.Sprintf("LITELLM_API_BASE=%s", liteLLMProxyURL),
+			"LITELLM_API_KEY=dummy-key",
+		)
+		s.log("Injected local LiteLLM proxy env vars: %s", liteLLMProxyURL)
+	}
+
+	cmd.Env = append(os.Environ(), envVars...)
 
 	// Redirect output to log writer
 	multiWriter := io.MultiWriter(s.logWriter)
@@ -285,7 +346,7 @@ func (s *ProcessSupervisor) runWorker(pythonPath, workerPyPath, apiKey string) e
 	s.log("Worker process started with PID %d", cmd.Process.Pid)
 
 	// Wait for process to exit
-	err := cmd.Wait()
+	err = cmd.Wait()
 
 	// Check exit status
 	if err != nil {
@@ -323,6 +384,17 @@ func (s *ProcessSupervisor) log(format string, args ...interface{}) {
 }
 
 func (s *ProcessSupervisor) Stop() {
+	// Stop LiteLLM proxy if running
+	s.mu.Lock()
+	if s.liteLLMSupervisor != nil {
+		s.log("Stopping local LiteLLM proxy")
+		if err := s.liteLLMSupervisor.Stop(); err != nil {
+			s.log("Failed to stop LiteLLM proxy: %v", err)
+		}
+		s.liteLLMSupervisor = nil
+	}
+	s.mu.Unlock()
+
 	close(s.stopChan)
 }
 

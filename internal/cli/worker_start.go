@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -17,6 +18,7 @@ import (
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/kubiyabot/cli/internal/config"
+	kubiyacontext "github.com/kubiyabot/cli/internal/context"
 	"github.com/kubiyabot/cli/internal/controlplane"
 	"github.com/kubiyabot/cli/internal/output"
 	"github.com/pterm/pterm"
@@ -62,6 +64,11 @@ type WorkerStartOptions struct {
 	AutoUpdate           bool   // Enable automatic updates
 	UpdateCheckInterval  string // Interval for checking updates (e.g., "5m", "10m")
 
+	// Local LiteLLM Proxy options
+	EnableLocalProxy     bool   // Enable local LiteLLM proxy
+	ProxyConfigFile      string // Path to LiteLLM proxy config file (JSON or YAML)
+	ProxyConfigJSON      string // Inline LiteLLM proxy config (JSON string)
+
 	cfg             *config.Config
 	progressManager *output.ProgressManager
 }
@@ -101,10 +108,48 @@ Environment Variables:
   KUBIYA_WORKER_PACKAGE_VERSION  - Package version to install (e.g., "0.5.0", ">=0.3.0")
   KUBIYA_WORKER_PACKAGE_SOURCE   - Flexible package source specification
   KUBIYA_WORKER_LOCAL_WHEEL      - Path to local wheel file for development
+  KUBIYA_ENABLE_LOCAL_PROXY      - Enable local LiteLLM proxy ("true" or "1")
+  KUBIYA_PROXY_CONFIG_FILE       - Path to LiteLLM proxy config file (JSON or YAML)
+  KUBIYA_PROXY_CONFIG_JSON       - Inline LiteLLM proxy config (JSON string)
+
+Local LiteLLM Proxy:
+  Override the control plane's LLM gateway with a local LiteLLM proxy for custom model routing,
+  observability (Langfuse), and cost optimization. The proxy runs alongside the worker process.
+
+  Priority (highest to lowest):
+    1. CLI flags: --enable-local-proxy with --proxy-config-file or --proxy-config-json
+    2. Environment variables: KUBIYA_ENABLE_LOCAL_PROXY with KUBIYA_PROXY_CONFIG_FILE or KUBIYA_PROXY_CONFIG_JSON
+    3. Context configuration: ~/.kubiya/config (litellm-proxy section)
+    4. Control plane queue settings (configured via UI or API)
+    5. Control plane LLM gateway (default)
 
 Examples:
   # Start worker locally (no Docker)
   kubiya worker start --queue-id=<queue-id> --type=local
+
+  # Enable local LiteLLM proxy with config file (CLI flag)
+  kubiya worker start --queue-id=<queue-id> --enable-local-proxy --proxy-config-file=./litellm_config.json
+
+  # Enable local LiteLLM proxy with inline JSON (CLI flag)
+  kubiya worker start --queue-id=<queue-id> --enable-local-proxy --proxy-config-json='{"model_list":[{"model_name":"gpt-4","litellm_params":{"model":"azure/gpt-4","api_key":"env:AZURE_API_KEY"}}]}'
+
+  # Enable local LiteLLM proxy with environment variables
+  export KUBIYA_ENABLE_LOCAL_PROXY=true
+  export KUBIYA_PROXY_CONFIG_FILE=./litellm_config.json
+  kubiya worker start --queue-id=<queue-id>
+
+  # Or with inline JSON via env var
+  export KUBIYA_ENABLE_LOCAL_PROXY=1
+  export KUBIYA_PROXY_CONFIG_JSON='{"model_list":[{"model_name":"gpt-4","litellm_params":{"model":"azure/gpt-4"}}]}'
+  kubiya worker start --queue-id=<queue-id>
+
+  # Configure via context (persisted in ~/.kubiya/config)
+  # Edit your context to include:
+  #   litellm-proxy:
+  #     enabled: true
+  #     config-file: /path/to/litellm_config.json
+  # Then all workers will automatically use this configuration
+  kubiya worker start --queue-id=<queue-id>
 
   # Specific PyPI version
   kubiya worker start --queue-id=<queue-id> --package-source=0.5.0
@@ -130,7 +175,10 @@ Examples:
   kubiya worker start --queue-id=<queue-id> --type=local -d
 
   # Start worker in Docker
-  kubiya worker start --queue-id=<queue-id> --type=docker --image-tag=v1.2.3`,
+  kubiya worker start --queue-id=<queue-id> --type=docker --image-tag=v1.2.3
+
+  # Daemon mode with local LiteLLM proxy
+  kubiya worker start --queue-id=<queue-id> --type=local -d --enable-local-proxy --proxy-config-file=./litellm_config.json`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return opts.Run(cmd.Context())
 		},
@@ -152,6 +200,11 @@ Examples:
 	cmd.Flags().BoolVar(&opts.ForceUpdate, "force-update", false, "Force update to latest version from PyPI, bypassing cache")
 	cmd.Flags().BoolVar(&opts.AutoUpdate, "auto-update", false, "Enable automatic worker updates (config + package)")
 	cmd.Flags().StringVar(&opts.UpdateCheckInterval, "update-check-interval", "5m", "Interval for checking updates (e.g., 5m, 10m, 1h)")
+
+	// Local LiteLLM Proxy flags
+	cmd.Flags().BoolVar(&opts.EnableLocalProxy, "enable-local-proxy", false, "Enable local LiteLLM proxy alongside worker (overrides control plane config)")
+	cmd.Flags().StringVar(&opts.ProxyConfigFile, "proxy-config-file", "", "Path to LiteLLM proxy config file (JSON or YAML)")
+	cmd.Flags().StringVar(&opts.ProxyConfigJSON, "proxy-config-json", "", "Inline LiteLLM proxy config as JSON string")
 
 	cmd.MarkFlagRequired("queue-id")
 
@@ -178,6 +231,43 @@ func (opts *WorkerStartOptions) Run(ctx context.Context) error {
 			if envWheel := os.Getenv("KUBIYA_WORKER_LOCAL_WHEEL"); envWheel != "" {
 				opts.LocalWheel = envWheel
 			}
+		}
+	}
+
+	// Apply LiteLLM proxy configuration with priority:
+	// 1. CLI flags (already set)
+	// 2. Environment variables
+	// 3. Context configuration
+
+	// First, try to load from context if CLI flags not set
+	if !opts.EnableLocalProxy && opts.ProxyConfigFile == "" && opts.ProxyConfigJSON == "" {
+		if kubiyaCtx, _, err := kubiyacontext.GetCurrentContext(); err == nil && kubiyaCtx.LiteLLMProxy != nil {
+			if kubiyaCtx.LiteLLMProxy.Enabled {
+				opts.EnableLocalProxy = true
+				if kubiyaCtx.LiteLLMProxy.ConfigFile != "" {
+					opts.ProxyConfigFile = kubiyaCtx.LiteLLMProxy.ConfigFile
+				}
+				if kubiyaCtx.LiteLLMProxy.ConfigJSON != "" {
+					opts.ProxyConfigJSON = kubiyaCtx.LiteLLMProxy.ConfigJSON
+				}
+			}
+		}
+	}
+
+	// Then apply environment variables if still not set
+	if !opts.EnableLocalProxy {
+		if envEnable := os.Getenv("KUBIYA_ENABLE_LOCAL_PROXY"); envEnable == "true" || envEnable == "1" {
+			opts.EnableLocalProxy = true
+		}
+	}
+	if opts.ProxyConfigFile == "" {
+		if envFile := os.Getenv("KUBIYA_PROXY_CONFIG_FILE"); envFile != "" {
+			opts.ProxyConfigFile = envFile
+		}
+	}
+	if opts.ProxyConfigJSON == "" {
+		if envJSON := os.Getenv("KUBIYA_PROXY_CONFIG_JSON"); envJSON != "" {
+			opts.ProxyConfigJSON = envJSON
 		}
 	}
 
@@ -483,6 +573,28 @@ func (opts *WorkerStartOptions) runLocalForeground(ctx context.Context) error {
 		return fmt.Errorf("worker binary not found at %s\nPackage may not have installed correctly", workerBinary)
 	}
 
+	// Install litellm[proxy] if local proxy is enabled
+	if opts.EnableLocalProxy || (os.Getenv("KUBIYA_ENABLE_LOCAL_PROXY") != "" && os.Getenv("KUBIYA_ENABLE_LOCAL_PROXY") != "false") {
+		liteLLMSpinner := NewPTermSpinner(ptermManager, "Installing litellm proxy dependencies")
+		logger.Info("Local proxy enabled, installing litellm[proxy]")
+
+		liteLLMCtx, liteLLMCancel := context.WithTimeout(context.Background(), 120*time.Second)
+		defer liteLLMCancel()
+
+		err := pkgMgr.Install(liteLLMCtx, venvDir, "litellm[proxy]", false, false)
+		if err != nil {
+			if liteLLMSpinner != nil {
+				liteLLMSpinner.Fail("Failed to install litellm proxy dependencies")
+			}
+			return fmt.Errorf("failed to install litellm[proxy]: %w\nLocal proxy requires litellm with proxy extras", err)
+		}
+
+		if liteLLMSpinner != nil {
+			liteLLMSpinner.Success("LiteLLM proxy dependencies installed")
+		}
+		logger.Debug("LiteLLM proxy dependencies installed successfully")
+	}
+
 	// Check if auto-update is enabled (flag or env var)
 	autoUpdateEnabled := opts.AutoUpdate || IsAutoUpdateEnabled()
 
@@ -532,6 +644,152 @@ func (opts *WorkerStartOptions) runLocalForeground(ctx context.Context) error {
 		pterm.Info.Println("Auto-update enabled")
 	}
 
+	// Setup local LiteLLM proxy if enabled
+	var liteLLMSupervisor *LiteLLMProxySupervisor
+	var liteLLMProxyURL string
+
+	// Priority 1: Check CLI flags first
+	if opts.EnableLocalProxy {
+		logger.Info("Local LiteLLM proxy enabled via CLI flag")
+		pterm.Info.Println("Setting up local LLM proxy gateway (CLI config)...")
+
+		// Load config from file or inline JSON
+		var proxyConfig *LiteLLMProxyConfig
+		var err error
+
+		if opts.ProxyConfigFile != "" {
+			// Load from file
+			proxyConfig, err = LoadLiteLLMConfigFromFile(opts.ProxyConfigFile)
+			if err != nil {
+				pm.Warning(fmt.Sprintf("Failed to load proxy config from file: %v", err))
+				pm.Warning("Worker will use control plane proxy as fallback")
+			}
+		} else if opts.ProxyConfigJSON != "" {
+			// Parse inline JSON
+			proxyConfig, err = ParseLiteLLMConfigFromJSON(opts.ProxyConfigJSON)
+			if err != nil {
+				pm.Warning(fmt.Sprintf("Failed to parse inline proxy config: %v", err))
+				pm.Warning("Worker will use control plane proxy as fallback")
+			}
+		} else {
+			pm.Warning("--enable-local-proxy requires either --proxy-config-file or --proxy-config-json")
+			pm.Warning("Worker will use control plane proxy as fallback")
+		}
+
+		if proxyConfig != nil {
+			// Create supervisor with CLI config
+			liteLLMSupervisor, err = NewLiteLLMProxySupervisor(
+				opts.QueueID,
+				workerDir,
+				proxyConfig,
+				30, // timeout seconds (LiteLLM can take 15-20s to start)
+				3,  // default retries
+			)
+			if err != nil {
+				pm.Warning(fmt.Sprintf("Failed to create LiteLLM proxy supervisor: %v", err))
+				pm.Warning("Worker will use control plane proxy as fallback")
+			} else {
+				// Start proxy
+				proxyInfo, err := liteLLMSupervisor.Start(ctx)
+				if err != nil {
+					logPath := filepath.Join(workerDir, "litellm_proxy.log")
+					pm.Error(fmt.Sprintf("Failed to start LiteLLM proxy: %v", err))
+					pm.Error(fmt.Sprintf("Check logs at: %s", logPath))
+					return fmt.Errorf("local LiteLLM proxy failed to start (required with --enable-local-proxy flag)")
+				}
+
+				logger.Info("LiteLLM proxy started from CLI config", "pid", proxyInfo.PID, "port", proxyInfo.Port)
+				pterm.Info.Printfln("LiteLLM Proxy started (PID: %d, Port: %d)", proxyInfo.PID, proxyInfo.Port)
+				pterm.Info.Printfln("Proxy logs: %s", filepath.Join(workerDir, "litellm_proxy.log"))
+
+				// Wait for proxy health check
+				if err := liteLLMSupervisor.WaitReady(ctx); err != nil {
+					logPath := filepath.Join(workerDir, "litellm_proxy.log")
+					pm.Error(fmt.Sprintf("LiteLLM proxy failed health check: %v", err))
+					pm.Error(fmt.Sprintf("Check logs at: %s", logPath))
+					liteLLMSupervisor.Stop()
+					return fmt.Errorf("local LiteLLM proxy health check failed (PID: %d)", proxyInfo.PID)
+				}
+
+				liteLLMProxyURL = proxyInfo.BaseURL
+				pterm.Success.Printfln("✓ Local LLM proxy ready at %s", liteLLMProxyURL)
+			}
+		}
+	}
+
+	// Priority 2: Check control plane config if CLI flags not provided
+	if !opts.EnableLocalProxy && liteLLMSupervisor == nil {
+		// Fetch worker queue config for local proxy settings
+		controlPlaneClient, err := controlplane.New(opts.cfg.APIKey, false)
+		if err != nil {
+			logger.Debug("Failed to create control plane client for config fetch", "error", err)
+		} else {
+			queueConfig, err := controlPlaneClient.GetWorkerQueueConfig(opts.QueueID)
+			if err != nil {
+				logger.Debug("Failed to fetch worker queue config", "error", err)
+			} else if queueConfig.Settings != nil && IsLocalProxyEnabled(queueConfig.Settings) {
+				// Local LiteLLM proxy is enabled
+				logger.Info("Local LiteLLM proxy enabled in queue config")
+				pterm.Info.Println("Setting up local LLM proxy gateway (control plane config)...")
+
+				// Parse config
+				proxyConfig, err := ParseLiteLLMConfigFromSettings(queueConfig.Settings)
+				if err != nil {
+					pm.Warning(fmt.Sprintf("Failed to parse LiteLLM config: %v", err))
+					pm.Warning("Worker will use control plane proxy as fallback")
+				} else {
+					// Get timeout settings
+					timeoutSeconds, maxRetries := GetProxyTimeoutSettings(queueConfig.Settings)
+
+					// Create supervisor
+					liteLLMSupervisor, err = NewLiteLLMProxySupervisor(
+						opts.QueueID,
+						workerDir,
+						proxyConfig,
+						timeoutSeconds,
+						maxRetries,
+					)
+					if err != nil {
+						pm.Warning(fmt.Sprintf("Failed to create LiteLLM proxy supervisor: %v", err))
+						pm.Warning("Worker will use control plane proxy as fallback")
+					} else {
+						// Start proxy
+						proxyInfo, err := liteLLMSupervisor.Start(ctx)
+						if err != nil {
+							logPath := filepath.Join(workerDir, "litellm_proxy.log")
+							pm.Warning(fmt.Sprintf("Failed to start LiteLLM proxy: %v", err))
+							pm.Warning(fmt.Sprintf("Check logs at: %s", logPath))
+							pm.Warning("Worker will use control plane proxy as fallback")
+							liteLLMSupervisor = nil
+						} else {
+							logger.Info("LiteLLM proxy started", "pid", proxyInfo.PID, "port", proxyInfo.Port)
+							pterm.Info.Printfln("LiteLLM Proxy started (PID: %d, Port: %d)", proxyInfo.PID, proxyInfo.Port)
+							pterm.Info.Printfln("Proxy logs: %s", filepath.Join(workerDir, "litellm_proxy.log"))
+
+							// Wait for proxy to be ready
+							spinner := NewPTermSpinner(ptermManager, "Waiting for local LLM proxy")
+							err := liteLLMSupervisor.WaitReady(ctx)
+							if err != nil {
+								spinner.Fail("Local LLM proxy failed to start")
+								logPath := filepath.Join(workerDir, "litellm_proxy.log")
+								pm.Warning(fmt.Sprintf("LiteLLM proxy health check failed: %v", err))
+								pm.Warning(fmt.Sprintf("Check logs at: %s", logPath))
+								pm.Warning("Worker will use control plane proxy as fallback")
+								liteLLMSupervisor.Stop()
+								liteLLMSupervisor = nil
+							} else {
+								spinner.Success("Local LLM proxy ready")
+								liteLLMProxyURL = proxyInfo.BaseURL
+								logger.Info("LiteLLM proxy ready", "url", liteLLMProxyURL)
+								pterm.Success.Printfln("✓ Local LLM proxy ready at %s", liteLLMProxyURL)
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
 	// Setup signal handling
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, getShutdownSignals()...)
@@ -565,6 +823,15 @@ func (opts *WorkerStartOptions) runLocalForeground(ctx context.Context) error {
 	if opts.SingleExecutionMode {
 		workerEnv = append(workerEnv, "SINGLE_EXECUTION=true")
 		logger.Debug("Single execution mode enabled")
+	}
+
+	// If local LiteLLM proxy is running, inject proxy URL
+	if liteLLMProxyURL != "" {
+		workerEnv = append(workerEnv,
+			fmt.Sprintf("LITELLM_API_BASE=%s", liteLLMProxyURL),
+			"LITELLM_API_KEY=dummy-key",
+		)
+		logger.Debug("Injected local LiteLLM proxy env vars", "base_url", liteLLMProxyURL)
 	}
 
 	workerCmd.Env = append(os.Environ(), workerEnv...)
@@ -632,6 +899,14 @@ func (opts *WorkerStartOptions) runLocalForeground(ctx context.Context) error {
 			pm.Println("\nContext cancelled, shutting down...")
 			progress.Info("Gracefully stopping worker")
 			pm.Println("   (Press Ctrl+C to force shutdown)")
+
+			// Stop LiteLLM proxy first
+			if liteLLMSupervisor != nil {
+				logger.Debug("Stopping local LiteLLM proxy")
+				if err := liteLLMSupervisor.Stop(); err != nil {
+					logger.Debug("Failed to stop LiteLLM proxy", "error", err)
+				}
+			}
 
 			// Terminate worker process if running (same cleanup as SIGINT)
 			if workerCmd != nil && workerCmd.Process != nil {
@@ -701,6 +976,14 @@ func (opts *WorkerStartOptions) runLocalForeground(ctx context.Context) error {
 			pm.Println("\nShutting down...")
 			progress.Info("Gracefully stopping worker")
 			pm.Println("   (Press Ctrl+C again to force shutdown)")
+
+			// Stop LiteLLM proxy first
+			if liteLLMSupervisor != nil {
+				logger.Debug("Stopping local LiteLLM proxy")
+				if err := liteLLMSupervisor.Stop(); err != nil {
+					logger.Debug("Failed to stop LiteLLM proxy", "error", err)
+				}
+			}
 
 			// Terminate worker process if running
 			if workerCmd != nil && workerCmd.Process != nil {
@@ -777,6 +1060,14 @@ func (opts *WorkerStartOptions) runLocalForeground(ctx context.Context) error {
 			return nil
 
 		case err := <-done:
+			// Stop LiteLLM proxy when worker exits
+			if liteLLMSupervisor != nil {
+				logger.Debug("Stopping local LiteLLM proxy")
+				if stopErr := liteLLMSupervisor.Stop(); stopErr != nil {
+					logger.Debug("Failed to stop LiteLLM proxy", "error", stopErr)
+				}
+			}
+
 			if err != nil {
 				// Worker already printed its error to stderr
 				// Show a clean context message and exit with proper code
