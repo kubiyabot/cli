@@ -114,24 +114,71 @@ func (s *LiteLLMProxySupervisor) Start(ctx context.Context) (*LiteLLMProxyInfo, 
 	// Set working directory
 	s.cmd.Dir = s.workerDir
 
-	// Setup logging
+	// Setup logging - truncate existing log for fresh start
 	logFilePath := filepath.Join(s.workerDir, "litellm_proxy.log")
-	logWriter, err := os.OpenFile(logFilePath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+	logWriter, err := os.OpenFile(logFilePath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0644)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open log file: %w", err)
 	}
 	s.logFile = logWriter
-	s.cmd.Stdout = logWriter
-	s.cmd.Stderr = logWriter
 
-	// Set process group for clean shutdown
-	setupProcessGroup(s.cmd)
+	// Add a startup marker to the log
+	fmt.Fprintf(logWriter, "=== LiteLLM Proxy Starting ===\n")
+	fmt.Fprintf(logWriter, "Time: %s\n", time.Now().Format(time.RFC3339))
+	fmt.Fprintf(logWriter, "Binary: %s\n", litellmBinary)
+	fmt.Fprintf(logWriter, "Config: %s\n", s.configPath)
+	fmt.Fprintf(logWriter, "Port: %d\n", s.port)
+	fmt.Fprintf(logWriter, "==============================\n\n")
+	logWriter.Sync()
+
+	// Create pipes for stdout/stderr to capture all output
+	stdoutPipe, err := s.cmd.StdoutPipe()
+	if err != nil {
+		logWriter.Close()
+		return nil, fmt.Errorf("failed to create stdout pipe: %w", err)
+	}
+	stderrPipe, err := s.cmd.StderrPipe()
+	if err != nil {
+		logWriter.Close()
+		return nil, fmt.Errorf("failed to create stderr pipe: %w", err)
+	}
+
+	// NOTE: Do NOT use setupProcessGroup() here - it breaks uvicorn/litellm
+	// The proxy will be terminated via cmd.Process.Kill() in Stop()
 
 	// Start process
 	if err := s.cmd.Start(); err != nil {
 		logWriter.Close()
 		return nil, fmt.Errorf("failed to start LiteLLM proxy: %w", err)
 	}
+
+	// Copy stdout and stderr to log file in background
+	go func() {
+		buf := make([]byte, 4096)
+		for {
+			n, err := stdoutPipe.Read(buf)
+			if n > 0 {
+				logWriter.Write(buf[:n])
+				logWriter.Sync()
+			}
+			if err != nil {
+				break
+			}
+		}
+	}()
+	go func() {
+		buf := make([]byte, 4096)
+		for {
+			n, err := stderrPipe.Read(buf)
+			if n > 0 {
+				logWriter.Write(buf[:n])
+				logWriter.Sync()
+			}
+			if err != nil {
+				break
+			}
+		}
+	}()
 
 	info := &LiteLLMProxyInfo{
 		Host:       s.host,
