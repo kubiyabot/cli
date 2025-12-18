@@ -76,7 +76,7 @@ func createTestPlan() *kubiya.PlanResponse {
 						Title:    "Build Docker image",
 						Status:   "pending",
 						Priority: "high",
-						Dependencies: []string{"code-review"},
+						Dependencies: []int{},
 					},
 					{
 						Title:    "Deploy to Kubernetes",

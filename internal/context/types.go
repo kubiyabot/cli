@@ -18,10 +18,18 @@ type NamedContext struct {
 
 // Context represents a context configuration
 type Context struct {
-	APIURL       string `yaml:"api-url"`
-	Organization string `yaml:"organization"`
-	User         string `yaml:"user"`
-	UseV1API     bool   `yaml:"use-v1-api,omitempty"`
+	APIURL       string              `yaml:"api-url"`
+	Organization string              `yaml:"organization"`
+	User         string              `yaml:"user"`
+	UseV1API     bool                `yaml:"use-v1-api,omitempty"`
+	LiteLLMProxy *LiteLLMProxyConfig `yaml:"litellm-proxy,omitempty"`
+}
+
+// LiteLLMProxyConfig represents local LiteLLM proxy configuration
+type LiteLLMProxyConfig struct {
+	Enabled    bool   `yaml:"enabled"`
+	ConfigFile string `yaml:"config-file,omitempty"` // Path to config file
+	ConfigJSON string `yaml:"config-json,omitempty"` // Inline JSON config
 }
 
 // NamedUser represents a named user
