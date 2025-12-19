@@ -69,6 +69,10 @@ type WorkerStartOptions struct {
 	ProxyConfigFile      string // Path to LiteLLM proxy config file (JSON or YAML)
 	ProxyConfigJSON      string // Inline LiteLLM proxy config (JSON string)
 
+	// Model override options
+	Model              string // Explicit model ID to use (overrides agent/team config)
+	SkipModelValidation bool   // Skip validation that model exists in proxy config
+
 	cfg             *config.Config
 	progressManager *output.ProgressManager
 }
@@ -114,6 +118,17 @@ Environment Variables:
   KUBIYA_ENABLE_LOCAL_PROXY      - Enable local LiteLLM proxy ("true" or "1")
   KUBIYA_PROXY_CONFIG_FILE       - Path to LiteLLM proxy config file (JSON or YAML)
   KUBIYA_PROXY_CONFIG_JSON       - Inline LiteLLM proxy config (JSON string)
+  KUBIYA_MODEL                   - Explicit model ID to use (overrides agent/team config)
+
+Model Override:
+  Force a specific model ID to be used for all LLM requests, regardless of agent/team configuration.
+  This is useful for testing, cost control, or debugging model-specific issues.
+  Langfuse tracing is preserved when using model override.
+
+  Priority (highest to lowest):
+    1. CLI flag: --model
+    2. Environment variable: KUBIYA_MODEL
+    3. Agent/team configuration (default)
 
 Local LiteLLM Proxy:
   Override the control plane's LLM gateway with a local LiteLLM proxy for custom model routing,
@@ -129,6 +144,16 @@ Local LiteLLM Proxy:
 Examples:
   # Start worker locally (no Docker)
   kubiya worker start --queue-id=<queue-id> --type=local
+
+  # Start worker with explicit model override (CLI flag)
+  kubiya worker start --queue-id=<queue-id> --type=local --model=gpt-4
+
+  # Start worker with explicit model override (environment variable)
+  export KUBIYA_MODEL=azure/gpt-4-turbo
+  kubiya worker start --queue-id=<queue-id> --type=local
+
+  # Combine local proxy with model override
+  kubiya worker start --queue-id=<queue-id> --type=local --enable-local-proxy --proxy-config-file=./litellm.yaml --model=gpt-4
 
   # Enable local LiteLLM proxy with config file (CLI flag)
   kubiya worker start --queue-id=<queue-id> --enable-local-proxy --proxy-config-file=./litellm_config.json
@@ -209,6 +234,10 @@ Examples:
 	cmd.Flags().StringVar(&opts.ProxyConfigFile, "proxy-config-file", "", "Path to LiteLLM proxy config file (JSON or YAML)")
 	cmd.Flags().StringVar(&opts.ProxyConfigJSON, "proxy-config-json", "", "Inline LiteLLM proxy config as JSON string")
 
+	// Model override flag
+	cmd.Flags().StringVar(&opts.Model, "model", "", "Explicit model ID to use (overrides agent/team config). Can also use KUBIYA_MODEL env var")
+	cmd.Flags().BoolVar(&opts.SkipModelValidation, "skip-model-validation", false, "Skip validation that model exists in proxy config (useful for offline/testing)")
+
 	cmd.MarkFlagRequired("queue-id")
 
 	return cmd
@@ -254,6 +283,10 @@ func (opts *WorkerStartOptions) Run(ctx context.Context) error {
 					opts.ProxyConfigJSON = kubiyaCtx.LiteLLMProxy.ConfigJSON
 				}
 			}
+			// Load model override from context if not already set via CLI flag or env var
+			if opts.Model == "" && kubiyaCtx.LiteLLMProxy.Model != "" {
+				opts.Model = kubiyaCtx.LiteLLMProxy.Model
+			}
 		}
 	}
 
@@ -271,6 +304,15 @@ func (opts *WorkerStartOptions) Run(ctx context.Context) error {
 	if opts.ProxyConfigJSON == "" {
 		if envJSON := os.Getenv("KUBIYA_PROXY_CONFIG_JSON"); envJSON != "" {
 			opts.ProxyConfigJSON = envJSON
+		}
+	}
+
+	// Apply model override with priority:
+	// 1. CLI flag (already set)
+	// 2. Environment variable
+	if opts.Model == "" {
+		if envModel := os.Getenv("KUBIYA_MODEL"); envModel != "" {
+			opts.Model = envModel
 		}
 	}
 
@@ -684,6 +726,21 @@ func (opts *WorkerStartOptions) runLocalForeground(ctx context.Context) error {
 		}
 
 		if proxyConfig != nil {
+			// Validate model override against proxy config if specified
+			if opts.Model != "" && !opts.SkipModelValidation {
+				isValid, availableModels, valErr := ValidateModelInConfig(opts.Model, proxyConfig)
+				if valErr != nil {
+					logger.Debug("Model validation failed", "error", valErr)
+				} else if !isValid && len(availableModels) > 0 {
+					pm.Warning(fmt.Sprintf("Model '%s' not found in proxy config model_list", opts.Model))
+					pm.Warning(fmt.Sprintf("Available models: %v", availableModels))
+					pm.Warning("Use --skip-model-validation to bypass this check")
+					return fmt.Errorf("model '%s' not found in LiteLLM proxy config. Available models: %v", opts.Model, availableModels)
+				} else if isValid && opts.Model != "" {
+					logger.Info("Model override validated", "model", opts.Model)
+				}
+			}
+
 			// Create supervisor with CLI config
 			liteLLMSupervisor, err = NewLiteLLMProxySupervisor(
 				opts.QueueID,
@@ -745,6 +802,21 @@ func (opts *WorkerStartOptions) runLocalForeground(ctx context.Context) error {
 					pm.Warning(fmt.Sprintf("Failed to parse LiteLLM config: %v", err))
 					pm.Warning("Worker will use control plane proxy as fallback")
 				} else {
+					// Validate model override against proxy config if specified
+					if opts.Model != "" && !opts.SkipModelValidation {
+						isValid, availableModels, valErr := ValidateModelInConfig(opts.Model, proxyConfig)
+						if valErr != nil {
+							logger.Debug("Model validation failed", "error", valErr)
+						} else if !isValid && len(availableModels) > 0 {
+							pm.Warning(fmt.Sprintf("Model '%s' not found in proxy config model_list", opts.Model))
+							pm.Warning(fmt.Sprintf("Available models: %v", availableModels))
+							pm.Warning("Use --skip-model-validation to bypass this check")
+							return fmt.Errorf("model '%s' not found in LiteLLM proxy config. Available models: %v", opts.Model, availableModels)
+						} else if isValid && opts.Model != "" {
+							logger.Info("Model override validated", "model", opts.Model)
+						}
+					}
+
 					// Get timeout settings
 					timeoutSeconds, maxRetries := GetProxyTimeoutSettings(queueConfig.Settings)
 
@@ -839,6 +911,15 @@ func (opts *WorkerStartOptions) runLocalForeground(ctx context.Context) error {
 			"LITELLM_API_KEY=dummy-key",
 		)
 		logger.Debug("Injected local LiteLLM proxy env vars", "base_url", liteLLMProxyURL)
+	}
+
+	// Inject model override if specified
+	if opts.Model != "" {
+		workerEnv = append(workerEnv,
+			fmt.Sprintf("KUBIYA_MODEL_OVERRIDE=%s", opts.Model),
+		)
+		logger.Info("Model override enabled", "model", opts.Model)
+		pterm.Warning.Printfln("⚠️  Explicit model override active: %s (will override all agent/team configurations)", opts.Model)
 	}
 
 	workerCmd.Env = append(os.Environ(), workerEnv...)
@@ -1796,7 +1877,7 @@ func (opts *WorkerStartOptions) runLocalDaemon(ctx context.Context) error {
 	}
 
 	// Create process supervisor
-	supervisor, err := NewProcessSupervisor(opts.QueueID, workerDir, maxLogSize, opts.MaxLogBackups)
+	supervisor, err := NewProcessSupervisor(opts.QueueID, workerDir, maxLogSize, opts.MaxLogBackups, opts.Model)
 	if err != nil {
 		return fmt.Errorf("failed to create supervisor: %w", err)
 	}

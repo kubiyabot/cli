@@ -274,3 +274,185 @@ func TestWriteLiteLLMConfig(t *testing.T) {
 		t.Error("config file does not contain expected model name")
 	}
 }
+
+func TestValidateModelInConfig(t *testing.T) {
+	tests := []struct {
+		name            string
+		modelID         string
+		config          *LiteLLMProxyConfig
+		expectedValid   bool
+		expectedModels  []string
+		expectedErr     bool
+	}{
+		{
+			name:    "model exists in config",
+			modelID: "gpt-4",
+			config: &LiteLLMProxyConfig{
+				ModelList: []LiteLLMModel{
+					{ModelName: "gpt-3.5-turbo"},
+					{ModelName: "gpt-4"},
+					{ModelName: "claude-3"},
+				},
+			},
+			expectedValid:  true,
+			expectedModels: []string{"gpt-3.5-turbo", "gpt-4", "claude-3"},
+			expectedErr:    false,
+		},
+		{
+			name:    "model does not exist in config",
+			modelID: "gpt-5",
+			config: &LiteLLMProxyConfig{
+				ModelList: []LiteLLMModel{
+					{ModelName: "gpt-3.5-turbo"},
+					{ModelName: "gpt-4"},
+				},
+			},
+			expectedValid:  false,
+			expectedModels: []string{"gpt-3.5-turbo", "gpt-4"},
+			expectedErr:    false,
+		},
+		{
+			name:    "empty model list passes validation",
+			modelID: "any-model",
+			config: &LiteLLMProxyConfig{
+				ModelList: []LiteLLMModel{},
+			},
+			expectedValid:  true,
+			expectedModels: nil,
+			expectedErr:    false,
+		},
+		{
+			name:           "nil config returns error",
+			modelID:        "gpt-4",
+			config:         nil,
+			expectedValid:  false,
+			expectedModels: nil,
+			expectedErr:    true,
+		},
+		{
+			name:    "first model in list",
+			modelID: "first-model",
+			config: &LiteLLMProxyConfig{
+				ModelList: []LiteLLMModel{
+					{ModelName: "first-model"},
+					{ModelName: "second-model"},
+				},
+			},
+			expectedValid:  true,
+			expectedModels: []string{"first-model", "second-model"},
+			expectedErr:    false,
+		},
+		{
+			name:    "last model in list",
+			modelID: "last-model",
+			config: &LiteLLMProxyConfig{
+				ModelList: []LiteLLMModel{
+					{ModelName: "first-model"},
+					{ModelName: "last-model"},
+				},
+			},
+			expectedValid:  true,
+			expectedModels: []string{"first-model", "last-model"},
+			expectedErr:    false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			isValid, availableModels, err := ValidateModelInConfig(tt.modelID, tt.config)
+
+			if tt.expectedErr {
+				if err == nil {
+					t.Error("expected error but got none")
+				}
+				return
+			}
+
+			if err != nil {
+				t.Errorf("unexpected error: %v", err)
+				return
+			}
+
+			if isValid != tt.expectedValid {
+				t.Errorf("ValidateModelInConfig() isValid = %v, want %v", isValid, tt.expectedValid)
+			}
+
+			// Check available models (if expected)
+			if tt.expectedModels != nil {
+				if len(availableModels) != len(tt.expectedModels) {
+					t.Errorf("ValidateModelInConfig() availableModels length = %d, want %d", len(availableModels), len(tt.expectedModels))
+				}
+				for i, model := range tt.expectedModels {
+					if i < len(availableModels) && availableModels[i] != model {
+						t.Errorf("ValidateModelInConfig() availableModels[%d] = %s, want %s", i, availableModels[i], model)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestGetAvailableModels(t *testing.T) {
+	tests := []struct {
+		name           string
+		config         *LiteLLMProxyConfig
+		expectedModels []string
+	}{
+		{
+			name: "multiple models",
+			config: &LiteLLMProxyConfig{
+				ModelList: []LiteLLMModel{
+					{ModelName: "gpt-4"},
+					{ModelName: "gpt-3.5-turbo"},
+					{ModelName: "claude-3"},
+				},
+			},
+			expectedModels: []string{"gpt-4", "gpt-3.5-turbo", "claude-3"},
+		},
+		{
+			name: "empty model list",
+			config: &LiteLLMProxyConfig{
+				ModelList: []LiteLLMModel{},
+			},
+			expectedModels: nil,
+		},
+		{
+			name:           "nil config",
+			config:         nil,
+			expectedModels: nil,
+		},
+		{
+			name: "single model",
+			config: &LiteLLMProxyConfig{
+				ModelList: []LiteLLMModel{
+					{ModelName: "single-model"},
+				},
+			},
+			expectedModels: []string{"single-model"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			models := GetAvailableModels(tt.config)
+
+			if tt.expectedModels == nil {
+				if models != nil {
+					t.Errorf("GetAvailableModels() = %v, want nil", models)
+				}
+				return
+			}
+
+			if len(models) != len(tt.expectedModels) {
+				t.Errorf("GetAvailableModels() length = %d, want %d", len(models), len(tt.expectedModels))
+				return
+			}
+
+			for i, model := range tt.expectedModels {
+				if models[i] != model {
+					t.Errorf("GetAvailableModels()[%d] = %s, want %s", i, models[i], model)
+				}
+			}
+		})
+	}
+}

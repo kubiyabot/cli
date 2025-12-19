@@ -278,7 +278,7 @@ func (ui *GenerateToolUI) startGeneration() tea.Msg {
 		for msg := range messagesChan {
 			if msg.Type == "error" {
 				for _, file := range msg.GeneratedToolContent {
-					ui.P.Send(fmt.Errorf(file.Content))
+					ui.P.Send(fmt.Errorf("%s", file.Content))
 					return
 				}
 			}
