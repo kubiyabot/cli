@@ -148,10 +148,11 @@ type ProcessSupervisor struct {
 	lastRestart       time.Time
 	mu                sync.Mutex
 	liteLLMSupervisor *LiteLLMProxySupervisor
+	modelOverride     string // Explicit model ID to use (overrides agent/team config)
 }
 
 // NewProcessSupervisor creates a new process supervisor
-func NewProcessSupervisor(queueID, workerDir string, maxLogSize int64, maxBackups int) (*ProcessSupervisor, error) {
+func NewProcessSupervisor(queueID, workerDir string, maxLogSize int64, maxBackups int, modelOverride string) (*ProcessSupervisor, error) {
 	// Create log file
 	logFile := filepath.Join(workerDir, "worker.log")
 	logWriter, err := NewRotatingLogWriter(logFile, maxLogSize, maxBackups)
@@ -160,10 +161,11 @@ func NewProcessSupervisor(queueID, workerDir string, maxLogSize int64, maxBackup
 	}
 
 	return &ProcessSupervisor{
-		queueID:   queueID,
-		workerDir: workerDir,
-		logWriter: logWriter,
-		stopChan:  make(chan struct{}),
+		queueID:       queueID,
+		workerDir:     workerDir,
+		logWriter:     logWriter,
+		stopChan:      make(chan struct{}),
+		modelOverride: modelOverride,
 	}, nil
 }
 
@@ -329,6 +331,14 @@ func (s *ProcessSupervisor) runWorker(pythonPath, workerPyPath, apiKey string) e
 			"LITELLM_API_KEY=dummy-key",
 		)
 		s.log("Injected local LiteLLM proxy env vars: %s", liteLLMProxyURL)
+	}
+
+	// Add model override if specified
+	if s.modelOverride != "" {
+		envVars = append(envVars,
+			fmt.Sprintf("KUBIYA_MODEL_OVERRIDE=%s", s.modelOverride),
+		)
+		s.log("Model override enabled: %s (will override all agent/team configurations)", s.modelOverride)
 	}
 
 	cmd.Env = append(os.Environ(), envVars...)

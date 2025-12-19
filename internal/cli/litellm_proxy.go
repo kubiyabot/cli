@@ -424,3 +424,42 @@ func GetProxyTimeoutSettings(settings map[string]interface{}) (timeoutSeconds in
 
 	return
 }
+
+// ValidateModelInConfig checks if a model exists in the LiteLLM proxy config's model_list.
+// Returns (isValid, availableModels, error).
+// If the config has no model_list, validation passes (assumes models are configured elsewhere).
+func ValidateModelInConfig(modelID string, config *LiteLLMProxyConfig) (bool, []string, error) {
+	if config == nil {
+		return false, nil, fmt.Errorf("config is nil")
+	}
+
+	// If no model_list is defined, skip validation (models may be configured in LiteLLM itself)
+	if len(config.ModelList) == 0 {
+		return true, nil, nil
+	}
+
+	// Collect all available model names first
+	availableModels := make([]string, 0, len(config.ModelList))
+	found := false
+	for _, model := range config.ModelList {
+		availableModels = append(availableModels, model.ModelName)
+		if model.ModelName == modelID {
+			found = true
+		}
+	}
+
+	return found, availableModels, nil
+}
+
+// GetAvailableModels returns the list of model names from the config
+func GetAvailableModels(config *LiteLLMProxyConfig) []string {
+	if config == nil || len(config.ModelList) == 0 {
+		return nil
+	}
+
+	models := make([]string, 0, len(config.ModelList))
+	for _, model := range config.ModelList {
+		models = append(models, model.ModelName)
+	}
+	return models
+}
