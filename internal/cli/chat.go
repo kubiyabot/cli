@@ -2387,7 +2387,7 @@ For inline agents, use --inline with --tools-file or --tools-json to provide cus
 				for msg := range msgChan {
 					if msg.Error != "" {
 						// Smart retry logic with proper error classification
-						errorObj := fmt.Errorf(msg.Error)
+						errorObj := fmt.Errorf("%s", msg.Error)
 
 						if isRetryableError(errorObj) && streamRetryCount < retries {
 							streamRetryCount++

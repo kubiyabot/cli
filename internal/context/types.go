@@ -30,6 +30,7 @@ type LiteLLMProxyConfig struct {
 	Enabled    bool   `yaml:"enabled"`
 	ConfigFile string `yaml:"config-file,omitempty"` // Path to config file
 	ConfigJSON string `yaml:"config-json,omitempty"` // Inline JSON config
+	Model      string `yaml:"model,omitempty"`       // Explicit model override (overrides agent/team config)
 }
 
 // NamedUser represents a named user

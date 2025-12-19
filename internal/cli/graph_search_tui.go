@@ -748,7 +748,7 @@ func runGraphSearchLogger(ctx context.Context, query string, eventChan <-chan co
 			}
 
 		case <-ctx.Done():
-			fmt.Println("\n⚠️  Cancelled by user\n")
+			fmt.Println("\n⚠️  Cancelled by user")
 			return nil, ctx.Err()
 		}
 	}
