@@ -546,7 +546,7 @@ func runPlanProgressLogger(ctx context.Context, eventChan <-chan kubiya.PlanStre
 			return nil, err
 
 		case <-ctx.Done():
-			fmt.Println("\n⚠️  Cancelled by user\n")
+			fmt.Println("\n⚠️  Cancelled by user")
 			return nil, ctx.Err()
 		}
 	}
