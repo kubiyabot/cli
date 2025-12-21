@@ -47,6 +47,8 @@ func resolveStreamOptions(noStreamFlag bool, streamFormat string, verbose bool) 
 }
 
 // resolveStreamFormat determines the actual format to use
+// Text format is the default for all environments (TTY, CI, pipes) for better readability
+// Use --stream-format=json explicitly when programmatic parsing is needed
 func resolveStreamFormat(explicit string) streaming.StreamFormat {
 	switch explicit {
 	case "text":
@@ -54,19 +56,11 @@ func resolveStreamFormat(explicit string) streaming.StreamFormat {
 	case "json":
 		return streaming.StreamFormatJSON
 	case "auto", "":
-		// Auto-detect based on environment
-		if output.IsCI() {
-			return streaming.StreamFormatJSON
-		}
-		// Check if stderr is a TTY
-		if isatty.IsTerminal(os.Stderr.Fd()) || isatty.IsCygwinTerminal(os.Stderr.Fd()) {
-			return streaming.StreamFormatText
-		}
-		// Default to JSON for pipes
-		return streaming.StreamFormatJSON
+		// Default to text for all environments - more readable in CI logs and terminals
+		return streaming.StreamFormatText
 	default:
-		// Unknown format, default to auto behavior
-		return streaming.StreamFormatJSON
+		// Unknown format, default to text
+		return streaming.StreamFormatText
 	}
 }
 

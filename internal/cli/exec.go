@@ -172,7 +172,7 @@ All plans are automatically saved to ~/.kubiya/plans/ for future reference.`,
 
 	// Streaming flags (streaming is enabled by default)
 	cmd.Flags().BoolVar(&noStream, "no-stream", false, "Disable live event streaming (streaming is enabled by default)")
-	cmd.Flags().StringVar(&streamFormat, "stream-format", "auto", "Stream output format: auto, text, json (auto: text for TTY, json for CI/pipes)")
+	cmd.Flags().StringVar(&streamFormat, "stream-format", "auto", "Stream output format: auto, text, json (default: text for all environments)")
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Show detailed tool inputs and outputs in streaming mode")
 
 	// Execution mode flags
