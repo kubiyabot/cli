@@ -4,6 +4,7 @@ import (
 	"context"
 	_ "embed"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -70,8 +71,11 @@ type WorkerStartOptions struct {
 	ProxyConfigJSON      string // Inline LiteLLM proxy config (JSON string)
 
 	// Model override options
-	Model              string // Explicit model ID to use (overrides agent/team config)
+	Model               string // Explicit model ID to use (overrides agent/team config)
 	SkipModelValidation bool   // Skip validation that model exists in proxy config
+
+	// Output control
+	QuietMode bool // Suppress worker subprocess output (for streaming mode)
 
 	cfg             *config.Config
 	progressManager *output.ProgressManager
@@ -622,20 +626,29 @@ func (opts *WorkerStartOptions) runLocalForeground(ctx context.Context) error {
 		return fmt.Errorf("worker binary not found at %s\nPackage may not have installed correctly", workerBinary)
 	}
 
-	// Install litellm[proxy] if local proxy is enabled
+	// Install litellm[proxy] and langfuse if local proxy is enabled
 	if opts.EnableLocalProxy || (os.Getenv("KUBIYA_ENABLE_LOCAL_PROXY") != "" && os.Getenv("KUBIYA_ENABLE_LOCAL_PROXY") != "false") {
 		liteLLMSpinner := NewPTermSpinner(ptermManager, "Installing litellm proxy dependencies")
-		logger.Info("Local proxy enabled, installing litellm[proxy]")
+		logger.Info("Local proxy enabled, installing litellm[proxy] and langfuse")
 
-		liteLLMCtx, liteLLMCancel := context.WithTimeout(context.Background(), 120*time.Second)
+		liteLLMCtx, liteLLMCancel := context.WithTimeout(context.Background(), 180*time.Second)
 		defer liteLLMCancel()
 
+		// Install litellm[proxy]
 		err := pkgMgr.Install(liteLLMCtx, venvDir, "litellm[proxy]", false, false)
 		if err != nil {
 			if liteLLMSpinner != nil {
 				liteLLMSpinner.Fail("Failed to install litellm proxy dependencies")
 			}
 			return fmt.Errorf("failed to install litellm[proxy]: %w\nLocal proxy requires litellm with proxy extras", err)
+		}
+
+		// Install langfuse - LiteLLM tries to initialize it for logging
+		// Pin to version compatible with LiteLLM's sdk_integration parameter
+		err = pkgMgr.Install(liteLLMCtx, venvDir, "langfuse>=2.36.0", false, false)
+		if err != nil {
+			// Non-fatal: langfuse is optional, just log a warning
+			logger.Warning("Failed to install langfuse (optional)", "error", err)
 		}
 
 		if liteLLMSpinner != nil {
@@ -924,9 +937,15 @@ func (opts *WorkerStartOptions) runLocalForeground(ctx context.Context) error {
 
 	workerCmd.Env = append(os.Environ(), workerEnv...)
 
-	// Connect stdout/stderr
-	workerCmd.Stdout = os.Stdout
-	workerCmd.Stderr = os.Stderr
+	// Connect stdout/stderr (suppress in quiet mode for clean streaming output)
+	if opts.QuietMode {
+		// In quiet mode, discard worker output - streaming events will be shown via SSE
+		workerCmd.Stdout = io.Discard
+		workerCmd.Stderr = io.Discard
+	} else {
+		workerCmd.Stdout = os.Stdout
+		workerCmd.Stderr = os.Stderr
+	}
 
 	// Start the worker process
 	if err := workerCmd.Start(); err != nil {
@@ -1170,6 +1189,12 @@ func (opts *WorkerStartOptions) runLocalForeground(ctx context.Context) error {
 				os.Exit(1)
 			}
 			progress.Info("Worker process exited")
+
+			// In single execution mode, exit immediately with success code
+			// This ensures the CLI exits cleanly without waiting for lingering goroutines
+			if opts.SingleExecutionMode {
+				os.Exit(0)
+			}
 			return nil
 
 		case trigger := <-func() <-chan UpdateTrigger {

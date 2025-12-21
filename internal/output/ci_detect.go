@@ -44,3 +44,37 @@ func IsCI() bool {
 func IsInteractive() bool {
 	return !IsCI()
 }
+
+// IsTTY returns true if stdout is a TTY
+func IsTTY() bool {
+	return isatty.IsTerminal(os.Stdout.Fd()) || isatty.IsCygwinTerminal(os.Stdout.Fd())
+}
+
+// IsStderrTTY returns true if stderr is a TTY
+func IsStderrTTY() bool {
+	return isatty.IsTerminal(os.Stderr.Fd()) || isatty.IsCygwinTerminal(os.Stderr.Fd())
+}
+
+// ShouldAutoEnableStreaming returns true if streaming should be auto-enabled
+// This happens in CI environments or when output is piped
+func ShouldAutoEnableStreaming() bool {
+	return IsCI() || !IsTTY()
+}
+
+// ResolveStreamFormat determines the stream format based on explicit setting and environment
+// Returns "text" for TTY, "json" for CI/pipes
+func ResolveStreamFormat(explicit string) string {
+	switch explicit {
+	case "text":
+		return "text"
+	case "json":
+		return "json"
+	case "auto", "":
+		if IsCI() || !IsStderrTTY() {
+			return "json"
+		}
+		return "text"
+	default:
+		return "json"
+	}
+}
