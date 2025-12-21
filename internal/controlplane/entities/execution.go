@@ -96,9 +96,49 @@ func (e *AgentExecution) GetID() string {
 
 // StreamEvent represents a streaming event from execution
 type StreamEvent struct {
-	Type      string                 `json:"type"`    // "chunk", "error", "complete", "status"
+	Type      string                 `json:"type"`    // "chunk", "error", "complete", "status", "tool_started", "tool_completed", "message_chunk"
 	Content   string                 `json:"content"` // The content chunk or error message
 	Status    *AgentExecutionStatus  `json:"status,omitempty"`
 	Metadata  map[string]interface{} `json:"metadata,omitempty"`
 	Timestamp *CustomTime            `json:"timestamp,omitempty"`
+
+	// Tool event fields (for tool_started, tool_completed events)
+	ToolName    string                 `json:"tool_name,omitempty"`
+	ToolInputs  map[string]interface{} `json:"tool_inputs,omitempty"`
+	ToolOutputs map[string]interface{} `json:"tool_outputs,omitempty"`
+	Duration    *float64               `json:"duration_seconds,omitempty"`
+	Success     *bool                  `json:"success,omitempty"`
+
+	// Message event fields (for message, message_chunk events)
+	Role  string `json:"role,omitempty"`  // "assistant", "user", "system", "tool"
+	Chunk *bool  `json:"chunk,omitempty"` // true for streaming chunks vs complete messages
+}
+
+// Stream event type constants
+const (
+	StreamEventTypeChunk         = "chunk"
+	StreamEventTypeError         = "error"
+	StreamEventTypeComplete      = "complete"
+	StreamEventTypeStatus        = "status"
+	StreamEventTypeToolStarted   = "tool_started"
+	StreamEventTypeToolCompleted = "tool_completed"
+	StreamEventTypeMessage       = "message"
+	StreamEventTypeMessageChunk  = "message_chunk"
+	StreamEventTypeConnected     = "connected"
+	StreamEventTypeDone          = "done"
+)
+
+// IsToolEvent returns true if this is a tool-related event
+func (e *StreamEvent) IsToolEvent() bool {
+	return e.Type == StreamEventTypeToolStarted || e.Type == StreamEventTypeToolCompleted
+}
+
+// IsMessageEvent returns true if this is a message-related event
+func (e *StreamEvent) IsMessageEvent() bool {
+	return e.Type == StreamEventTypeMessage || e.Type == StreamEventTypeMessageChunk || e.Type == StreamEventTypeChunk
+}
+
+// IsTerminalEvent returns true if this event indicates the stream is ending
+func (e *StreamEvent) IsTerminalEvent() bool {
+	return e.Type == StreamEventTypeComplete || e.Type == StreamEventTypeDone || e.Type == StreamEventTypeError
 }
