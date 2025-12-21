@@ -25,8 +25,34 @@ func NewPlannerClient(client *Client) *PlannerClient {
 }
 
 // CreatePlan creates a task plan (non-streaming)
+// NOTE: Planning can take 60-120 seconds due to AI processing, so we use an extended timeout
 func (pc *PlannerClient) CreatePlan(ctx context.Context, req *PlanRequest) (*PlanResponse, error) {
-	resp, err := pc.client.post(ctx, "/api/v1/tasks/plan", req)
+	// Marshal request
+	reqBody, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	// Create request to non-streaming endpoint
+	planURL := fmt.Sprintf("%s/api/v1/tasks/plan", pc.client.GetBaseURL())
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, planURL, bytes.NewBuffer(reqBody))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	// Set headers
+	httpReq.Header.Set("Content-Type", "application/json")
+	if pc.client.cfg.APIKey != "" {
+		httpReq.Header.Set("Authorization", fmt.Sprintf("UserKey %s", pc.client.cfg.APIKey))
+	}
+
+	// Use extended timeout client for planning (3 minutes)
+	// Default 30s timeout is not enough for AI planning which takes 40-120 seconds
+	httpClient := &http.Client{
+		Timeout: 3 * time.Minute,
+	}
+
+	resp, err := httpClient.Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create plan: %w", err)
 	}
