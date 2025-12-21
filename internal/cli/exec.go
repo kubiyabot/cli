@@ -17,6 +17,7 @@ import (
 	"github.com/kubiyabot/cli/internal/controlplane/entities"
 	"github.com/kubiyabot/cli/internal/kubiya"
 	"github.com/kubiyabot/cli/internal/output"
+	"github.com/kubiyabot/cli/internal/streaming"
 	"github.com/kubiyabot/cli/internal/style"
 	"github.com/spf13/cobra"
 )
@@ -30,6 +31,11 @@ func NewExecCommand(cfg *config.Config) *cobra.Command {
 		savePlanPath   string
 		nonInteractive bool
 		priority       string
+
+		// Streaming flags
+		noStream     bool   // Disable live event streaming (streaming is enabled by default)
+		streamFormat string // Output format: auto, text, json
+		verbose      bool   // Show detailed tool inputs/outputs
 
 		// New execution mode flags
 		local            bool
@@ -60,6 +66,15 @@ All plans are automatically saved to ~/.kubiya/plans/ for future reference.`,
   kubiya exec "Deploy my app to production"
   kubiya exec "Analyze security vulnerabilities in my cluster"
   kubiya exec "Create a new microservice with tests" --yes
+
+  # Streaming is enabled by default - see live tool calls and agent reasoning
+  kubiya exec "Deploy my app"                       # Formatted text output (default)
+  kubiya exec "Deploy my app" --verbose             # Include full tool inputs/outputs
+  kubiya exec "Deploy my app" --stream-format=json  # NDJSON for parsing
+  kubiya exec "Deploy my app" --no-stream           # Disable streaming (legacy mode)
+
+  # CI/CD usage (NDJSON output auto-detected)
+  kubiya exec "Deploy to staging" --yes 2>&1 | jq 'select(.type == "tool_completed")'
 
   # Local execution with ephemeral worker
   kubiya exec "task" --local
@@ -104,6 +119,9 @@ All plans are automatically saved to ~/.kubiya/plans/ for future reference.`,
 				nonInteractive:  nonInteractive,
 				priority:        priority,
 				progressManager: progressManager,
+				NoStream:        noStream,
+				StreamFormat:    streamFormat,
+				Verbose:         verbose,
 				Local:           local,
 				QueueIDs:        queueIDs,
 				QueueNames:      queueNames,
@@ -152,6 +170,11 @@ All plans are automatically saved to ~/.kubiya/plans/ for future reference.`,
 	cmd.Flags().BoolVar(&nonInteractive, "non-interactive", false, "Non-interactive mode (skip all prompts)")
 	cmd.Flags().StringVar(&priority, "priority", "medium", "Task priority: low, medium, high, critical")
 
+	// Streaming flags (streaming is enabled by default)
+	cmd.Flags().BoolVar(&noStream, "no-stream", false, "Disable live event streaming (streaming is enabled by default)")
+	cmd.Flags().StringVar(&streamFormat, "stream-format", "auto", "Stream output format: auto, text, json (auto: text for TTY, json for CI/pipes)")
+	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Show detailed tool inputs and outputs in streaming mode")
+
 	// Execution mode flags
 	cmd.Flags().BoolVar(&local, "local", false, "Run execution locally with ephemeral worker (uses fast planning)")
 	cmd.Flags().StringSliceVar(&queueIDs, "queue", nil, "Worker queue ID(s) - comma-separated for parallel execution")
@@ -176,6 +199,11 @@ type ExecCommand struct {
 	priority        string
 	currentPlan     *kubiya.PlanResponse
 	progressManager *output.ProgressManager
+
+	// Streaming options (streaming is enabled by default)
+	NoStream     bool   // --no-stream: Disable live event streaming
+	StreamFormat string // --stream-format: Output format (auto, text, json)
+	Verbose      bool   // --verbose: Show detailed tool inputs/outputs
 
 	// New execution mode flags
 	Local           bool     // --local: Run with ephemeral local worker (uses fast planning)
@@ -582,6 +610,9 @@ func (ec *ExecCommand) executeLocal(ctx context.Context, plan *kubiya.PlanRespon
 
 	// Start local worker
 	fmt.Println("🚀 Starting local worker...")
+	// Check if streaming is enabled (for quiet mode)
+	streamingOpts := ec.GetStreamingOptions()
+
 	workerOpts := &WorkerStartOptions{
 		QueueID:             queueID,
 		DeploymentType:      "local",
@@ -589,6 +620,7 @@ func (ec *ExecCommand) executeLocal(ctx context.Context, plan *kubiya.PlanRespon
 		SingleExecutionMode: true, // Exit gracefully after completing the task
 		PackageSource:       ec.PackageSource,
 		LocalWheel:          ec.LocalWheel,
+		QuietMode:           streamingOpts.Enabled, // Suppress worker output when streaming
 		cfg:                 ec.cfg,
 	}
 
@@ -898,6 +930,18 @@ func (ec *ExecCommand) waitForWorkerReady(ctx context.Context, queueID string, t
 
 // streamExecutionOutput streams execution output to terminal
 func (ec *ExecCommand) streamExecutionOutput(ctx context.Context, executionID string) error {
+	// Check if enhanced streaming is enabled (--stream flag or CI auto-detection)
+	opts := ec.GetStreamingOptions()
+	if opts.Enabled {
+		return ec.streamExecutionWithPipeline(ctx, executionID, opts)
+	}
+
+	// Default streaming behavior (backward compatible)
+	return ec.streamExecutionDefault(ctx, executionID)
+}
+
+// streamExecutionDefault is the original streaming implementation
+func (ec *ExecCommand) streamExecutionDefault(ctx context.Context, executionID string) error {
 	eventChan, errChan := ec.client.StreamExecutionOutput(ctx, executionID)
 
 	var fullResponse strings.Builder
@@ -924,23 +968,23 @@ func (ec *ExecCommand) streamExecutionOutput(ctx context.Context, executionID st
 			streamStarted = true
 
 			switch event.Type {
-			case "chunk":
+			case entities.StreamEventTypeChunk:
 				// Stream content in real-time
 				fmt.Print(style.OutputStyle.Render(event.Content))
 				fullResponse.WriteString(event.Content)
-			case "error":
+			case entities.StreamEventTypeError:
 				// Show error
 				fmt.Println()
 				fmt.Println()
 				fmt.Println(style.CreateErrorBox(event.Content))
 				return fmt.Errorf("execution error: %s", event.Content)
-			case "complete":
+			case entities.StreamEventTypeComplete:
 				// Completion
 				fmt.Println()
 				fmt.Println()
 				fmt.Println(style.CreateSuccessBox("Execution completed successfully"))
 				return nil
-			case "status":
+			case entities.StreamEventTypeStatus:
 				// Status update (shown in debug mode only)
 				if event.Status != nil {
 					fmt.Printf(" %s ", style.CreateStatusBadge(string(*event.Status)))
@@ -960,6 +1004,46 @@ func (ec *ExecCommand) streamExecutionOutput(ctx context.Context, executionID st
 			return ctx.Err()
 		}
 	}
+}
+
+// streamExecutionWithEnhancedPipeline streams execution using the new streaming pipeline
+// This provides tool call visibility, NDJSON output, and CI-friendly formatting
+func (ec *ExecCommand) streamExecutionWithEnhancedPipeline(ctx context.Context, executionID string, opts StreamingOptions) error {
+	executor := NewStreamingExecutor(opts)
+	defer executor.Close()
+
+	// Print streaming mode info in text mode
+	if opts.Format == streaming.StreamFormatText && !output.IsCI() {
+		printStreamingInfo(opts)
+	}
+
+	// Send connected event
+	executor.ProcessStreamEvent(streaming.NewConnectedEvent(executionID))
+
+	// Stream execution output from the control plane
+	eventChan, errChan := ec.client.StreamExecutionOutput(ctx, executionID)
+
+	// Process events through the streaming executor
+	err := executor.StreamExecution(ctx, eventChan, errChan)
+	if err != nil {
+		return err
+	}
+
+	// Send done event
+	executor.ProcessStreamEvent(streaming.NewDoneEvent())
+
+	// Flush any remaining output
+	if flushErr := executor.Flush(); flushErr != nil {
+		return flushErr
+	}
+
+	// Print completion message in text mode (JSON mode already has done event)
+	if opts.Format == streaming.StreamFormatText && !output.IsCI() {
+		fmt.Println()
+		fmt.Println(style.CreateSuccessBox("Execution completed successfully"))
+	}
+
+	return nil
 }
 
 // ExecuteFromPlan loads and executes a saved plan
