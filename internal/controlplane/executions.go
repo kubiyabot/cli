@@ -32,12 +32,36 @@ func (c *Client) ExecuteTeamV2(teamID string, req *entities.ExecuteTeamRequest) 
 }
 
 // GetExecution retrieves an execution by ID
-// Note: The API returns an array with a single element
+// Note: The API may return either a single object or an array with a single element
 func (c *Client) GetExecution(id string) (*entities.AgentExecution, error) {
-	var executions []*entities.AgentExecution
-	if err := c.get(fmt.Sprintf("/api/v1/executions/%s", id), &executions); err != nil {
+	// Get raw response body
+	resp, err := c.DoRequest(http.MethodGet, fmt.Sprintf("/api/v1/executions/%s", id), nil)
+	if err != nil {
 		return nil, err
 	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response body: %w", err)
+	}
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("API error (status %d): %s", resp.StatusCode, string(body))
+	}
+
+	// Try to unmarshal as a single object first (newer API format)
+	var execution entities.AgentExecution
+	if err := json.Unmarshal(body, &execution); err == nil && execution.ID != "" {
+		return &execution, nil
+	}
+
+	// If that fails, try as an array (legacy API format)
+	var executions []*entities.AgentExecution
+	if err := json.Unmarshal(body, &executions); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+
 	if len(executions) == 0 {
 		return nil, fmt.Errorf("execution not found: %s", id)
 	}
@@ -68,8 +92,10 @@ func (c *Client) ListExecutions(filters map[string]string) ([]*entities.AgentExe
 	return executions, nil
 }
 
-// StreamExecutionOutput streams the execution output via SSE
-// Returns a channel that emits streaming events and an error channel
+// StreamExecutionOutput streams the execution output via SSE with automatic reconnection.
+// This handles Vercel's 300-second serverless function timeout by automatically
+// reconnecting with Last-Event-ID when the stream closes prematurely.
+// Returns a channel that emits streaming events and an error channel.
 func (c *Client) StreamExecutionOutput(ctx context.Context, executionID string) (<-chan entities.StreamEvent, <-chan error) {
 	eventChan := make(chan entities.StreamEvent, 100)
 	errChan := make(chan error, 1)
@@ -78,94 +104,198 @@ func (c *Client) StreamExecutionOutput(ctx context.Context, executionID string) 
 		defer close(eventChan)
 		defer close(errChan)
 
-		sseURL := fmt.Sprintf("%s/api/v1/executions/%s/stream", c.BaseURL, executionID)
+		var lastEventID string
+		maxReconnects := 100 // Allow up to 100 reconnects (~8+ hours of streaming)
+		reconnectCount := 0
+		reconnectDelay := 1 * time.Second
 
-		req, err := http.NewRequest("GET", sseURL, nil)
-		if err != nil {
-			errChan <- fmt.Errorf("failed to create stream request: %w", err)
-			return
-		}
-
-		// Set headers for SSE
-		req.Header.Set("Accept", "text/event-stream")
-		req.Header.Set("Cache-Control", "no-cache")
-		req.Header.Set("Connection", "keep-alive")
-		req.Header.Set("Authorization", "Bearer "+c.APIKey)
-
-		// Use a client with no timeout for SSE streaming
-		streamClient := &http.Client{
-			Timeout: 0, // No timeout for SSE streams
-		}
-		resp, err := streamClient.Do(req)
-		if err != nil {
-			errChan <- fmt.Errorf("failed to connect to stream: %w", err)
-			return
-		}
-		defer resp.Body.Close()
-
-		if resp.StatusCode != 200 {
-			errChan <- fmt.Errorf("stream returned status %d", resp.StatusCode)
-			return
-		}
-
-		// Read SSE stream - parse proper SSE format with id/event/data fields
-		reader := bufio.NewReader(resp.Body)
-		var currentEventType string
-		var currentEventID string
-
-		for {
+		for reconnectCount <= maxReconnects {
+			// Check context before attempting connection
 			select {
 			case <-ctx.Done():
 				return
 			default:
-				line, err := reader.ReadString('\n')
-				if err != nil {
-					if err != io.EOF {
-						errChan <- fmt.Errorf("error reading stream: %w", err)
+			}
+
+			// Stream until disconnected or terminal event
+			terminal, lastID, err := c.streamWithReconnect(ctx, executionID, lastEventID, eventChan)
+			if lastID != "" {
+				lastEventID = lastID
+			}
+
+			// If we received a terminal event, we're done
+			if terminal {
+				return
+			}
+
+			// If context was cancelled, exit
+			if ctx.Err() != nil {
+				return
+			}
+
+			// If there was an error, check if we should reconnect
+			if err != nil {
+				// Check if execution is still running before reconnecting
+				exec, statusErr := c.GetExecution(executionID)
+				if statusErr != nil {
+					// Can't check status - try reconnecting anyway
+					reconnectCount++
+					time.Sleep(reconnectDelay)
+					continue
+				}
+
+				// Check if execution is in a terminal state
+				status := string(exec.Status)
+				if status == "completed" || status == "failed" || status == "cancelled" || status == "terminated" {
+					// Execution finished - send done event and exit
+					doneEvent := entities.StreamEvent{
+						Type: entities.StreamEventTypeDone,
+					}
+					select {
+					case eventChan <- doneEvent:
+					case <-ctx.Done():
 					}
 					return
 				}
 
-				line = strings.TrimRight(line, "\r\n")
-
-				// Parse SSE fields
-				if strings.HasPrefix(line, "id: ") {
-					currentEventID = line[4:]
-				} else if strings.HasPrefix(line, "event: ") {
-					currentEventType = line[7:]
-				} else if strings.HasPrefix(line, "data: ") {
-					data := line[6:]
-
-					// Parse the event using the event type from "event:" field
-					event := parseSSEEvent(currentEventType, currentEventID, data)
-
-					select {
-					case eventChan <- event:
-					case <-ctx.Done():
-						return
-					}
-
-					// Stop streaming on terminal events
-					if event.IsTerminalEvent() {
-						return
-					}
-
-					// Reset for next event
-					currentEventType = ""
-					currentEventID = ""
-				} else if line == "" {
-					// Empty line marks end of event - reset state
-					currentEventType = ""
-					currentEventID = ""
-				} else if strings.HasPrefix(line, ":") {
-					// SSE comment (e.g., ": keepalive") - ignore
+				// Execution still running - reconnect
+				reconnectCount++
+				if reconnectCount <= maxReconnects {
+					// Brief delay before reconnecting
+					time.Sleep(reconnectDelay)
 					continue
 				}
 			}
+
+			// Stream closed without error and without terminal event
+			// Check execution status to decide whether to reconnect
+			exec, statusErr := c.GetExecution(executionID)
+			if statusErr != nil {
+				errChan <- fmt.Errorf("stream closed and failed to check execution status: %w", statusErr)
+				return
+			}
+
+			status := string(exec.Status)
+			if status == "completed" || status == "failed" || status == "cancelled" || status == "terminated" {
+				// Execution finished - send done event and exit
+				doneEvent := entities.StreamEvent{
+					Type: entities.StreamEventTypeDone,
+				}
+				select {
+				case eventChan <- doneEvent:
+				case <-ctx.Done():
+				}
+				return
+			}
+
+			// Execution still running - reconnect
+			reconnectCount++
+			if reconnectCount <= maxReconnects {
+				time.Sleep(reconnectDelay)
+				continue
+			}
+
+			// Max reconnects exceeded
+			errChan <- fmt.Errorf("max reconnection attempts (%d) exceeded", maxReconnects)
+			return
 		}
 	}()
 
 	return eventChan, errChan
+}
+
+// streamWithReconnect handles a single SSE connection, returning whether a terminal
+// event was received, the last event ID seen, and any error.
+func (c *Client) streamWithReconnect(ctx context.Context, executionID, lastEventID string, eventChan chan<- entities.StreamEvent) (terminal bool, lastID string, err error) {
+	sseURL := fmt.Sprintf("%s/api/v1/executions/%s/stream", c.BaseURL, executionID)
+
+	req, err := http.NewRequestWithContext(ctx, "GET", sseURL, nil)
+	if err != nil {
+		return false, lastEventID, fmt.Errorf("failed to create stream request: %w", err)
+	}
+
+	// Set headers for SSE
+	req.Header.Set("Accept", "text/event-stream")
+	req.Header.Set("Cache-Control", "no-cache")
+	req.Header.Set("Connection", "keep-alive")
+	req.Header.Set("Authorization", "Bearer "+c.APIKey)
+
+	// Set Last-Event-ID for resumption if we have one
+	if lastEventID != "" {
+		req.Header.Set("Last-Event-ID", lastEventID)
+	}
+
+	// Use a client with no timeout for SSE streaming
+	streamClient := &http.Client{
+		Timeout: 0, // No timeout for SSE streams
+	}
+	resp, err := streamClient.Do(req)
+	if err != nil {
+		return false, lastEventID, fmt.Errorf("failed to connect to stream: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return false, lastEventID, fmt.Errorf("stream returned status %d", resp.StatusCode)
+	}
+
+	// Read SSE stream - parse proper SSE format with id/event/data fields
+	reader := bufio.NewReader(resp.Body)
+	var currentEventType string
+	var currentEventID string
+
+	for {
+		select {
+		case <-ctx.Done():
+			return false, lastEventID, ctx.Err()
+		default:
+			line, readErr := reader.ReadString('\n')
+			if readErr != nil {
+				if readErr != io.EOF {
+					return false, lastEventID, fmt.Errorf("error reading stream: %w", readErr)
+				}
+				// EOF - stream closed (possibly due to Vercel 300s timeout)
+				return false, lastEventID, nil
+			}
+
+			line = strings.TrimRight(line, "\r\n")
+
+			// Parse SSE fields
+			if strings.HasPrefix(line, "id: ") {
+				currentEventID = line[4:]
+				lastEventID = currentEventID // Track for reconnection
+			} else if strings.HasPrefix(line, "event: ") {
+				currentEventType = line[7:]
+			} else if strings.HasPrefix(line, "data: ") {
+				data := line[6:]
+
+				// Parse the event using the event type from "event:" field
+				event := parseSSEEvent(currentEventType, currentEventID, data)
+
+				select {
+				case eventChan <- event:
+				case <-ctx.Done():
+					return false, lastEventID, ctx.Err()
+				}
+
+				// Stop streaming on terminal events
+				if event.IsTerminalEvent() {
+					return true, lastEventID, nil
+				}
+
+				// Reset for next event
+				currentEventType = ""
+				currentEventID = ""
+			} else if line == "" {
+				// Empty line marks end of event - reset state
+				currentEventType = ""
+				currentEventID = ""
+			} else if strings.HasPrefix(line, ":") {
+				// SSE comment (e.g., ": keepalive") - ignore
+				continue
+			}
+		}
+	}
 }
 
 // parseSSEEvent parses an SSE event with proper handling of nested data structures

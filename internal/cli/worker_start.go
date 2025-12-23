@@ -22,6 +22,7 @@ import (
 	kubiyacontext "github.com/kubiyabot/cli/internal/context"
 	"github.com/kubiyabot/cli/internal/controlplane"
 	"github.com/kubiyabot/cli/internal/output"
+	"github.com/kubiyabot/cli/internal/webui"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
 )
@@ -76,6 +77,10 @@ type WorkerStartOptions struct {
 
 	// Output control
 	QuietMode bool // Suppress worker subprocess output (for streaming mode)
+
+	// WebUI options
+	WebUIPort    int  // Port for the WebUI (0 = auto-assign)
+	DisableWebUI bool // Disable the WebUI
 
 	cfg             *config.Config
 	progressManager *output.ProgressManager
@@ -241,6 +246,10 @@ Examples:
 	// Model override flag
 	cmd.Flags().StringVar(&opts.Model, "model", "", "Explicit model ID to use (overrides agent/team config). Can also use KUBIYA_MODEL env var")
 	cmd.Flags().BoolVar(&opts.SkipModelValidation, "skip-model-validation", false, "Skip validation that model exists in proxy config (useful for offline/testing)")
+
+	// WebUI flags
+	cmd.Flags().IntVar(&opts.WebUIPort, "webui-port", 0, "Port for the Worker Pool Web Interface (0 = auto-assign)")
+	cmd.Flags().BoolVar(&opts.DisableWebUI, "no-webui", false, "Disable the Worker Pool Web Interface")
 
 	cmd.MarkFlagRequired("queue-id")
 
@@ -937,11 +946,63 @@ func (opts *WorkerStartOptions) runLocalForeground(ctx context.Context) error {
 
 	workerCmd.Env = append(os.Environ(), workerEnv...)
 
-	// Connect stdout/stderr (suppress in quiet mode for clean streaming output)
+	// Start WebUI server first if enabled (so we can capture logs)
+	var webuiServer *webui.Server
+	var webuiURL string
+	if !opts.DisableWebUI {
+		// Extract proxy port from URL if available
+		proxyPort := 0
+		if liteLLMProxyURL != "" {
+			// Parse port from URL like http://127.0.0.1:8080
+			if parts := strings.Split(liteLLMProxyURL, ":"); len(parts) >= 3 {
+				if p, err := strconv.Atoi(parts[2]); err == nil {
+					proxyPort = p
+				}
+			}
+		}
+
+		webuiConfig := webui.ServerConfig{
+			QueueID:          opts.QueueID,
+			WorkerDir:        workerDir,
+			ControlPlaneURL:  controlPlaneURL,
+			APIKey:           opts.cfg.APIKey,
+			Port:             opts.WebUIPort,
+			WorkerPID:        0, // Will be updated after worker starts
+			EnableLocalProxy: opts.EnableLocalProxy,
+			ProxyPort:        proxyPort,
+			ModelOverride:    opts.Model,
+			DeploymentType:   opts.DeploymentType,
+			DaemonMode:       opts.DaemonMode,
+		}
+
+		var err error
+		webuiServer, err = webui.NewServer(webuiConfig)
+		if err != nil {
+			pm.Warning(fmt.Sprintf("Failed to create WebUI server: %v", err))
+			logger.Debug("WebUI server creation failed", "error", err)
+		} else {
+			if err := webuiServer.Start(ctx); err != nil {
+				pm.Warning(fmt.Sprintf("Failed to start WebUI server: %v", err))
+				logger.Debug("WebUI server start failed", "error", err)
+				webuiServer = nil
+			} else {
+				webuiURL = webuiServer.URL()
+				logger.Info("WebUI server started", "url", webuiURL)
+			}
+		}
+	}
+
+	// Connect stdout/stderr - capture to WebUI if available
 	if opts.QuietMode {
 		// In quiet mode, discard worker output - streaming events will be shown via SSE
 		workerCmd.Stdout = io.Discard
 		workerCmd.Stderr = io.Discard
+	} else if webuiServer != nil {
+		// Capture logs to WebUI and also print to console
+		stdoutCapture := webuiServer.GetLogWriter("worker-stdout", webui.LogLevelInfo)
+		stderrCapture := webuiServer.GetLogWriter("worker-stderr", webui.LogLevelError)
+		workerCmd.Stdout = webui.CreateMultiWriter(os.Stdout, stdoutCapture)
+		workerCmd.Stderr = webui.CreateMultiWriter(os.Stderr, stderrCapture)
 	} else {
 		workerCmd.Stdout = os.Stdout
 		workerCmd.Stderr = os.Stderr
@@ -950,7 +1011,16 @@ func (opts *WorkerStartOptions) runLocalForeground(ctx context.Context) error {
 	// Start the worker process
 	if err := workerCmd.Start(); err != nil {
 		startSpinner.Fail("Failed to start worker")
+		// Stop WebUI if it was started
+		if webuiServer != nil {
+			webuiServer.Stop()
+		}
 		return fmt.Errorf("failed to start worker: %w", err)
+	}
+
+	// Update WebUI with worker PID now that it's started
+	if webuiServer != nil {
+		webuiServer.SetWorkerPID(workerCmd.Process.Pid)
 	}
 
 	// Give worker a moment to initialize
@@ -964,24 +1034,43 @@ func (opts *WorkerStartOptions) runLocalForeground(ctx context.Context) error {
 	pm.Println("")
 
 	// Create a styled success panel with visual elements
+	var successContent string
+	if webuiURL != "" {
+		successContent = pterm.Sprintf(
+			"%s\n\n"+
+				"  %s  %s\n"+
+				"  %s  %s\n"+
+				"  %s  %s\n\n"+
+				"  %s",
+			pterm.Bold.Sprintf("🎯 Worker is polling for tasks"),
+			pterm.LightGreen("Status:"),
+			pterm.Bold.Sprint("Active ●"),
+			pterm.LightGreen("Queue: "),
+			pterm.Bold.Sprint(opts.QueueID),
+			pterm.LightGreen("WebUI: "),
+			pterm.Bold.Sprint(webuiURL),
+			pterm.FgGray.Sprint("Press Ctrl+C to stop gracefully"),
+		)
+	} else {
+		successContent = pterm.Sprintf(
+			"%s\n\n"+
+				"  %s  %s\n"+
+				"  %s  %s\n\n"+
+				"  %s",
+			pterm.Bold.Sprintf("🎯 Worker is polling for tasks"),
+			pterm.LightGreen("Status:"),
+			pterm.Bold.Sprint("Active ●"),
+			pterm.LightGreen("Queue: "),
+			pterm.Bold.Sprint(opts.QueueID),
+			pterm.FgGray.Sprint("Press Ctrl+C to stop gracefully"),
+		)
+	}
+
 	successPanel := pterm.DefaultBox.
 		WithTitle("✓ Ready").
 		WithTitleTopCenter().
 		WithBoxStyle(pterm.NewStyle(pterm.FgGreen)).
-		Sprint(
-			pterm.Sprintf(
-				"%s\n\n"+
-				"  %s  %s\n"+
-				"  %s  %s\n\n"+
-				"  %s",
-				pterm.Bold.Sprintf("🎯 Worker is polling for tasks"),
-				pterm.LightGreen("Status:"),
-				pterm.Bold.Sprint("Active ●"),
-				pterm.LightGreen("Queue: "),
-				pterm.Bold.Sprint(opts.QueueID),
-				pterm.FgGray.Sprint("Press Ctrl+C to stop gracefully"),
-			),
-		)
+		Sprint(successContent)
 
 	pterm.Println(successPanel)
 	pm.Println("")
@@ -1007,7 +1096,15 @@ func (opts *WorkerStartOptions) runLocalForeground(ctx context.Context) error {
 			progress.Info("Gracefully stopping worker")
 			pm.Println("   (Press Ctrl+C to force shutdown)")
 
-			// Stop LiteLLM proxy first
+			// Stop WebUI server first
+			if webuiServer != nil {
+				logger.Debug("Stopping WebUI server")
+				if err := webuiServer.Stop(); err != nil {
+					logger.Debug("Failed to stop WebUI server", "error", err)
+				}
+			}
+
+			// Stop LiteLLM proxy
 			if liteLLMSupervisor != nil {
 				logger.Debug("Stopping local LiteLLM proxy")
 				if err := liteLLMSupervisor.Stop(); err != nil {
@@ -1084,7 +1181,15 @@ func (opts *WorkerStartOptions) runLocalForeground(ctx context.Context) error {
 			progress.Info("Gracefully stopping worker")
 			pm.Println("   (Press Ctrl+C again to force shutdown)")
 
-			// Stop LiteLLM proxy first
+			// Stop WebUI server first
+			if webuiServer != nil {
+				logger.Debug("Stopping WebUI server")
+				if err := webuiServer.Stop(); err != nil {
+					logger.Debug("Failed to stop WebUI server", "error", err)
+				}
+			}
+
+			// Stop LiteLLM proxy
 			if liteLLMSupervisor != nil {
 				logger.Debug("Stopping local LiteLLM proxy")
 				if err := liteLLMSupervisor.Stop(); err != nil {

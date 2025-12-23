@@ -106,7 +106,7 @@ func (e *OnDemandExecutor) createEphemeralQueue(ctx context.Context) (*entities.
 
 	// Set ephemeral flags
 	trueVal := true
-	ttl := 300 // 5 minutes auto-cleanup
+	ttl := 3600 // 1 hour - queue auto-cleanup after execution completes
 
 	req := &entities.WorkerQueueCreateRequest{
 		Name:                    name,

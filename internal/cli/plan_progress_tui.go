@@ -34,6 +34,23 @@ var (
 	errorStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("196")).
 			Bold(true)
+
+	// Tool call styles for elegant display
+	toolIconStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("214")). // Orange/amber color
+			Bold(true)
+
+	toolNameStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("75")). // Cyan color
+			Bold(false)
+
+	toolSuccessStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("42")). // Green
+			Bold(false)
+
+	toolDurationStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("245")). // Gray
+			Italic(true)
 )
 
 // Custom message types for bubbletea
@@ -43,6 +60,14 @@ type sseEventMsg struct {
 
 type sseErrorMsg struct {
 	err error
+}
+
+// toolCallInfo tracks a tool call with its status
+type toolCallInfo struct {
+	name     string
+	id       string
+	status   string  // "running", "success", "failed"
+	duration float64 // Duration in seconds (0 if still running)
 }
 
 // planProgressModel is the bubbletea model for plan generation progress
@@ -61,13 +86,13 @@ type planProgressModel struct {
 	progressPercent float64
 	stepName        string
 	stepDescription string
-	toolCalls       []string // Last 3 tool calls
-	reasoningLines  []string // Last 5 reasoning sentences from planner
+	toolCalls       []toolCallInfo // Last 5 tool calls with status
+	reasoningLines  []string       // Last 5 reasoning sentences from planner
 
 	// Control
-	done  bool
-	err   error
-	plan  *kubiya.PlanResponse
+	done bool
+	err  error
+	plan *kubiya.PlanResponse
 
 	// Event channels
 	eventChan <-chan kubiya.PlanStreamEvent
@@ -161,17 +186,40 @@ func (m planProgressModel) handleSSEEvent(event kubiya.PlanStreamEvent) (tea.Mod
 		}
 
 	case "tool_call":
-		// Record tool call
-		if tool, ok := event.Data["tool_name"].(string); ok {
-			m.toolCalls = append(m.toolCalls, tool)
-			// Keep only last 3
-			if len(m.toolCalls) > 3 {
-				m.toolCalls = m.toolCalls[len(m.toolCalls)-3:]
+		// Record tool call with running status
+		toolName, _ := event.Data["tool_name"].(string)
+		toolID, _ := event.Data["tool_id"].(string)
+		if toolName != "" {
+			// Add new tool call
+			m.toolCalls = append(m.toolCalls, toolCallInfo{
+				name:   toolName,
+				id:     toolID,
+				status: "running",
+			})
+			// Keep only last 5 tool calls
+			if len(m.toolCalls) > 5 {
+				m.toolCalls = m.toolCalls[len(m.toolCalls)-5:]
 			}
 		}
 
 	case "tool_result":
-		// Silently skip tool results (we show tool calls only)
+		// Update tool call status based on result
+		toolID, _ := event.Data["tool_id"].(string)
+		status, _ := event.Data["status"].(string)
+		duration, _ := event.Data["duration"].(float64)
+
+		// Find and update the matching tool call
+		for i := range m.toolCalls {
+			if m.toolCalls[i].id == toolID {
+				if status == "success" || status == "" {
+					m.toolCalls[i].status = "success"
+				} else {
+					m.toolCalls[i].status = "failed"
+				}
+				m.toolCalls[i].duration = duration
+				break
+			}
+		}
 
 	case "step_started":
 		// Update step information
@@ -312,12 +360,59 @@ func (m planProgressModel) View() string {
 		}
 	}
 
-	// Recent tool calls
+	// Show planner actions with elegant checkmark style
 	if len(m.toolCalls) > 0 {
 		output.WriteString("\n")
-		output.WriteString(dimStyle.Render("  🔧 Tools: "))
-		output.WriteString(messageStyle.Render(strings.Join(m.toolCalls, ", ")))
-		output.WriteString("\n")
+
+		// Deduplicate actions (same action description shown once)
+		seenActions := make(map[string]bool)
+		var uniqueActions []toolCallInfo
+
+		for _, tc := range m.toolCalls {
+			action := getActionDescription(tc.name)
+			if !seenActions[action] {
+				seenActions[action] = true
+				uniqueActions = append(uniqueActions, tc)
+			} else {
+				// Update status of existing action if this one is more recent
+				for i := range uniqueActions {
+					if getActionDescription(uniqueActions[i].name) == action {
+						if tc.status == "running" || (tc.status == "success" && uniqueActions[i].status != "running") {
+							uniqueActions[i] = tc
+						}
+					}
+				}
+			}
+		}
+
+		for _, tc := range uniqueActions {
+			action := getActionDescription(tc.name)
+
+			var line string
+			switch tc.status {
+			case "running":
+				// Show spinner-like indicator for running actions
+				line = fmt.Sprintf("  %s %s",
+					toolIconStyle.Render("›"),
+					messageStyle.Render(action+"..."))
+			case "success":
+				// Show checkmark for completed actions
+				line = fmt.Sprintf("  %s %s",
+					toolSuccessStyle.Render("✓"),
+					dimStyle.Render(action))
+			case "failed":
+				// Show X for failed actions
+				line = fmt.Sprintf("  %s %s",
+					errorStyle.Render("✗"),
+					dimStyle.Render(action))
+			default:
+				line = fmt.Sprintf("  %s %s",
+					dimStyle.Render("○"),
+					dimStyle.Render(action))
+			}
+			output.WriteString(line)
+			output.WriteString("\n")
+		}
 	}
 
 	// Help text
@@ -391,7 +486,7 @@ func runPlanProgressTUI(ctx context.Context, eventChan <-chan kubiya.PlanStreamE
 		eventChan:            eventChan,
 		errChan:              errChan,
 		ctx:                  ctx,
-		toolCalls:            make([]string, 0, 3),
+		toolCalls:            make([]toolCallInfo, 0, 5),
 		progressPercent:      0,
 		discoveringResources: resources == nil,
 	}
@@ -487,14 +582,21 @@ func runPlanProgressLogger(ctx context.Context, eventChan <-chan kubiya.PlanStre
 				}
 
 			case "tool_call":
+				// Show user-friendly action description instead of tool name
 				if toolName, ok := event.Data["tool_name"].(string); ok {
-					fmt.Printf("  🔧 Tool: %s\n", toolName)
+					action := getActionDescription(toolName)
+					fmt.Printf("  › %s...\n", action)
 				}
 
 			case "tool_result":
+				// Show completion with checkmark
 				if toolName, ok := event.Data["tool_name"].(string); ok {
-					if summary, ok := event.Data["result_summary"].(string); ok {
-						fmt.Printf("  ✓ %s: %s\n", toolName, summary)
+					action := getActionDescription(toolName)
+					status, _ := event.Data["status"].(string)
+					if status == "success" || status == "" {
+						fmt.Printf("  ✓ %s\n", action)
+					} else {
+						fmt.Printf("  ✗ %s (failed)\n", action)
 					}
 				}
 
@@ -622,4 +724,52 @@ func splitIntoSentences(text string) []string {
 	}
 
 	return sentences
+}
+
+// toolToAction maps tool names to user-friendly action descriptions
+var toolToAction = map[string]string{
+	// Agent/Team discovery
+	"list_agents":        "Discovering available agents",
+	"search_agents":      "Searching for matching agents",
+	"get_agent":          "Analyzing agent capabilities",
+	"list_teams":         "Discovering available teams",
+	"search_teams":       "Searching for matching teams",
+	"get_team":           "Analyzing team composition",
+
+	// Environment/Queue discovery
+	"list_environments":  "Checking available environments",
+	"get_environment":    "Analyzing environment details",
+	"list_worker_queues": "Finding available worker queues",
+	"get_worker_queue":   "Checking queue availability",
+
+	// Knowledge/Context
+	"search_knowledge":   "Searching knowledge base",
+	"get_context":        "Gathering execution context",
+
+	// Fallback patterns (partial matches)
+	"agent":              "Analyzing agents",
+	"team":               "Analyzing teams",
+	"environment":        "Checking environments",
+	"queue":              "Checking queues",
+	"search":             "Searching resources",
+	"list":               "Discovering resources",
+}
+
+// getActionDescription converts a tool name to a user-friendly action
+func getActionDescription(toolName string) string {
+	// Try exact match first
+	if action, ok := toolToAction[toolName]; ok {
+		return action
+	}
+
+	// Try partial matches
+	lowerName := strings.ToLower(toolName)
+	for pattern, action := range toolToAction {
+		if strings.Contains(lowerName, pattern) {
+			return action
+		}
+	}
+
+	// Default fallback
+	return "Processing"
 }
