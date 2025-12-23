@@ -873,7 +873,7 @@ func (ec *ExecCommand) validateAndFixAgentSelection(ctx context.Context, plan *k
 // createEphemeralQueue creates a temporary queue with auto-cleanup
 func (ec *ExecCommand) createEphemeralQueue(ctx context.Context, environmentID string) (*entities.WorkerQueue, error) {
 	trueVal := true
-	ttl := 300 // 5 minutes
+	ttl := 3600 // 1 hour - queue auto-cleanup after execution completes
 
 	req := &entities.WorkerQueueCreateRequest{
 		Name:                    fmt.Sprintf("local-exec-%s", time.Now().Format("20060102-150405")),
