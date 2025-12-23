@@ -23,6 +23,11 @@ type StreamingOptions struct {
 	// Verbose indicates whether to show detailed tool inputs/outputs
 	Verbose bool
 
+	// Output control options (enhanced streaming UX)
+	OutputLines int  // Maximum lines per tool output (default: 10)
+	FullOutput  bool // Show complete outputs without truncation
+	Compact     bool // Minimal output mode (tool names + status only)
+
 	// EventsWriter is where streaming events are written (typically stderr)
 	EventsWriter io.Writer
 
@@ -32,12 +37,20 @@ type StreamingOptions struct {
 
 // resolveStreamOptions determines streaming configuration based on flags and environment
 // Streaming is enabled by default for better UX
-func resolveStreamOptions(noStreamFlag bool, streamFormat string, verbose bool) StreamingOptions {
+func resolveStreamOptions(noStreamFlag bool, streamFormat string, verbose bool, outputLines int, fullOutput bool, compact bool) StreamingOptions {
 	opts := StreamingOptions{
 		Enabled:      !noStreamFlag, // Streaming is ON by default, --no-stream disables it
 		Verbose:      verbose,
+		OutputLines:  outputLines,
+		FullOutput:   fullOutput,
+		Compact:      compact,
 		EventsWriter: os.Stderr,
 		ResultWriter: os.Stdout,
+	}
+
+	// Set default output lines if not specified
+	if opts.OutputLines <= 0 {
+		opts.OutputLines = 10
 	}
 
 	// Resolve format
@@ -81,7 +94,13 @@ func NewStreamingExecutor(options StreamingOptions) *StreamingExecutor {
 	var renderer streaming.StreamRenderer
 	switch options.Format {
 	case streaming.StreamFormatText:
-		renderer = streaming.NewTextRenderer(options.EventsWriter, options.Verbose)
+		renderer = streaming.NewTextRendererWithOptions(
+			options.EventsWriter,
+			options.Verbose,
+			options.OutputLines,
+			options.FullOutput,
+			options.Compact,
+		)
 	case streaming.StreamFormatJSON:
 		renderer = streaming.NewJSONRenderer(options.EventsWriter, options.Verbose)
 	default:
@@ -179,7 +198,7 @@ func (ec *ExecCommand) IsStreamingEnabled() bool {
 
 // GetStreamingOptions resolves and returns streaming options for this execution
 func (ec *ExecCommand) GetStreamingOptions() StreamingOptions {
-	return resolveStreamOptions(ec.NoStream, ec.StreamFormat, ec.Verbose)
+	return resolveStreamOptions(ec.NoStream, ec.StreamFormat, ec.Verbose, ec.OutputLines, ec.FullOutput, ec.Compact)
 }
 
 // streamExecutionWithPipeline streams execution output using the streaming pipeline
