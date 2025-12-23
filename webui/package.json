@@ -1,0 +1,31 @@
+{
+  "name": "kubiya-worker-webui",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node esbuild.config.mjs --prod",
+    "dev": "node esbuild.config.mjs",
+    "watch": "node esbuild.config.mjs --watch",
+    "test": "vitest",
+    "test:run": "vitest run",
+    "test:coverage": "vitest run --coverage"
+  },
+  "dependencies": {
+    "preact": "^10.19.3"
+  },
+  "devDependencies": {
+    "@preact/preset-vite": "^2.8.2",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/preact": "^3.2.4",
+    "@testing-library/user-event": "^14.5.2",
+    "@types/node": "^25.0.3",
+    "@vitest/coverage-v8": "^1.6.0",
+    "esbuild": "^0.19.11",
+    "jsdom": "^24.0.0",
+    "msw": "^2.3.0",
+    "typescript": "^5.3.3",
+    "vite": "^5.4.0",
+    "vitest": "^1.6.0"
+  }
+}
