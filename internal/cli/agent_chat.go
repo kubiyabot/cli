@@ -292,7 +292,7 @@ func newAgentExecCommand(cfg *config.Config) *cobra.Command {
 	cmd.Flags().StringVar(&envFile, "env-file", "", "Load environment variables from .env file (on-demand only)")
 	cmd.Flags().StringArrayVar(&secrets, "secret", nil, "Secret names to fetch from Kubiya API and inject as env vars (on-demand only, repeatable)")
 	cmd.Flags().StringArrayVar(&skillDirs, "skill-dir", nil, "Additional skill directories to load (on-demand only, repeatable)")
-	cmd.Flags().IntVar(&timeout, "timeout", 300, "Execution timeout in seconds (on-demand only, default: 300)")
+	cmd.Flags().IntVar(&timeout, "timeout", 0, "Execution timeout in seconds (on-demand only, 0 = no timeout)")
 
 	return cmd
 }
