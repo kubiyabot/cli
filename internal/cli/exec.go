@@ -37,6 +37,11 @@ func NewExecCommand(cfg *config.Config) *cobra.Command {
 		streamFormat string // Output format: auto, text, json
 		verbose      bool   // Show detailed tool inputs/outputs
 
+		// Output control flags (enhanced streaming UX)
+		outputLines int  // Maximum lines per tool output
+		fullOutput  bool // Show complete outputs without truncation
+		compact     bool // Minimal output mode (tool names + status only)
+
 		// New execution mode flags
 		local            bool
 		queueIDs         []string
@@ -68,8 +73,11 @@ All plans are automatically saved to ~/.kubiya/plans/ for future reference.`,
   kubiya exec "Create a new microservice with tests" --yes
 
   # Streaming is enabled by default - see live tool calls and agent reasoning
-  kubiya exec "Deploy my app"                       # Formatted text output (default)
-  kubiya exec "Deploy my app" --verbose             # Include full tool inputs/outputs
+  kubiya exec "Deploy my app"                       # Formatted text output with tool inputs/outputs
+  kubiya exec "Deploy my app" --output-lines=5      # Show max 5 lines per tool output
+  kubiya exec "Deploy my app" --full-output         # Show complete tool outputs
+  kubiya exec "Deploy my app" --compact             # Minimal output for CI
+  kubiya exec "Deploy my app" --verbose             # Include even more detail
   kubiya exec "Deploy my app" --stream-format=json  # NDJSON for parsing
   kubiya exec "Deploy my app" --no-stream           # Disable streaming (legacy mode)
 
@@ -122,6 +130,9 @@ All plans are automatically saved to ~/.kubiya/plans/ for future reference.`,
 				NoStream:        noStream,
 				StreamFormat:    streamFormat,
 				Verbose:         verbose,
+				OutputLines:     outputLines,
+				FullOutput:      fullOutput,
+				Compact:         compact,
 				Local:           local,
 				QueueIDs:        queueIDs,
 				QueueNames:      queueNames,
@@ -173,7 +184,12 @@ All plans are automatically saved to ~/.kubiya/plans/ for future reference.`,
 	// Streaming flags (streaming is enabled by default)
 	cmd.Flags().BoolVar(&noStream, "no-stream", false, "Disable live event streaming (streaming is enabled by default)")
 	cmd.Flags().StringVar(&streamFormat, "stream-format", "auto", "Stream output format: auto, text, json (default: text for all environments)")
-	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Show detailed tool inputs and outputs in streaming mode")
+	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Show even more detail (50 lines per output instead of 10)")
+
+	// Output control flags (enhanced streaming UX)
+	cmd.Flags().IntVar(&outputLines, "output-lines", 10, "Maximum lines to show per tool output (0 for default)")
+	cmd.Flags().BoolVar(&fullOutput, "full-output", false, "Show complete tool outputs without truncation")
+	cmd.Flags().BoolVar(&compact, "compact", false, "Minimal output: tool names and status only (useful for CI)")
 
 	// Execution mode flags
 	cmd.Flags().BoolVar(&local, "local", false, "Run execution locally with ephemeral worker (uses fast planning)")
@@ -204,6 +220,11 @@ type ExecCommand struct {
 	NoStream     bool   // --no-stream: Disable live event streaming
 	StreamFormat string // --stream-format: Output format (auto, text, json)
 	Verbose      bool   // --verbose: Show detailed tool inputs/outputs
+
+	// Output control options (enhanced streaming UX)
+	OutputLines int  // --output-lines: Maximum lines per tool output
+	FullOutput  bool // --full-output: Show complete outputs
+	Compact     bool // --compact: Minimal output mode
 
 	// New execution mode flags
 	Local           bool     // --local: Run with ephemeral local worker (uses fast planning)
@@ -709,10 +730,11 @@ func (ec *ExecCommand) executeLocal(ctx context.Context, plan *kubiya.PlanRespon
 		select {
 		case <-workerErrChan:
 			close(workerExited)
-		case <-time.After(7 * time.Second):
-			// Worker should exit within 5-7 seconds after execution completes:
-			// - 2s sleep after detecting completion in Python worker
-			// - 3s for final cleanup and process exit
+		case <-time.After(20 * time.Second):
+			// Worker should exit within 15-20 seconds after execution completes:
+			// - 9s for 3 consecutive completion checks (3 checks × 3s)
+			// - 5s grace period for SSE stream completion
+			// - Buffer for final cleanup and process exit
 			// If it doesn't, proceed with cleanup anyway
 			close(workerExited)
 		}

@@ -21,21 +21,38 @@ type TextRenderer struct {
 	lastWasChunk   bool   // Track if last output was a streaming chunk
 	activeToolName string // Currently executing tool
 	spinnerFrame   int    // For animated spinner
+
+	// Output control fields (enhanced streaming UX)
+	outputLines int  // Maximum lines per tool output (default: 10)
+	fullOutput  bool // Show complete outputs without truncation
+	compact     bool // Minimal output mode (tool names + status only)
 }
 
 // NewTextRenderer creates a new TextRenderer
 func NewTextRenderer(out io.Writer, verbose bool) *TextRenderer {
+	return NewTextRendererWithOptions(out, verbose, 10, false, false)
+}
+
+// NewTextRendererWithOptions creates a new TextRenderer with output control options
+func NewTextRendererWithOptions(out io.Writer, verbose bool, outputLines int, fullOutput bool, compact bool) *TextRenderer {
 	// Detect if output is a TTY for color support
 	isTTY := false
 	if f, ok := out.(*os.File); ok {
 		isTTY = isatty.IsTerminal(f.Fd()) || isatty.IsCygwinTerminal(f.Fd())
 	}
 
+	if outputLines <= 0 {
+		outputLines = 10 // default
+	}
+
 	return &TextRenderer{
-		out:       out,
-		verbose:   verbose,
-		startTime: time.Now(),
-		isTTY:     isTTY,
+		out:         out,
+		verbose:     verbose,
+		startTime:   time.Now(),
+		isTTY:       isTTY,
+		outputLines: outputLines,
+		fullOutput:  fullOutput,
+		compact:     compact,
 	}
 }
 
@@ -106,6 +123,12 @@ func (r *TextRenderer) renderToolStarted(event StreamEvent) error {
 		return nil
 	}
 
+	// In compact mode, skip tool start events (only show completion)
+	if r.compact {
+		r.activeToolName = event.Tool.Name
+		return nil
+	}
+
 	// End any previous streaming content
 	if r.lastWasChunk {
 		fmt.Fprintln(r.out)
@@ -130,10 +153,10 @@ func (r *TextRenderer) renderToolStarted(event StreamEvent) error {
 		return err
 	}
 
-	// Show inputs in verbose mode
-	if r.verbose && len(event.Tool.Inputs) > 0 {
+	// Always show inputs (enhanced UX)
+	if len(event.Tool.Inputs) > 0 {
 		fmt.Fprintln(r.out)
-		r.renderToolInputs(event.Tool.Inputs)
+		r.renderToolInputs(event.Tool.Name, event.Tool.Inputs)
 	}
 
 	return nil
@@ -175,9 +198,9 @@ func (r *TextRenderer) renderToolCompleted(event StreamEvent) error {
 		return err
 	}
 
-	// Show outputs in verbose mode
-	if r.verbose && len(event.Tool.Outputs) > 0 {
-		r.renderToolOutputs(event.Tool.Outputs)
+	// Always show outputs (enhanced UX)
+	if len(event.Tool.Outputs) > 0 {
+		r.renderToolOutputs(event.Tool.Outputs, event.Tool.Success)
 	}
 
 	// Show error if failed
@@ -199,6 +222,11 @@ func (r *TextRenderer) renderMessageChunk(event StreamEvent) error {
 
 	// Skip "(no content)" placeholder
 	if event.Message.Content == "(no content)" {
+		return nil
+	}
+
+	// In compact mode, accumulate content but don't show chunks
+	if r.compact {
 		return nil
 	}
 
@@ -499,40 +527,136 @@ func (r *TextRenderer) cleanToolName(toolName string) string {
 	return cleaned
 }
 
-func (r *TextRenderer) renderToolInputs(inputs map[string]interface{}) {
+func (r *TextRenderer) renderToolInputs(toolName string, inputs map[string]interface{}) {
 	if len(inputs) == 0 {
 		return
 	}
 
-	fmt.Fprintln(r.out, r.colorize("  ┌─ Inputs:", colorDim))
-	for key, value := range inputs {
-		valueStr := fmt.Sprintf("%v", value)
-		if len(valueStr) > 60 {
-			valueStr = valueStr[:57] + "..."
-		}
-		fmt.Fprintf(r.out, "  │ %s: %s\n",
-			r.colorize(key, colorCyan),
-			r.colorize(valueStr, colorDim))
+	// Format inputs based on tool type for cleaner display
+	formatted := r.formatToolInput(toolName, inputs)
+
+	// For single-line inputs (like bash commands), show inline
+	if !strings.Contains(formatted, "\n") {
+		fmt.Fprintf(r.out, "   %s\n", r.colorize(formatted, colorDim))
+		return
 	}
-	fmt.Fprintln(r.out, r.colorize("  └─", colorDim))
+
+	// For multi-line inputs, use box format
+	fmt.Fprintln(r.out, r.colorize("   ┌─ Input ─────────────────────────", colorDim))
+	for _, line := range strings.Split(formatted, "\n") {
+		fmt.Fprintf(r.out, "   │ %s\n", r.colorize(line, colorDim))
+	}
+	fmt.Fprintln(r.out, r.colorize("   └──────────────────────────────────", colorDim))
 }
 
-func (r *TextRenderer) renderToolOutputs(outputs map[string]interface{}) {
+// formatToolInput formats tool inputs based on tool type for better readability
+func (r *TextRenderer) formatToolInput(toolName string, inputs map[string]interface{}) string {
+	name := strings.ToLower(toolName)
+
+	// Bash/Shell: show command inline with $ prefix
+	if strings.Contains(name, "bash") || strings.Contains(name, "shell") || strings.Contains(name, "terminal") {
+		if cmd, ok := inputs["command"].(string); ok {
+			// Truncate very long commands
+			if len(cmd) > 200 {
+				cmd = cmd[:197] + "..."
+			}
+			return fmt.Sprintf("$ %s", cmd)
+		}
+	}
+
+	// File operations: show path prominently
+	if strings.Contains(name, "read") || strings.Contains(name, "write") || strings.Contains(name, "edit") {
+		if path, ok := inputs["path"].(string); ok {
+			return fmt.Sprintf("path: %s", path)
+		}
+		if path, ok := inputs["file_path"].(string); ok {
+			return fmt.Sprintf("path: %s", path)
+		}
+	}
+
+	// Web/API: show URL
+	if strings.Contains(name, "web") || strings.Contains(name, "fetch") || strings.Contains(name, "http") {
+		if url, ok := inputs["url"].(string); ok {
+			return fmt.Sprintf("url: %s", url)
+		}
+	}
+
+	// Search/Grep: show pattern
+	if strings.Contains(name, "search") || strings.Contains(name, "grep") || strings.Contains(name, "find") {
+		if pattern, ok := inputs["pattern"].(string); ok {
+			return fmt.Sprintf("pattern: %s", pattern)
+		}
+	}
+
+	// Default: format as key-value pairs (single line if few, multi-line if many)
+	var parts []string
+	for k, v := range inputs {
+		valueStr := fmt.Sprintf("%v", v)
+		if len(valueStr) > 80 {
+			valueStr = valueStr[:77] + "..."
+		}
+		parts = append(parts, fmt.Sprintf("%s: %s", k, valueStr))
+	}
+
+	if len(parts) <= 2 {
+		return strings.Join(parts, ", ")
+	}
+	return strings.Join(parts, "\n")
+}
+
+func (r *TextRenderer) renderToolOutputs(outputs map[string]interface{}, success bool) {
 	if len(outputs) == 0 {
 		return
 	}
 
-	fmt.Fprintln(r.out, r.colorize("  ┌─ Outputs:", colorDim))
-	for key, value := range outputs {
-		valueStr := fmt.Sprintf("%v", value)
-		if len(valueStr) > 60 {
-			valueStr = valueStr[:57] + "..."
-		}
-		fmt.Fprintf(r.out, "  │ %s: %s\n",
-			r.colorize(key, colorCyan),
-			r.colorize(valueStr, colorDim))
+	// Skip outputs in compact mode
+	if r.compact {
+		return
 	}
-	fmt.Fprintln(r.out, r.colorize("  └─", colorDim))
+
+	// Determine max lines based on settings
+	maxLines := r.outputLines
+	if r.fullOutput {
+		maxLines = 0 // unlimited
+	} else if r.verbose {
+		maxLines = 50 // Show more in verbose mode
+	}
+
+	// Determine output color based on success
+	outputColor := colorWhite
+	if !success {
+		outputColor = colorRed
+	}
+
+	// Get the main output content
+	var mainOutput string
+	for _, value := range outputs {
+		valueStr := fmt.Sprintf("%v", value)
+		if len(valueStr) > len(mainOutput) {
+			mainOutput = valueStr
+		}
+	}
+
+	// Apply line-based truncation
+	truncated, omitted := truncateByLines(mainOutput, maxLines)
+
+	// Render the output box
+	fmt.Fprintln(r.out, r.colorize("   ┌─ Output ─────────────────────────", colorDim))
+	for _, line := range strings.Split(truncated, "\n") {
+		// Truncate very long lines
+		if len(line) > 100 {
+			line = line[:97] + "..."
+		}
+		fmt.Fprintf(r.out, "   │ %s\n", r.colorize(line, outputColor))
+	}
+
+	// Show truncation indicator
+	if omitted > 0 {
+		indicator := fmt.Sprintf("+%d more lines", omitted)
+		fmt.Fprintf(r.out, "   │ %s\n", r.colorize(indicator, colorYellow))
+	}
+
+	fmt.Fprintln(r.out, r.colorize("   └──────────────────────────────────", colorDim))
 }
 
 func (r *TextRenderer) createBox(title, content string, color string) string {
@@ -587,4 +711,23 @@ func (r *TextRenderer) colorize(text, color string) string {
 		return text
 	}
 	return color + text + colorReset
+}
+
+// truncateByLines truncates content to maxLines, returning truncated content
+// and the number of lines omitted
+func truncateByLines(content string, maxLines int) (string, int) {
+	if content == "" || maxLines <= 0 {
+		return content, 0
+	}
+
+	lines := strings.Split(content, "\n")
+	totalLines := len(lines)
+
+	if totalLines <= maxLines {
+		return content, 0
+	}
+
+	truncated := strings.Join(lines[:maxLines], "\n")
+	omitted := totalLines - maxLines
+	return truncated, omitted
 }
