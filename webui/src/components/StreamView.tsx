@@ -8,6 +8,8 @@ export interface StreamEvent {
   tool_name?: string;
   tool_input?: string;
   tool_output?: string;
+  tool_call_id?: string;  // ID to match tool_call with tool_result
+  message_id?: string;    // ID to group related events
   status?: string;
   duration_ms?: number;
   raw?: string; // Raw JSON for debugging
@@ -75,27 +77,120 @@ export function StreamView({ events, isRunning, onClear }: StreamViewProps) {
     }));
   };
 
-  // Group consecutive text events (but NOT output events - those are agent responses)
-  const groupedEvents = events.reduce<Array<StreamEvent | StreamEvent[]>>((acc, event, idx) => {
+  // Smart grouping for cleaner conversation display:
+  // 1. Group consecutive text events (CLI noise)
+  // 2. Pair tool_call + tool_result into unified tool cards
+  // 3. Accumulate output text between tool interactions into single messages
+  type GroupedItem = StreamEvent | { type: 'text_group'; events: StreamEvent[] } | { type: 'tool_pair'; call: StreamEvent; result?: StreamEvent };
+
+  const groupedEvents = events.reduce<GroupedItem[]>((acc, event) => {
     if (event.type === 'text') {
-      // Only group consecutive text events (CLI noise)
+      // Group consecutive text events (CLI noise)
       const last = acc[acc.length - 1];
-      if (Array.isArray(last) && last[0].type === 'text') {
-        last.push(event);
+      if (last && 'type' in last && last.type === 'text_group') {
+        (last as { type: 'text_group'; events: StreamEvent[] }).events.push(event);
       } else {
-        acc.push([event]);
+        acc.push({ type: 'text_group', events: [event] });
+      }
+    } else if (event.type === 'output') {
+      // Look for the last output event (even if not immediately previous)
+      // and merge with it if there's no tool_call between them
+      let lastOutputIdx = -1;
+      let hasToolCallBetween = false;
+
+      for (let i = acc.length - 1; i >= 0; i--) {
+        const item = acc[i];
+        if ('type' in item && item.type === 'output') {
+          lastOutputIdx = i;
+          break;
+        }
+        // If we hit a tool_pair or tool_call, don't merge (new thought after tool result)
+        if ('type' in item && (item.type === 'tool_pair' || item.type === 'tool_call')) {
+          hasToolCallBetween = true;
+          break;
+        }
+      }
+
+      if (lastOutputIdx >= 0 && !hasToolCallBetween) {
+        // Merge with previous output event
+        const lastOutput = acc[lastOutputIdx] as StreamEvent;
+        lastOutput.content = (lastOutput.content || '') + (event.content || '');
+      } else {
+        // Start a new output event (clone to avoid mutating original)
+        acc.push({ ...event });
+      }
+    } else if (event.type === 'tool_call') {
+      // Start a new tool pair
+      acc.push({ type: 'tool_pair', call: event });
+    } else if (event.type === 'tool_result') {
+      // Try to pair tool_result with matching tool_call by tool_call_id
+      let paired = false;
+      for (let i = acc.length - 1; i >= 0; i--) {
+        const item = acc[i];
+        if ('type' in item && item.type === 'tool_pair') {
+          const pair = item as { type: 'tool_pair'; call: StreamEvent; result?: StreamEvent };
+          // Match by tool_call_id if available, otherwise match the last unpaired tool_pair
+          if (!pair.result) {
+            if (event.tool_call_id && pair.call.tool_call_id) {
+              // Match by ID
+              if (pair.call.tool_call_id === event.tool_call_id) {
+                pair.result = event;
+                paired = true;
+                break;
+              }
+            } else {
+              // Fallback: match last unpaired
+              pair.result = event;
+              paired = true;
+              break;
+            }
+          }
+        }
+      }
+      if (!paired) {
+        // Orphan tool_result - just add it
+        acc.push(event);
       }
     } else {
-      // All other events (including 'output') are not grouped
+      // All other events (status, error, etc.) are not grouped
       acc.push(event);
     }
     return acc;
   }, []);
 
-  const renderToolCall = (event: StreamEvent, idx: number) => {
+  // Unified tool call card that shows tool name, input (collapsible), and output (collapsible)
+  const renderToolPair = (call: StreamEvent, result: StreamEvent | undefined, idx: number) => {
     const isExpanded = toolStates[idx]?.expanded ?? false;
-    const hasInput = event.tool_input && event.tool_input.length > 0;
-    const inputPreview = hasInput ? truncate(event.tool_input!, 80) : '';
+    const hasInput = call.tool_input && call.tool_input.length > 0;
+    const hasOutput = result?.tool_output && result.tool_output.length > 0;
+    const isSuccess = result ? !result.content?.toLowerCase().includes('error') : true;
+    const isWaiting = !result;
+
+    // Parse input to show a nice preview
+    let inputPreview = '';
+    if (hasInput) {
+      try {
+        const parsed = JSON.parse(call.tool_input!);
+        // For Bash, show the command
+        if (parsed.command) {
+          inputPreview = parsed.command.length > 60 ? parsed.command.slice(0, 60) + '...' : parsed.command;
+        } else if (parsed.file_path) {
+          inputPreview = parsed.file_path;
+        } else if (parsed.pattern) {
+          inputPreview = parsed.pattern;
+        } else {
+          inputPreview = truncate(call.tool_input!, 60);
+        }
+      } catch {
+        inputPreview = truncate(call.tool_input!, 60);
+      }
+    }
+
+    // Parse output for preview
+    let outputPreview = '';
+    if (hasOutput) {
+      outputPreview = truncate(result!.tool_output!, 80);
+    }
 
     return (
       <div
@@ -105,46 +200,47 @@ export function StreamView({ events, isRunning, onClear }: StreamViewProps) {
           borderRadius: '8px',
           overflow: 'hidden',
           border: '1px solid var(--border)',
+          borderLeft: result ? `3px solid ${isSuccess ? 'var(--success)' : 'var(--error)'}` : '3px solid var(--accent)',
         }}
       >
-        {/* Tool call header - always visible */}
+        {/* Tool header - always visible */}
         <div
           style={{
             padding: '0.625rem 0.875rem',
             display: 'flex',
             alignItems: 'center',
             gap: '0.5rem',
-            cursor: hasInput ? 'pointer' : 'default',
+            cursor: (hasInput || hasOutput) ? 'pointer' : 'default',
             userSelect: 'none',
           }}
-          onClick={() => hasInput && toggleToolExpand(idx)}
+          onClick={() => (hasInput || hasOutput) && toggleToolExpand(idx)}
         >
           <span style={{
             width: '24px',
             height: '24px',
             borderRadius: '6px',
-            background: 'linear-gradient(135deg, #6366F1, #8B5CF6)',
+            background: isWaiting ? 'var(--accent)' : isSuccess ? 'var(--success)' : 'var(--error)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
             fontSize: '0.75rem',
             flexShrink: 0,
+            color: 'white',
           }}>
-            🔧
+            {isWaiting ? (
+              <span class="spinner spinner-sm" style={{ width: 12, height: 12 }} />
+            ) : isSuccess ? '✓' : '✗'}
           </span>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{
               fontWeight: 600,
               fontSize: '0.8125rem',
-              color: '#A78BFA',
+              color: 'var(--text-primary)',
               display: 'flex',
               alignItems: 'center',
               gap: '0.5rem',
             }}>
-              {event.tool_name || 'Tool Call'}
-              {isRunning && idx === events.length - 1 && (
-                <span class="spinner" style={{ width: 12, height: 12 }} />
-              )}
+              {call.tool_name || 'Tool'}
             </div>
             {!isExpanded && inputPreview && (
               <div style={{
@@ -153,15 +249,28 @@ export function StreamView({ events, isRunning, onClear }: StreamViewProps) {
                 overflow: 'hidden',
                 textOverflow: 'ellipsis',
                 whiteSpace: 'nowrap',
+                fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace',
               }}>
                 {inputPreview}
               </div>
             )}
           </div>
+          {result?.duration_ms && (
+            <span style={{
+              fontSize: '0.625rem',
+              color: 'var(--text-muted)',
+              flexShrink: 0,
+              padding: '0.125rem 0.375rem',
+              background: 'var(--bg-primary)',
+              borderRadius: '4px',
+            }}>
+              {result.duration_ms}ms
+            </span>
+          )}
           <span style={{ fontSize: '0.625rem', color: 'var(--text-muted)', flexShrink: 0 }}>
-            {formatTime(event.timestamp)}
+            {formatTime(call.timestamp)}
           </span>
-          {hasInput && (
+          {(hasInput || hasOutput) && (
             <span style={{
               fontSize: '0.75rem',
               color: 'var(--text-muted)',
@@ -174,32 +283,78 @@ export function StreamView({ events, isRunning, onClear }: StreamViewProps) {
           )}
         </div>
 
-        {/* Expanded input */}
-        {isExpanded && hasInput && (
-          <div style={{
-            padding: '0.75rem',
-            borderTop: '1px solid var(--border)',
-            background: 'var(--bg-primary)',
-            maxHeight: '200px',
-            overflow: 'auto',
-          }}>
-            <div style={{ fontSize: '0.625rem', color: 'var(--text-muted)', marginBottom: '0.375rem', textTransform: 'uppercase' }}>
-              Input
-            </div>
-            <pre style={{
-              margin: 0,
-              fontSize: '0.6875rem',
-              fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace',
-              color: 'var(--text-secondary)',
-              whiteSpace: 'pre-wrap',
-              wordBreak: 'break-word',
-            }}>
-              {formatJSON(event.tool_input!)}
-            </pre>
+        {/* Expanded details */}
+        {isExpanded && (
+          <div style={{ borderTop: '1px solid var(--border)' }}>
+            {/* Input section */}
+            {hasInput && (
+              <div style={{
+                padding: '0.625rem 0.875rem',
+                background: 'var(--bg-primary)',
+              }}>
+                <div style={{
+                  fontSize: '0.625rem',
+                  color: 'var(--text-muted)',
+                  marginBottom: '0.375rem',
+                  textTransform: 'uppercase',
+                  fontWeight: 600,
+                }}>
+                  Input
+                </div>
+                <pre style={{
+                  margin: 0,
+                  fontSize: '0.6875rem',
+                  fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace',
+                  color: 'var(--text-secondary)',
+                  whiteSpace: 'pre-wrap',
+                  wordBreak: 'break-word',
+                  maxHeight: '150px',
+                  overflow: 'auto',
+                }}>
+                  {formatJSON(call.tool_input!)}
+                </pre>
+              </div>
+            )}
+
+            {/* Output section */}
+            {hasOutput && (
+              <div style={{
+                padding: '0.625rem 0.875rem',
+                background: 'var(--bg-secondary)',
+                borderTop: hasInput ? '1px solid var(--border)' : 'none',
+              }}>
+                <div style={{
+                  fontSize: '0.625rem',
+                  color: 'var(--text-muted)',
+                  marginBottom: '0.375rem',
+                  textTransform: 'uppercase',
+                  fontWeight: 600,
+                }}>
+                  Output
+                </div>
+                <pre style={{
+                  margin: 0,
+                  fontSize: '0.6875rem',
+                  fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace',
+                  color: 'var(--text-secondary)',
+                  whiteSpace: 'pre-wrap',
+                  wordBreak: 'break-word',
+                  maxHeight: '200px',
+                  overflow: 'auto',
+                }}>
+                  {formatJSON(result!.tool_output!)}
+                </pre>
+              </div>
+            )}
           </div>
         )}
       </div>
     );
+  };
+
+  // Keep legacy renderers for orphaned events
+  const renderToolCall = (event: StreamEvent, idx: number) => {
+    return renderToolPair(event, undefined, idx);
   };
 
   const renderToolResult = (event: StreamEvent, idx: number) => {
@@ -525,11 +680,20 @@ export function StreamView({ events, isRunning, onClear }: StreamViewProps) {
     </div>
   );
 
-  const renderEvent = (event: StreamEvent | StreamEvent[], idx: number) => {
-    if (Array.isArray(event)) {
-      return renderTextGroup(event, idx);
+  const renderEvent = (item: GroupedItem, idx: number) => {
+    // Check for our special grouped types first
+    if ('type' in item) {
+      if (item.type === 'text_group') {
+        return renderTextGroup((item as { type: 'text_group'; events: StreamEvent[] }).events, idx);
+      }
+      if (item.type === 'tool_pair') {
+        const pair = item as { type: 'tool_pair'; call: StreamEvent; result?: StreamEvent };
+        return renderToolPair(pair.call, pair.result, idx);
+      }
     }
 
+    // It's a regular StreamEvent
+    const event = item as StreamEvent;
     switch (event.type) {
       case 'tool_call':
         return renderToolCall(event, idx);

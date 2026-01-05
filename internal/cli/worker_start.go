@@ -22,6 +22,7 @@ import (
 	kubiyacontext "github.com/kubiyabot/cli/internal/context"
 	"github.com/kubiyabot/cli/internal/controlplane"
 	"github.com/kubiyabot/cli/internal/output"
+	"github.com/kubiyabot/cli/internal/version"
 	"github.com/kubiyabot/cli/internal/webui"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
@@ -973,6 +974,12 @@ func (opts *WorkerStartOptions) runLocalForeground(ctx context.Context) error {
 			ModelOverride:    opts.Model,
 			DeploymentType:   opts.DeploymentType,
 			DaemonMode:       opts.DaemonMode,
+			Version:          version.Version,
+			BuildCommit:      version.GetCommit(),
+			BuildDate:        version.GetBuildDate(),
+			GoVersion:        runtime.Version(),
+			OS:               runtime.GOOS,
+			Arch:             runtime.GOARCH,
 		}
 
 		var err error

@@ -1,6 +1,5 @@
 import { h, Fragment, ComponentChildren } from 'preact';
-import type { Page, ControlPlaneStatus } from '../App';
-import { KubiyaLogo } from './Logo';
+import type { Page, ControlPlaneStatus, WorkerConfig } from '../state';
 
 interface LayoutProps {
   children: ComponentChildren;
@@ -9,6 +8,7 @@ interface LayoutProps {
   connected: boolean;
   queueId?: string;
   controlPlane?: ControlPlaneStatus | null;
+  config?: WorkerConfig | null;
 }
 
 const PAGES: { id: Page; label: string; icon: string }[] = [
@@ -41,7 +41,25 @@ function NavIcon({ type }: { type: string }) {
   return icons[type] || null;
 }
 
-export function Layout({ children, currentPage, onNavigate, connected, queueId, controlPlane }: LayoutProps) {
+// Format OS name for display
+function formatOS(os?: string, arch?: string): string {
+  if (!os) return '';
+  const osNames: Record<string, string> = {
+    darwin: 'macOS',
+    linux: 'Linux',
+    windows: 'Windows',
+  };
+  const archNames: Record<string, string> = {
+    amd64: 'x64',
+    arm64: 'ARM64',
+    '386': 'x86',
+  };
+  const osName = osNames[os] || os;
+  const archName = arch ? archNames[arch] || arch : '';
+  return archName ? `${osName} ${archName}` : osName;
+}
+
+export function Layout({ children, currentPage, onNavigate, connected, queueId, controlPlane, config }: LayoutProps) {
   const getControlPlaneStatus = () => {
     if (!controlPlane) return { class: 'connecting', text: 'Checking...' };
     if (controlPlane.connected) return { class: 'connected', text: 'Connected' };
@@ -50,18 +68,35 @@ export function Layout({ children, currentPage, onNavigate, connected, queueId, 
   };
 
   const cpStatus = getControlPlaneStatus();
+  const osDisplay = formatOS(config?.os, config?.arch);
 
   return (
     <div class="layout">
       <header class="header">
         <div class="header-title">
           <div class="header-brand">
-            <div class="header-logo">
-              <KubiyaLogo size={28} />
+            {/* KUBIYA.AI Text Logo */}
+            <div class="header-logo-text">
+              <span class="logo-kubiya">KUBIYA</span>
+              <span class="logo-dot">.</span>
+              <span class="logo-ai">AI</span>
             </div>
+            <div class="header-brand-divider" />
             <div class="header-brand-text">
-              <h1>Kubiya</h1>
-              <span class="header-brand-subtitle">Worker Pool</span>
+              <h1>Worker Pool Server</h1>
+              <div class="header-brand-meta">
+                {config?.version && (
+                  <span class="header-version">v{config.version}</span>
+                )}
+                {config?.build_commit && config.build_commit !== 'unknown' && (
+                  <span class="header-build">
+                    build {config.build_commit.slice(0, 7)}
+                  </span>
+                )}
+                {osDisplay && (
+                  <span class="header-os">{osDisplay}</span>
+                )}
+              </div>
             </div>
           </div>
           {queueId && (

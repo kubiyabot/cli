@@ -118,6 +118,13 @@ export interface WorkerConfig {
   auto_update: boolean;
   daemon_mode: boolean;
   worker_dir: string;
+  // System info for UI display
+  version?: string;
+  build_commit?: string;
+  build_date?: string;
+  go_version?: string;
+  os?: string;
+  arch?: string;
 }
 
 // Combined application state

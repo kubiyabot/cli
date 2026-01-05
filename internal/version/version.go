@@ -45,6 +45,16 @@ func GetVersion() string {
 		Version, commit, date, builtBy)
 }
 
+// GetCommit returns the git commit hash
+func GetCommit() string {
+	return commit
+}
+
+// GetBuildDate returns the build date
+func GetBuildDate() string {
+	return date
+}
+
 // CheckForUpdate checks if a new version is available
 // Returns: latestVersion, hasUpdate, error
 func CheckForUpdate() (string, bool, error) {
