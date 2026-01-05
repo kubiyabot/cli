@@ -1,181 +1,160 @@
-# Kubiya CLI - Your AI-Powered Automation Platform 🚀
+# Kubiya CLI 🤖
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Go Version](https://img.shields.io/badge/go-1.21+-00ADD8.svg)](https://golang.org)
 [![Python](https://img.shields.io/badge/python-3.8+-3776AB.svg)](https://python.org)
 
-A comprehensive command-line interface for building, deploying, and managing AI-powered automation workflows. Kubiya CLI empowers you to create serverless agents, execute workflows, manage tools, and run distributed workers on your infrastructure.
-
-## 🎯 What is Kubiya?
-
-Kubiya is an AI-powered automation platform that enables you to:
-- **Build AI Agents**: Create intelligent agents that automate complex workflows
-- **Deploy Anywhere**: Run on Kubernetes, Docker, or locally
-- **Integrate Everything**: Connect with your existing tools and services
-- **Scale Effortlessly**: Distribute work across multiple workers with automatic load balancing
+> Command-line interface for managing AI agents and automating workflows with Kubiya
 
 ## 📋 Table of Contents
 
-- [Quick Start](#quick-start)
-- [Features](#features-)
-- [Installation](#installation-)
-- [Core Concepts](#core-concepts)
-- [Worker Architecture](#worker-architecture-)
-- [Usage Guide](#usage-guide)
-- [Configuration](#configuration-)
-- [Deployment](#deployment)
-- [Documentation](#support-and-documentation-)
-- [Contributing](#contributing)
+- [Installation](#-installation)
+- [Authentication](#-authentication)
+- [Quick Start](#-quick-start)
+- [Commands](#-commands)
+  - [Agent Management](#agent-management)
+  - [Team Management](#team-management)
+  - [Execution Management](#execution-management)
+  - [Job Management](#job-management)
+  - [Skill Management](#skill-management)
+  - [Model Management](#model-management)
+  - [Policy Management](#policy-management)
+  - [Environment Management](#environment-management)
+  - [Project Management](#project-management)
+  - [Operator Management](#operator-management)
+  - [Worker Management](#worker-management)
+  - [Context Graph](#context-graph)
+- [Running Workers](#-running-workers)
+- [Configuration](#-configuration)
+- [Contributing](#-contributing)
 
-## 🚀 Quick Start
+## 🚀 Installation
 
-```bash
-# Install via Homebrew (macOS)
-brew install kubiyabot/kubiya/kubiya
+### Quick Install (One-Liner) - Recommended
 
-# Configure your API key
-export KUBIYA_API_KEY="your-api-key"
-
-# Start a worker
-kubiya worker start --queue-id=my-queue --type=local
-
-# Or execute a workflow
-kubiya workflow execute myorg/deploy-workflow
-
-# Chat with an agent
-kubiya chat -n "DevOps Agent" -m "Deploy to staging"
-```
-
-## Features ✨
-
-- **Source Management** 📂
-  - Scan Git repositories and local directories for tools
-  - Add and sync sources with version control
-  - Interactive source browsing and management
-  - Support for inline tools and dynamic configurations
-
-- **Serverless Agent Management** 🤖
-  - Create and manage AI serverless agents deployed on your infrastructure
-  - Configure capabilities, tools, and permissions
-  - Deploy lightweight agents using Kubiya runners on scalable infrastructure (Kubernetes)
-  - Manage environment variables and secrets
-  - Set up webhooks for automated interactions
-
-- **Worker Mode** 🔧
-  - Run Temporal workers for agent execution workflows
-  - Support for both agent and team execution activities
-  - Automatic Python environment setup with required dependencies
-  - Embedded worker files for easy deployment
-  - Integration with Kubiya Control Plane for event streaming and session persistence
-
-- **Workflow Execution** 🔄
-  - Execute workflows from multiple sources: local files, GitHub repositories, raw URLs
-  - Support for GitHub authentication via Kubiya integrations
-  - Automatic repository cloning with branch fallback
-  - Real-time execution tracking with visual progress indicators
-  - Policy validation and permission checks
-
-- **Tool Management** 🛠️
-  - Execute tools with arguments and flags
-  - Interactive tool browser and executor
-  - Real-time execution feedback
-  - Support for long-running operations
-
-- **Secret Management** 🔒
-  - Securely store and manage secrets
-  - Integrate with serverless agents and tools
-  - Role-based access control
-
-- **Runner Management** 🚀
-  - Manage tool execution environments on scalable infrastructure
-  - Deploy on Kubernetes and other container orchestration platforms
-  - Monitor runner health and status
-  - Configure runner-specific settings
-
-- **Enhanced Webhook Management** 🔗
-  - Create and manage webhooks for agents and workflows
-  - Support for Slack, Teams, and HTTP notifications
-  - JMESPath templating for dynamic prompts (`{{.event.repository.name}}`)
-  - Event filtering with JMESPath expressions
-  - Workflow webhooks with automatic inline agent creation
-  - YAML/JSON workflow definition support
-  - Interactive webhook creation and testing tools
-
-- **MCP Integration** 💻↔️🤖 (Model Context Protocol)
-  - Serve MCP server with whitelisted tools and configurations
-  - Integrate Kubiya context (API key, Serverless Agents) with local AI tools like **Claude Desktop** and **Cursor IDE**
-  - Install and manage a local **MCP Gateway** server that acts as a bridge
-  - Automatically configure supported applications during installation
-  - List, apply, and edit provider configurations
-  - Support for tool execution with streaming output via MCP protocol
-
-## Core Concepts
-
-### Agents
-AI-powered agents that can execute tasks, use tools, and interact with your infrastructure. Agents can be deployed as serverless functions or run continuously as workers.
-
-### Workers
-Temporal-based execution engines that process agent workflows from task queues. Workers can be deployed on Kubernetes, Docker, or run locally, providing scalable and fault-tolerant execution.
-
-### Tools
-Executable units of work (scripts, Docker containers, API calls) that agents can use to accomplish tasks. Tools are organized in sources and can be shared across agents.
-
-### Workflows
-Orchestrated sequences of tasks that can be executed across multiple agents and tools. Workflows support branching, error handling, and human-in-the-loop interactions.
-
-### Sources
-Collections of tools and configurations stored in Git repositories or defined inline. Sources provide version control and reusability for your automation toolkit.
-
-## Installation 🚀
-
-### Quick Install (Automated Script)
-
-The easiest way to install Kubiya CLI with support for worker setup:
+The easiest way to get started on **macOS and Linux**:
 
 ```bash
 # Basic installation
 curl -fsSL https://raw.githubusercontent.com/kubiyabot/cli/main/install.sh | bash
 
-# With worker setup
+# Install + configure worker in one command
 curl -fsSL https://raw.githubusercontent.com/kubiyabot/cli/main/install.sh | bash -s -- --worker --queue-id=my-queue
+
+# Install + start worker in daemon mode (production)
+curl -fsSL https://raw.githubusercontent.com/kubiyabot/cli/main/install.sh | bash -s -- --worker --queue-id=prod-queue --mode=daemon --start
 
 # Interactive configuration
 curl -fsSL https://raw.githubusercontent.com/kubiyabot/cli/main/install.sh | bash -s -- --config
-
-# Install and start worker in daemon mode
-curl -fsSL https://raw.githubusercontent.com/kubiyabot/cli/main/install.sh | bash -s -- --worker --queue-id=prod-queue --mode=daemon --start
 ```
 
-**Script Options:**
-- `--verbose` or `-v`: Enable verbose output
-- `--worker` or `-w`: Setup worker after installation
-- `--queue-id <id>` or `-q <id>`: Worker queue ID (required with --worker)
-- `--mode <mode>` or `-m <mode>`: Worker mode (local, docker, daemon)
-- `--start` or `-s`: Start worker immediately
-- `--config` or `-c`: Interactive configuration setup
-- `--force-binary` or `-f`: Force binary installation (skip package managers)
-- `--help` or `-h`: Show help
+**Install Script Options:**
+- `-w, --worker` - Setup worker after installation
+- `-q, --queue-id <id>` - Worker queue ID (required with --worker)
+- `-m, --mode <mode>` - Worker mode: local, docker, daemon (default: local)
+- `-s, --start` - Start worker immediately after setup
+- `-c, --config` - Interactive configuration setup
+- `-f, --force-binary` - Force binary installation (skip package managers)
+- `-v, --verbose` - Enable verbose output
+- `-h, --help` - Show help message
 
-### Mac OSX (Homebrew)
+### macOS (Homebrew)
 
 ```bash
 brew update
 brew tap kubiyabot/kubiya
 brew install kubiya
+
+# Verify installation
+kubiya version
 ```
 
-### Linux (Binary Installation)
+### Linux
+
+#### Option 1: Automated Script (Recommended)
+```bash
+curl -fsSL https://raw.githubusercontent.com/kubiyabot/cli/main/install.sh | bash
+```
+
+The script automatically detects your Linux distribution and installs using:
+- **Debian/Ubuntu**: APT package manager
+- **RHEL/CentOS/Fedora**: YUM/DNF package manager
+- **Other**: Direct binary installation
+
+#### Option 2: Direct Binary Download
 
 ```bash
-# Download and install latest release
-curl -fsSL https://raw.githubusercontent.com/kubiyabot/cli/main/install.sh | bash
+# Download latest release for your architecture
+VERSION=$(curl -s https://api.github.com/repos/kubiyabot/cli/releases/latest | grep tag_name | cut -d '"' -f 4)
+ARCH=$(uname -m | sed 's/x86_64/amd64/g' | sed 's/aarch64/arm64/g')
 
-# Or download specific version manually
+curl -LO "https://github.com/kubiyabot/cli/releases/download/${VERSION}/kubiya-cli-linux-${ARCH}"
+chmod +x kubiya-cli-linux-${ARCH}
+sudo mv kubiya-cli-linux-${ARCH} /usr/local/bin/kubiya
+
+# Verify installation
+kubiya version
+```
+
+#### Option 3: Specific Version
+
+```bash
 VERSION=v2.5.5
 ARCH=$(uname -m | sed 's/x86_64/amd64/g' | sed 's/aarch64/arm64/g')
 curl -LO "https://github.com/kubiyabot/cli/releases/download/${VERSION}/kubiya-cli-linux-${ARCH}"
 chmod +x kubiya-cli-linux-${ARCH}
 sudo mv kubiya-cli-linux-${ARCH} /usr/local/bin/kubiya
+```
+
+### Windows
+
+Download the latest Windows binary from [GitHub Releases](https://github.com/kubiyabot/cli/releases):
+
+```powershell
+# Using PowerShell
+$VERSION = (Invoke-WebRequest -Uri "https://api.github.com/repos/kubiyabot/cli/releases/latest" | ConvertFrom-Json).tag_name
+$URL = "https://github.com/kubiyabot/cli/releases/download/$VERSION/kubiya-cli-windows-amd64.exe"
+Invoke-WebRequest -Uri $URL -OutFile "kubiya.exe"
+
+# Move to a directory in your PATH
+Move-Item kubiya.exe C:\Windows\System32\kubiya.exe
+
+# Verify installation
+kubiya version
+```
+
+Or download manually: https://github.com/kubiyabot/cli/releases
+
+### Docker
+
+Run the CLI in a Docker container:
+
+```bash
+# Pull the latest image
+docker pull kubiyabot/cli:latest
+
+# Run CLI commands
+docker run --rm -e KUBIYA_API_KEY="your-api-key" kubiyabot/cli:latest version
+
+# Interactive mode
+docker run -it --rm -e KUBIYA_API_KEY="your-api-key" kubiyabot/cli:latest
+
+# Run with volume mount for persistent config
+docker run -it --rm \
+  -e KUBIYA_API_KEY="your-api-key" \
+  -v ~/.kubiya:/root/.kubiya \
+  kubiyabot/cli:latest
+```
+
+### Go Install
+
+If you have Go 1.21+ installed:
+
+```bash
+go install github.com/kubiyabot/cli@latest
+
+# Verify installation
+kubiya version
 ```
 
 ### Build from Source
@@ -190,26 +169,647 @@ make build
 
 # Install locally
 make install
+
+# Verify installation
+kubiya version
 ```
 
-## Configuration 🔧
+### Verify Installation
 
-### Using Environment Variables
+After installation, verify the CLI is working:
 
 ```bash
-# Required
-export KUBIYA_API_KEY="your-api-key"
-
-# Optional
-export KUBIYA_BASE_URL="https://api.kubiya.ai/api/v1"  # Default API URL
-export KUBIYA_DEBUG=true                               # Enable debug mode
+kubiya version
+kubiya --help
 ```
 
-**📖 For a complete reference of all environment variables, see [Environment Variables Documentation](docs/environment-variables.md)**
+📖 **Full Installation Guide**: https://docs.kubiya.ai/installation
+📦 **GitHub Releases**: https://github.com/kubiyabot/cli/releases
+
+## 🔐 Authentication
+
+### Interactive Login (Recommended)
+
+```bash
+kubiya login
+```
+
+### API Key
+
+```bash
+export KUBIYA_API_KEY="your-api-key"
+```
+
+🔑 **Get your API key**: https://compose.kubiya.ai/settings#apiKeys
+
+### Configuration Management
+
+```bash
+# List available contexts
+kubiya config list
+
+# Switch context
+kubiya config use <context-name>
+
+# Show current context
+kubiya config current
+```
+
+📖 **Configuration Guide**: https://docs.kubiya.ai/cli/configuration
+
+## ⚡ Quick Start
+
+### Option 1: Execute with On-Demand Worker (Easiest)
+
+Run AI tasks without needing a queue in advance - perfect for CI/CD pipelines!
+
+```bash
+# Set your API key
+export KUBIYA_API_KEY="your-api-key"
+
+# Execute task - no queue needed!
+kubiya exec "Deploy my application to production"
+
+# Execute with specific agent
+kubiya agent exec <agent-id> "Run integration tests"
+
+# Execute with a team
+kubiya team exec <team-id> "Analyze security vulnerabilities"
+```
+
+**How it works:** The Control Plane creates an ephemeral worker queue for your execution, provisions a worker on managed infrastructure, runs your task, and automatically cleans up. **No queue setup or infrastructure management needed!** This makes it perfect for integrations inside CI/CD pipelines.
+
+### Option 2: Execute with Persistent Worker
+
+For high-frequency tasks or custom compute environments, run a persistent worker on **any infrastructure you choose**:
+
+```bash
+# Start worker in one command
+kubiya worker start --queue <queue-id>
+
+# Or install + start in one line
+curl -fsSL https://raw.githubusercontent.com/kubiyabot/cli/main/install.sh | bash -s -- \
+  --worker --queue-id=my-queue --start
+
+# Then execute tasks
+kubiya agent exec <agent-id> "Run daily backup" --queue <queue-id>
+```
+
+**Workers can run on nearly any compute environment:**
+- 💻 **Your local machine** (Mac, Linux, Windows)
+- ☸️ **Kubernetes clusters** (EKS, GKE, AKS, self-hosted)
+- 🐳 **Docker containers**
+- ☁️ **Virtual machines** (EC2, GCE, Azure VMs, etc.)
+- 🖥️ **Bare metal servers**
+
+This flexibility makes workers incredibly powerful and easy to deploy wherever your infrastructure lives!
+
+### List Your Resources
+
+```bash
+# List agents
+kubiya agent list
+
+# List teams
+kubiya team list
+
+# List recent executions
+kubiya execution list
+
+# List scheduled jobs
+kubiya job list
+```
+
+📖 **Getting Started Guide**: https://docs.kubiya.ai/getting-started
+📖 **Worker Setup Guide**: https://docs.kubiya.ai/workers
+
+## 📚 Commands
+
+### Agent Management
+
+Manage AI agents that execute tasks.
+
+#### List Agents
+
+```bash
+kubiya agent list
+kubiya agent list --output json
+kubiya agent list --output yaml
+```
+
+#### Get Agent Details
+
+```bash
+kubiya agent get <agent-id>
+kubiya agent get <agent-id> --output json
+```
+
+#### Create Agent
+
+```bash
+kubiya agent create --file agent.yaml
+kubiya agent create --interactive
+```
+
+Example agent YAML:
+```yaml
+name: deployment-agent
+description: Handles production deployments
+model: gpt-4
+skills:
+  - kubernetes
+  - helm
+  - monitoring
+environment_id: prod-env
+```
+
+#### Update Agent
+
+```bash
+kubiya agent update <agent-id> --file agent.yaml
+```
+
+#### Delete Agent
+
+```bash
+kubiya agent delete <agent-id>
+kubiya agent delete <agent-id> --force
+```
+
+#### Execute with Agent
+
+```bash
+kubiya agent exec <agent-id> "Deploy to staging"
+kubiya agent exec <agent-id> "Deploy to staging" --stream
+```
+
+### Team Management
+
+Manage teams of agents that collaborate on tasks.
+
+#### List Teams
+
+```bash
+kubiya team list
+```
+
+#### Get Team Details
+
+```bash
+kubiya team get <team-id>
+```
+
+#### Create Team
+
+```bash
+kubiya team create --file team.yaml
+```
+
+Example team YAML:
+```yaml
+name: devops-team
+description: DevOps automation team
+members:
+  - agent-id-1
+  - agent-id-2
+  - agent-id-3
+```
+
+#### Update Team
+
+```bash
+kubiya team update <team-id> --file team.yaml
+```
+
+#### Delete Team
+
+```bash
+kubiya team delete <team-id>
+```
+
+#### Execute with Team
+
+```bash
+kubiya team exec <team-id> "Complete production deployment"
+```
+
+### Execution Management
+
+Monitor and manage task executions.
+
+#### List Executions
+
+```bash
+kubiya execution list
+kubiya execution list --agent <agent-id>
+kubiya execution list --status running
+kubiya execution list --status completed
+kubiya execution list --status failed
+```
+
+#### Get Execution Details
+
+```bash
+kubiya execution get <execution-id>
+```
+
+#### View Execution Logs
+
+```bash
+kubiya execution logs <execution-id>
+kubiya execution logs <execution-id> --follow
+```
+
+#### Check Execution Status
+
+```bash
+kubiya execution status <execution-id>
+```
+
+#### Cancel Execution
+
+```bash
+kubiya execution cancel <execution-id>
+```
+
+### Job Management
+
+Schedule and manage recurring tasks.
+
+#### List Jobs
+
+```bash
+kubiya job list
+```
+
+#### Get Job Details
+
+```bash
+kubiya job get <job-id>
+```
+
+#### Create Job
+
+```bash
+kubiya job create --file job.yaml
+```
+
+Example job YAML:
+```yaml
+name: daily-backup
+description: Run daily database backup
+schedule: "0 0 * * *"  # Daily at midnight
+agent_id: backup-agent
+prompt: "Run full database backup"
+enabled: true
+```
+
+#### Update Job
+
+```bash
+kubiya job update <job-id> --file job.yaml
+```
+
+#### Pause Job
+
+```bash
+kubiya job pause <job-id>
+```
+
+#### Resume Job
+
+```bash
+kubiya job resume <job-id>
+```
+
+#### Trigger Job Manually
+
+```bash
+kubiya job trigger <job-id>
+```
+
+#### Delete Job
+
+```bash
+kubiya job delete <job-id>
+```
+
+### Skill Management
+
+Manage agent capabilities and skills.
+
+#### List Skills
+
+```bash
+kubiya skill list
+```
+
+#### Get Skill Details
+
+```bash
+kubiya skill get <skill-id>
+```
+
+#### Create Skill
+
+```bash
+kubiya skill create --file skill.yaml
+```
+
+Example skill YAML:
+```yaml
+name: kubernetes
+description: Kubernetes cluster management
+type: cli
+commands:
+  - kubectl
+  - helm
+```
+
+#### Update Skill
+
+```bash
+kubiya skill update <skill-id> --file skill.yaml
+```
+
+#### Delete Skill
+
+```bash
+kubiya skill delete <skill-id>
+```
+
+#### Validate Skill
+
+```bash
+kubiya skill validate skill.yaml
+```
+
+### Model Management
+
+Manage LLM models available to agents.
+
+#### List Models
+
+```bash
+kubiya model list
+```
+
+#### Get Model Details
+
+```bash
+kubiya model get <model-id>
+```
+
+#### Set Default Model
+
+```bash
+kubiya model set-default <model-id>
+```
+
+### Policy Management
+
+Manage security and compliance policies.
+
+#### List Policies
+
+```bash
+kubiya policy list
+```
+
+#### Get Policy Details
+
+```bash
+kubiya policy get <policy-id>
+```
+
+#### Create Policy
+
+```bash
+kubiya policy create --file policy.rego
+```
+
+#### Update Policy
+
+```bash
+kubiya policy update <policy-id> --file policy.rego
+```
+
+#### Delete Policy
+
+```bash
+kubiya policy delete <policy-id>
+```
+
+#### Validate Policy
+
+```bash
+kubiya policy validate policy.rego
+```
+
+### Environment Management
+
+Manage execution environments with variables and secrets.
+
+#### List Environments
+
+```bash
+kubiya environment list
+```
+
+#### Get Environment Details
+
+```bash
+kubiya environment get <environment-id>
+```
+
+#### Create Environment
+
+```bash
+kubiya environment create --file environment.yaml
+```
+
+Example environment YAML:
+```yaml
+name: production
+description: Production environment
+variables:
+  DATABASE_URL: "postgres://..."
+  API_ENDPOINT: "https://api.example.com"
+secrets:
+  - aws-credentials
+  - db-password
+integrations:
+  - github
+  - slack
+```
+
+#### Update Environment
+
+```bash
+kubiya environment update <environment-id> --file environment.yaml
+```
+
+#### Delete Environment
+
+```bash
+kubiya environment delete <environment-id>
+```
+
+### Project Management
+
+Organize and manage projects.
+
+#### List Projects
+
+```bash
+kubiya project list
+```
+
+#### Get Project Details
+
+```bash
+kubiya project get <project-id>
+```
+
+#### Create Project
+
+```bash
+kubiya project create --file project.yaml
+```
+
+### Operator Management
+
+Manage Kubernetes operators for agent deployment.
+
+#### List Operators
+
+```bash
+kubiya operator list
+```
+
+#### Install Operator
+
+```bash
+kubiya operator install
+kubiya operator install --namespace kubiya-system
+```
+
+#### Uninstall Operator
+
+```bash
+kubiya operator uninstall
+```
+
+#### Check Operator Status
+
+```bash
+kubiya operator status
+```
+
+#### View Operator Logs
+
+```bash
+kubiya operator logs
+kubiya operator logs --follow
+```
+
+### Worker Management
+
+Manage workers that execute agent tasks.
+
+#### Start Worker
+
+```bash
+kubiya worker start
+kubiya worker start --queue <queue-id>
+```
+
+#### Stop Worker
+
+```bash
+kubiya worker stop
+```
+
+#### Check Worker Status
+
+```bash
+kubiya worker status
+```
+
+#### View Worker Logs
+
+```bash
+kubiya worker logs
+kubiya worker logs --follow
+```
+
+### Context Graph
+
+Query and explore your organizational knowledge graph.
+
+#### Get Graph Statistics
+
+```bash
+kubiya graph stats
+kubiya graph stats --integration github
+```
+
+#### List Nodes
+
+```bash
+kubiya graph nodes list
+kubiya graph nodes list --label Agent
+kubiya graph nodes list --limit 100
+```
+
+#### Get Node Details
+
+```bash
+kubiya graph nodes get <node-id>
+```
+
+#### Search Nodes
+
+```bash
+kubiya graph nodes search --label Agent --property-name name --property-value "deploy"
+```
+
+#### List Integrations
+
+```bash
+kubiya graph integrations list
+```
+
+#### Execute Custom Query
+
+```bash
+kubiya graph query --query "MATCH (n:Agent) RETURN n LIMIT 10"
+kubiya graph query --query "MATCH (a:Agent)-[:HAS_SKILL]->(s:Skill) RETURN a.name, s.name"
+```
+
+#### List Labels
+
+```bash
+kubiya graph labels
+```
+
+#### List Relationship Types
+
+```bash
+kubiya graph relationship-types
+```
+
+#### Get Subgraph
+
+```bash
+kubiya graph subgraph --node-id <node-id> --depth 2
+```
 
 ## Worker Architecture 🔧
 
 Kubiya Workers are Temporal-based execution engines that process AI agent workflows with enterprise-grade reliability and scalability.
+
+**Workers can run on nearly any compute environment** - your local machine (Mac, Linux, Windows), Kubernetes clusters, Docker containers, VMs (EC2, GCE, Azure), or bare metal servers. This flexibility makes them incredibly powerful and easy to deploy wherever your infrastructure lives!
 
 **📖 For comprehensive documentation, see [Worker Guide](docs/worker-guide.md) | [Environment Variables](docs/environment-variables.md)**
 
@@ -650,1057 +1250,328 @@ kubiya worker start --queue-id=<queue-id>
 
 ---
 
-## Usage Guide
+## 🎯 Self-Hosting Control Plane
 
-This section covers the main features and commands of the Kubiya CLI. For detailed documentation, see the links in each section.
+Run the Kubiya Control Plane API server on your own infrastructure for full control over your agent orchestration platform.
 
-## Workflow Execution 🔄
-
-The Kubiya CLI supports executing workflows from multiple sources with comprehensive GitHub authentication support.
-
-### Supported Workflow Sources
-
-#### Local Files
-```bash
-# Execute local YAML workflow
-kubiya workflow execute deploy.yaml
-
-# Execute local JSON workflow
-kubiya workflow execute backup.json
-
-# Execute with variables
-kubiya workflow execute deploy.yaml --var env=production --var version=v1.2.3
-```
-
-#### GitHub Repositories (with Authentication)
-```bash
-# GitHub shorthand (owner/repo)
-kubiya workflow execute myorg/deploy-workflows
-
-# Specific file in repository
-kubiya workflow execute myorg/workflows/production/deploy.yaml
-
-# Specific branch
-kubiya workflow execute myorg/workflows/develop/staging.yaml
-
-# Full GitHub URL
-kubiya workflow execute https://github.com/myorg/workflows/blob/main/deploy.yaml
-```
-
-#### Raw URLs
-```bash
-# Direct download from any URL
-kubiya workflow execute https://raw.githubusercontent.com/myorg/workflows/main/deploy.yaml
-
-# Custom workflow server
-kubiya workflow execute https://workflows.example.com/deploy.yaml
-```
-
-### GitHub Authentication
-
-The CLI automatically uses GitHub tokens from Kubiya integrations for private repository access:
-
-**When GitHub Integration is Available:**
-```
-📥 Cloning repository...
-🔐 Using GitHub authentication from integrations
-✅ Repository cloned with authentication
-```
-
-**When GitHub Integration is NOT Available:**
-```
-📥 Cloning repository...
-💡 For private repositories, set up GitHub integration at:
-  • Composer App: https://compose.kubiya.ai
-  • API: Use the integrations API
-  • CLI: kubiya integrations --help
-⚠️ Authenticated clone failed, trying public access...
-```
-
-### Workflow Execution Examples
-
-#### Basic Execution
-```bash
-# Execute with default runner
-kubiya workflow execute myorg/deploy-scripts
-
-# Execute with specific runner
-kubiya workflow execute deploy.yaml --runner production-runner
-
-# Execute with policy validation
-kubiya workflow execute deploy.yaml --skip-policy-check
-```
-
-#### Advanced Execution
-```bash
-# Execute with variables and verbose output
-kubiya workflow execute myorg/workflows/ci-cd.yaml \
-  --var environment=staging \
-  --var image_tag=v2.1.0 \
-  --var notify_slack=true \
-  --verbose
-
-# Execute with trace saving
-kubiya workflow execute complex-deployment.yaml \
-  --save-trace \
-  --runner k8s-runner
-```
-
-#### Real-time Execution Tracking
-```
-🚀 Executing workflow: CI/CD Pipeline
-Source: GitHub Repository
-Repository: https://github.com/myorg/workflows.git
-File: ci-cd/production.yaml
-Runner: k8s-prod-runner
-Params:
-  environment = production
-  version = v1.2.3
-
-🚀 Starting workflow execution...
-
-📊 [████████████████████░] 4/5 steps completed
-
-▶️ [4/5] 🔄 Running: Deploy Application
-  ⏳ Running...
-  ✅ Step completed in 45.2s
-  📤 Output: Deployment successful, 3 pods updated
-
-▶️ [5/5] 🔄 Running: Health Check
-  ⏳ Running...
-  ✅ Step completed in 12.1s
-  📤 Output: All health checks passed
-
-🎉 Workflow completed successfully!
-
-📊 Workflow Execution Graph
-Name: CI/CD Pipeline
-Status: ✅ Completed
-Duration: 2m 15.3s
-
-┌─ ✅ Build Image (18.5s)
-├─ ✅ Run Tests (22.1s)
-├─ ✅ Security Scan (8.7s)
-├─ ✅ Deploy Application (45.2s)
-└─ ✅ Health Check (12.1s)
-```
-
-## Serverless Agent Management 🤖
-
-Serverless agents are lightweight AI agents deployed on your infrastructure using Kubiya runners on top of scalable infrastructure such as Kubernetes.
-
-### Create Serverless Agents
-
-#### Interactive Creation
-```bash
-# Create interactively with guided prompts
-kubiya agent create --interactive
-```
-
-#### Basic Agent Creation
-```bash
-# Create with basic information
-kubiya agent create --name "DevOps Agent" --desc "Handles DevOps automation tasks"
-
-# Create with sources and tools
-kubiya agent create --name "K8s Agent" \
-  --source abc-123 --source def-456 \
-  --desc "Kubernetes management agent"
-```
-
-#### Advanced Agent Configuration
-```bash
-# Create with environment variables and secrets
-kubiya agent create --name "AWS Agent" \
-  --desc "AWS infrastructure management" \
-  --env "AWS_REGION=us-west-2" --env "DEBUG=true" \
-  --secret AWS_ACCESS_KEY --secret AWS_SECRET_KEY
-
-# Create with webhooks for automation
-kubiya agent create --name "Slack Agent" \
-  --desc "Slack notification and automation agent" \
-  --webhook-method slack --webhook-dest "#alerts" \
-  --webhook-prompt "Process this alert and take appropriate action"
-
-# Create with HTTP webhook for custom integrations
-kubiya agent create --name "API Agent" \
-  --desc "API endpoint automation agent" \
-  --webhook-method http \
-  --webhook-prompt "Handle incoming API requests"
-```
-
-### List and Manage Serverless Agents
+### Quick Start
 
 ```bash
-# List all agents
-kubiya agent list
+# 1. Set up PostgreSQL database
+createdb kubiya_control_plane
 
-# Show detailed agent information
-kubiya agent list --all
+# 2. Set database connection
+export DATABASE_URL='postgresql://user:pass@localhost:5432/kubiya_control_plane'
 
-# Filter active agents only
-kubiya agent list --active
+# 3. Start Control Plane (local development)
+kubiya control-plane start --package-source=/path/to/control-plane-api
 
-# Sort by various fields
-kubiya agent list --sort name
-kubiya agent list --sort updated
+# 4. Verify server is running
+curl http://localhost:7777/api/health
+# Expected: {"status":"ok"}
 
-# Filter agents by name or description
-kubiya agent list --filter "kubernetes"
+# 5. Access Swagger UI documentation
+open http://localhost:7777/api/docs
 ```
 
-### Edit Serverless Agents
+### Features
+
+- **🚀 REST API** - Complete API for agent orchestration and management
+- **📚 Swagger UI** - Built-in interactive API documentation at `/api/docs`
+- **🔄 Real-time Streaming** - WebSocket support for execution event streaming
+- **🏢 Multi-tenant** - Isolated agent management per organization
+- **⚡ Temporal Integration** - Seamless workflow orchestration
+- **📊 Monitoring WebUI** - Optional real-time monitoring interface
+- **🔧 Auto Migrations** - Database schema migrations run automatically on startup
+- **🐳 Docker Ready** - Production-ready Docker and Kubernetes examples
+- **🔒 Secure** - SSL/TLS support, JWT authentication, rate limiting
+
+### Production Deployment
+
+<details>
+<summary><b>Docker Compose (Click to expand)</b></summary>
 
-```bash
-# Edit agent interactively
-kubiya agent edit abc-123 --interactive
-
-# Update basic information
-kubiya agent edit abc-123 --name "Updated K8s Agent" --desc "Enhanced Kubernetes agent"
-
-# Add/remove sources
-kubiya agent edit abc-123 --add-source def-456 --remove-source ghi-789
-
-# Update environment variables
-kubiya agent edit abc-123 --add-env "LOG_LEVEL=debug" --remove-env OLD_VAR
-
-# Configure webhooks
-kubiya agent edit abc-123 \
-  --webhook-method slack \
-  --webhook-dest "#notifications" \
-  --webhook-prompt "New infrastructure alert received"
-```
-
-## Source Management 📂
-
-### List and Browse Sources
-
-```bash
-# Basic source listing
-kubiya source list
-
-# Detailed view with all metadata
-kubiya source list --all
-
-# Filter sources by name or description
-kubiya source list --filter "kubernetes"
-
-# Sort by creation date or name
-kubiya source list --sort created
-kubiya source list --sort name
-```
-
-### Scan and Discover Sources
-
-```bash
-# Scan GitHub repository
-kubiya source scan https://github.com/org/devops-tools
-
-# Scan local directory
-kubiya source scan .
-
-# Scan with specific runner for tool discovery
-kubiya source scan . --runner python-runner
-
-# Scan specific branch and path
-kubiya source scan https://github.com/org/tools --branch develop --path /scripts
-
-# Force scan with uncommitted changes
-kubiya source scan . --force
-```
-
-### Add and Sync Sources
-
-```bash
-# Add from GitHub repository
-kubiya source add https://github.com/org/devops-tools --name "DevOps Automation"
-
-# Add with configuration and specific runner
-kubiya source add https://github.com/org/k8s-tools \
-  --config k8s-config.json --runner k8s-runner
-
-# Add inline source from file
-kubiya source add --inline custom-tools.yaml --name "Custom Automation Tools"
-
-# Add with auto-commit and push
-kubiya source add . --add --push --commit-msg "feat: add monitoring tools"
-```
-
-## Tool Management 🛠️
-
-### List and Discover Tools
-
-```bash
-# List all available tools
-kubiya tool list
-
-# Filter tools by source
-kubiya tool list --source abc-123
-
-# Show detailed tool information
-kubiya tool list --all
-
-# Filter by tool type
-kubiya tool list --type docker
-
-# List tools from specific source UUID
-kubiya tool list --source-uuid "64b0cb09-d6b5-4ff7-9d4b-9e05c6c3ae56"
-```
-
-### Execute Tools
-
-#### Basic Tool Execution
-```bash
-# Simple command execution
-kubiya tool exec --name "hello" --content "echo Hello World"
-
-# Execute with Docker container
-kubiya tool exec --name "python-script" --type docker --image python:3.11 \
-  --content "print('Hello from Python in container')"
-
-# Execute with timeout
-kubiya tool exec --name "long-task" --content "sleep 90 && echo done" --timeout 120s
-
-# Execute on specific runner
-kubiya tool exec --name "k8s-command" --content "kubectl get nodes" --runner k8s-runner
-```
-
-#### Tool Execution with Integrations
-```bash
-# Execute kubectl with in-cluster authentication
-kubiya tool exec --name "k8s-pods" \
-  --content "kubectl get pods -A" \
-  --integration kubernetes/incluster
-
-# Execute AWS CLI with profile
-kubiya tool exec --name "s3-list" \
-  --content "aws s3 ls s3://my-bucket/" \
-  --integration aws/cli \
-  --env AWS_PROFILE=production
-
-# Execute with multiple integrations
-kubiya tool exec --name "deploy-app" \
-  --content 'terraform apply -auto-approve && kubectl apply -f k8s/' \
-  --integration terraform/aws \
-  --integration kubernetes/eks
-```
-
-#### Advanced Tool Execution
-```bash
-# Execute with file mappings
-kubiya tool exec --name "config-reader" \
-  --content "cat /app/config.yaml && echo 'Config loaded'" \
-  --with-file ~/.config/myapp.yaml:/app/config.yaml
-
-# Execute with volume mappings
-kubiya tool exec --name "docker-inspect" \
-  --content "docker ps -a" \
-  --with-volume /var/run/docker.sock:/var/run/docker.sock:ro
-
-# Execute from source with custom arguments
-kubiya tool exec --source-uuid "abc-123" --name "aws-tool" \
-  --arg instance_ids:string:"i-1234567890abcdef0":false
-```
-
-## Agent Chat 💬
-
-### Interactive Chat Sessions
-
-```bash
-# Start interactive chat with an agent
-kubiya chat --interactive
-
-# Chat with specific agent by name
-kubiya chat -n "DevOps Agent" -m "Help me troubleshoot this Kubernetes issue"
-
-# Chat with agent by UUID
-kubiya chat -t "abc-123" -m "Show me the latest deployment logs"
-
-# Process input from stdin
-cat error.log | kubiya chat -n "Debug Agent" --stdin
-```
-
-### Chat with Context Files
-
-```bash
-# Chat with multiple context files
-kubiya chat -n "Security Agent" -m "Review this deployment configuration" \
-  --context k8s/deployment.yaml --context src/**/*.go
-
-# Chat with URL context
-kubiya chat -n "Security Agent" -m "Analyze this configuration" \
-  --context https://raw.githubusercontent.com/org/repo/main/config.yaml
-
-# Multiple context sources
-kubiya chat -n "DevOps Agent" \
-  --context "k8s/*.yaml" \
-  --context "https://example.com/deployment.yaml" \
-  --context "Dockerfile" \
-  -m "Review this deployment setup"
-```
-
-### Inline Agent Creation
-
-```bash
-# Create temporary agent with tools from file
-kubiya chat --inline --tools-file devops-tools.json \
-  --ai-instructions "You are a helpful DevOps automation assistant" \
-  --description "Temporary DevOps Agent" \
-  --runners "k8s-runner" \
-  -m "Deploy the application to staging"
-
-# Inline agent with environment variables and secrets
-kubiya chat --inline --tools-file monitoring-tools.json \
-  --env-vars "ENVIRONMENT=production" --env-vars "LOG_LEVEL=info" \
-  --secrets "DATADOG_API_KEY" --integrations "datadog" \
-  --llm-model "azure/gpt-4-32k" \
-  -m "Set up monitoring for the new service"
-```
-
-## Secret Management 🔒
-
-### Create and Manage Secrets
-
-```bash
-# Create secret with description
-kubiya secret create DB_PASSWORD "secure-password-123" \
-  --description "Production database password"
-
-# Create secret with expiration
-kubiya secret create API_TOKEN "token-xyz" --expires-in 30d
-
-# Create secret for specific environment
-kubiya secret create STAGING_KEY "staging-secret" \
-  --description "Staging environment access key"
-```
-
-### List and Update Secrets
-
-```bash
-# List all secrets
-kubiya secret list
-
-# List with details
-kubiya secret list --all
-
-# Update secret value
-kubiya secret update DB_PASSWORD "new-secure-password-456"
-
-# Delete secret
-kubiya secret delete TEMP_TOKEN
-```
-
-## Runner Management 🚀
-
-Kubiya runners provide scalable infrastructure for executing tools and workflows, deployable on Kubernetes and other container orchestration platforms.
-
-### List and Monitor Runners
-
-```bash
-# List all runners with health status
-kubiya runner list
-
-# Show detailed runner information
-kubiya runner list --all
-
-# Filter healthy runners only
-kubiya runner list --healthy
-
-# Show runner with specific details
-kubiya runner describe my-k8s-runner
-```
-
-### Manage Runner Deployments
-
-```bash
-# Get runner manifest for Kubernetes deployment
-kubiya runner manifest my-runner > runner-manifest.yaml
-
-# Get Helm chart for runner deployment
-kubiya runner helm-chart my-runner > runner-chart.yaml
-
-# Create new runner configuration
-kubiya runner create my-new-runner --type kubernetes
-```
-
-## MCP Integration (Model Context Protocol) 💻↔️🤖
-
-The Kubiya CLI provides comprehensive MCP integration for AI-powered applications like Claude Desktop and Cursor IDE.
-
-### MCP Server Features
-
-- **Tool Execution**: Execute any Kubiya tool with streaming output
-- **Serverless Agent Integration**: Access to configured serverless agents
-- **Runner Support**: Execute tools on different infrastructure runners
-- **Security Controls**: OPA policy enforcement and tool whitelisting
-- **Platform APIs**: Optional access to Kubiya platform APIs
-
-### Quick MCP Setup
-
-```bash
-
-# List available serverless agents for MCP
-kubiya agent list
-
-# Set up MCP with specific agents
-export AGENT_UUIDS="abc-123,def-456"  # comma-separated agent UUIDs
-kubiya mcp setup
-```
-
-### MCP Server Management
-
-```bash
-# Start MCP server with custom configuration
-kubiya mcp serve --config ~/.kubiya/mcp-config.json
-
-# Test MCP server functionality
-kubiya mcp test --config test/mcp-config.json
-
-# Update MCP gateway
-kubiya mcp update
-
-# Edit provider configurations
-kubiya mcp edit claude_desktop
-```
-
-### MCP Configuration Example
-
-Create a custom MCP configuration (`~/.kubiya/mcp-config.json`):
-
-```json
-{
-  "enable_runners": true,
-  "allow_platform_apis": false,
-  "enable_opa_policies": true,
-  "allow_dynamic_tools": false,
-  "verbose_logging": false,
-  "whitelisted_tools": [
-    {
-      "name": "kubectl",
-      "description": "Execute Kubernetes commands with in-cluster authentication",
-      "type": "docker",
-      "image": "kubiya/kubectl-light:latest",
-      "content": "kubectl $command",
-      "args": [
-        {
-          "name": "command",
-          "type": "string",
-          "description": "The kubectl command to execute (e.g., 'get pods -n default')",
-          "required": true
-        }
-      ],
-      "runner": "k8s-runner"
-    }
-  ]
-}
-```
-
-### MCP Client Setup
-
-**Claude Desktop Configuration:**
-```json
-{
-  "mcpServers": {
-    "kubiya": {
-      "command": "/usr/local/bin/kubiya",
-      "args": ["mcp", "serve", "--config", "/home/user/.kubiya/mcp-config.json"],
-      "env": {
-        "KUBIYA_API_KEY": "your-api-key-here"
-      }
-    }
-  }
-}
-```
-
-**Cursor IDE Configuration:**
-```json
-{
-  "mcp": {
-    "servers": {
-      "kubiya": {
-        "command": "/usr/local/bin/kubiya",
-        "args": ["mcp", "serve", "--config", "/home/user/.kubiya/mcp-config.json"],
-        "env": {
-          "KUBIYA_API_KEY": "your-api-key-here"
-        }
-      }
-    }
-  }
-}
-```
-
-## Enhanced Webhook Management 🔗
-
-### Agent Webhooks
-
-Create webhooks that trigger existing agents with JMESPath templating:
-
-```bash
-# GitHub Pull Request webhook
-kubiya webhook create \
-  --name "GitHub PR Review" \
-  --source "github" \
-  --target "agent" \
-  --agent-id "your-agent-id" \
-  --method "Slack" \
-  --destination "#code-review" \
-  --prompt "New PR: {{.event.pull_request.title}} in {{.event.repository.name}}" \
-  --filter "event.action == 'opened' && event.pull_request.draft == false"
-
-# Issue tracking webhook
-kubiya webhook create \
-  --name "Issue Alert" \
-  --source "github" \
-  --target "agent" \
-  --agent-id "your-agent-id" \
-  --method "Teams" \
-  --destination "team:channel" \
-  --prompt "Issue #{{.event.issue.number}}: {{.event.issue.title}}" \
-  --filter "event.action == 'opened' && contains(event.issue.labels[*].name, 'bug')"
-```
-
-### Workflow Webhooks
-
-Create webhooks that execute workflows directly:
-
-```bash
-# Deployment workflow from file
-kubiya webhook create \
-  --name "Auto Deploy" \
-  --source "github" \
-  --target "workflow" \
-  --workflow "file://deploy-workflow.yaml" \
-  --method "Slack" \
-  --destination "#deployments" \
-  --runner "kubiya-hosted" \
-  --filter "event.action == 'push' && event.ref == 'refs/heads/main'"
-
-# Notification workflow from URL
-kubiya webhook create \
-  --name "Slack Notifier" \
-  --source "github" \
-  --target "workflow" \
-  --workflow "https://raw.githubusercontent.com/myorg/workflows/main/notify.yaml" \
-  --method "Slack" \
-  --destination "#notifications"
-```
-
-### Webhook Management
-
-```bash
-# List all webhooks with type indicators
-kubiya webhook list
-
-# Detailed view with all fields
-kubiya webhook list --output wide
-
-# Get webhook details
-kubiya webhook describe webhook-id
-
-# Test webhook with event data
-kubiya webhook test --id webhook-id --data '{"event": {"action": "opened"}}'
-
-# Delete webhook
-kubiya webhook delete webhook-id
-```
-
-### JMESPath Templating Examples
-
-Common template variables for GitHub events:
-
-```bash
-# Repository and PR information
---prompt "PR {{.event.pull_request.number}}: {{.event.pull_request.title}} in {{.event.repository.name}}"
-
-# Issue tracking
---prompt "Issue #{{.event.issue.number}}: {{.event.issue.title}} by {{.event.issue.user.login}}"
-
-# Release notifications
---prompt "🚀 Release {{.event.release.tag_name}} published for {{.event.repository.name}}"
-
-# Push notifications
---prompt "Push to {{.event.repository.name}}: {{.event.commits[0].message}}"
-```
-
-### Event Filtering Examples
-
-```bash
-# Only non-draft PRs
---filter "event.action == 'opened' && event.pull_request.draft == false"
-
-# Only main branch pushes
---filter "event.action == 'push' && event.ref == 'refs/heads/main'"
-
-# Only critical issues
---filter "event.action == 'opened' && contains(event.issue.labels[*].name, 'critical')"
-
-# Repository-specific events
---filter "contains(event.repository.name, 'production') && event.action == 'published'"
-```
-
-### Environment-Specific Configuration
-
-```bash
-# Production environment
-export KUBIYA_API_KEY="prod-api-key"
-export KUBIYA_BASE_URL="https://api.kubiya.ai/api/v1"
-export KUBIYA_DEFAULT_RUNNER="production-runner"
-
-# Development environment
-export KUBIYA_API_KEY="dev-api-key"
-export KUBIYA_DEBUG=true
-export KUBIYA_DEFAULT_RUNNER="dev-runner"
-```
-
-## Best Practices 💡
-
-### Workflow Organization
-
-1. **Use descriptive workflow names**: `deploy-production-app.yaml` vs `workflow1.yaml`
-2. **Organize by environment**: `workflows/production/`, `workflows/staging/`
-3. **Version your workflows**: Use Git tags and branches for workflow versions
-4. **Document parameters**: Include clear descriptions for all workflow variables
-
-### Serverless Agent Design
-
-1. **Single Responsibility**: Create agents focused on specific domains (AWS, K8s, Security)
-2. **Resource Limits**: Configure appropriate CPU/memory limits for your infrastructure
-3. **Security**: Use secrets and environment variables for sensitive configuration
-4. **Monitoring**: Set up health checks and logging for production agents
-
-### Runner Management
-
-1. **Infrastructure Scaling**: Deploy runners on Kubernetes for automatic scaling
-2. **Resource Isolation**: Use separate runners for different environments
-3. **Health Monitoring**: Regularly check runner health and performance
-4. **Security**: Keep runner images updated and follow security best practices
-
-### Tool Development
-
-1. **Idempotency**: Ensure tools can be run multiple times safely
-2. **Error Handling**: Provide clear error messages and exit codes
-3. **Documentation**: Include comprehensive descriptions and examples
-4. **Testing**: Test tools in isolated environments before production use
-
-## Troubleshooting 🔧
-
-### Common Issues
-
-#### Authentication Problems
-```bash
-# Verify API key
-kubiya agent list
-
-
-# Test with debug mode
-export KUBIYA_DEBUG=true
-kubiya agent list
-```
-
-#### Workflow Execution Issues
-```bash
-# Verify workflow syntax
-kubiya workflow execute workflow.yaml --dry-run
-
-# Check runner availability
-kubiya runner list --healthy
-
-# Execute with verbose logging
-kubiya workflow execute workflow.yaml --verbose
-```
-
-#### GitHub Integration Issues
-```bash
-# Check integration status
-kubiya integration list
-
-# Test repository access
-kubiya workflow execute myorg/test-repo --verbose
-
-# Manual authentication setup
-# Visit https://compose.kubiya.ai to configure GitHub integration
-```
-
-#### Worker Issues
-```bash
-# Check worker logs (daemon mode)
-tail -f ~/.kubiya/workers/<queue-id>/logs/worker.log
-
-# Start with debug logging
-export LOG_LEVEL=DEBUG
-kubiya worker start --queue-id=<queue-id>
-
-# Verify Python environment
-python3 --version  # Should be 3.8+
-
-# Check connectivity to control plane
-curl https://control-plane.kubiya.ai/health
-
-# Clear virtual environment and restart
-rm -rf ~/.kubiya/workers/<queue-id>/venv
-kubiya worker start --queue-id=<queue-id>
-
-# Use custom control plane URL
-export CONTROL_PLANE_GATEWAY_URL="https://custom-cp.example.com"
-kubiya worker start --queue-id=<queue-id>
-```
-
-### Debug Mode
-
-Enable comprehensive debugging:
-
-```bash
-export KUBIYA_DEBUG=true
-export KUBIYA_LOG_LEVEL=debug
-
-# All commands will now show detailed debugging information
-kubiya workflow execute myorg/repo --verbose
-```
-
-### Log Analysis
-
-Check logs for detailed error information:
-
-```bash
-# View recent execution logs
-kubiya workflow logs --execution-id exec-123
-
-# View agent logs
-kubiya agent logs abc-123
-
-# View runner logs
-kubiya runner logs my-runner
-```
-
-## Advanced Usage 🎯
-
-### CI/CD Integration
-
-#### GitHub Actions
 ```yaml
-name: Deploy with Kubiya
-on:
-  push:
-    branches: [main]
+version: '3.8'
 
-jobs:
-  deploy:
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v3
-    - name: Install Kubiya CLI
-      run: curl -fsSL https://raw.githubusercontent.com/kubiyabot/cli/main/install.sh | bash
-    - name: Execute Deployment Workflow
-      env:
-        KUBIYA_API_KEY: ${{ secrets.KUBIYA_API_KEY }}
-      run: |
-        kubiya workflow execute myorg/deployment-workflows/production.yaml \
-          --var version=${{ github.sha }} \
-          --var environment=production
+services:
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: kubiya
+      POSTGRES_USER: kubiya
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --requirepass ${REDIS_PASSWORD}
+    restart: unless-stopped
+
+  control-plane:
+    image: kubiya/control-plane:latest
+    depends_on:
+      - postgres
+      - redis
+    environment:
+      DATABASE_URL: postgresql://kubiya:${POSTGRES_PASSWORD}@postgres:5432/kubiya
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+      SECRET_KEY: ${SECRET_KEY}
+      TEMPORAL_HOST: ${TEMPORAL_HOST}
+      LITELLM_API_KEY: ${LITELLM_API_KEY}
+    ports:
+      - "7777:7777"
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
 ```
 
-#### GitLab CI
+Start with:
+```bash
+docker-compose up -d
+```
+</details>
+
+<details>
+<summary><b>Kubernetes Deployment (Click to expand)</b></summary>
+
 ```yaml
-deploy:
-  stage: deploy
-  image: ubuntu:latest
-  before_script:
-    - curl -fsSL https://raw.githubusercontent.com/kubiyabot/cli/main/install.sh | bash
-  script:
-    - kubiya workflow execute ./deployment/workflow.yaml --var env=production
-  environment:
-    name: production
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: control-plane
+  namespace: kubiya
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: control-plane
+  template:
+    metadata:
+      labels:
+        app: control-plane
+    spec:
+      containers:
+      - name: control-plane
+        image: kubiya/control-plane:latest
+        ports:
+        - containerPort: 7777
+        env:
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: kubiya-secrets
+              key: database-url
+        - name: SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: kubiya-secrets
+              key: secret-key
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+        livenessProbe:
+          httpGet:
+            path: /api/health
+            port: 7777
+          initialDelaySeconds: 60
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /api/health
+            port: 7777
+          initialDelaySeconds: 30
+          periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: control-plane-service
+  namespace: kubiya
+spec:
+  selector:
+    app: control-plane
+  ports:
+  - port: 7777
+    targetPort: 7777
+  type: LoadBalancer
 ```
 
-### Multi-Environment Workflows
+Deploy with:
+```bash
+kubectl apply -f control-plane-deployment.yaml
+```
+</details>
+
+### Configuration Options
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--database-url` | PostgreSQL connection URL (required) | - |
+| `--host` | Server bind address | `0.0.0.0` |
+| `--port` | Server port | `7777` |
+| `--redis-url` | Redis connection URL | `redis://localhost:6379/0` |
+| `--temporal-host` | Temporal server address | `localhost:7233` |
+| `--secret-key` | JWT secret key (⚠️ required for production) | Auto-generated |
+| `--litellm-api-key` | LiteLLM API key for LLM features | - |
+| `--package-source` | Package source (PyPI, git, local) | Latest from PyPI |
+| `--no-webui` | Disable monitoring WebUI | false |
+
+### Security Best Practices
+
+⚠️ **Important for Production:**
+
+- **Never use auto-generated SECRET_KEY** - Set a strong secret key via environment variable
+- **Enable database SSL/TLS** - Use `?sslmode=require` in DATABASE_URL
+- **Use reverse proxy** - Deploy behind Nginx/Traefik with SSL certificate
+- **Configure rate limiting** - Protect against abuse
+- **Set up automated backups** - Regular PostgreSQL backups
+- **Monitor logs** - Use log aggregation (ELK, Loki, CloudWatch)
+
+### API Endpoints
+
+Once running, the Control Plane exposes:
+
+- **Swagger UI**: `http://localhost:7777/api/docs` - Interactive API documentation
+- **ReDoc**: `http://localhost:7777/api/redoc` - Alternative documentation
+- **Health Check**: `http://localhost:7777/api/health` - Server health status
+- **OpenAPI Spec**: `http://localhost:7777/api/openapi.json` - API specification
+
+**Available APIs:**
+- Agent Management (`/api/agents`)
+- Execution Management (`/api/executions`)
+- Workflow Orchestration (`/api/workflows`)
+- Team Management (`/api/teams`)
+- Model Configuration (`/api/models`)
+- Skill Registration (`/api/skills`)
+- Policy Management (`/api/policies`)
+- Metrics & Analytics (`/api/metrics`, `/api/analytics`)
+
+### Troubleshooting
+
+**Database connection failed:**
+```bash
+# Test database connection
+psql $DATABASE_URL -c "SELECT version();"
+
+# Check if PostgreSQL is running
+pg_isready -h localhost -p 5432
+```
+
+**Port already in use:**
+```bash
+# Check what's using the port
+lsof -i:7777
+
+# Use different port
+kubiya control-plane start --port=8080
+```
+
+**URL encoding for special characters:**
+```bash
+# Password contains special characters: MyP@ss!word
+# Must be URL-encoded: MyP%40ss%21word
+
+export DATABASE_URL='postgresql://user:MyP%40ss%21word@host:5432/kubiya'
+```
+
+### See Also
+
+- **[Control Plane Self-Hosting Guide](docs/control-plane-guide.md)** - Comprehensive deployment guide with Docker, Kubernetes, security, monitoring, and troubleshooting
+- **[Commands Reference](docs-site/pages/commands.md#control-plane-management)** - Complete command reference
+- **[Environment Variables](docs/environment-variables.md)** - Configuration reference
+
+---
+
+## ⚙️ Configuration
+
+### Config File Location
+
+The CLI stores configuration in `~/.kubiya/config.json`
+
+### Managing Contexts
 
 ```bash
-# Staging deployment
-kubiya workflow execute myorg/workflows/deploy.yaml \
-  --var environment=staging \
-  --var replicas=2 \
-  --runner staging-runner
+# List contexts
+kubiya config list
 
-# Production deployment
-kubiya workflow execute myorg/workflows/deploy.yaml \
-  --var environment=production \
-  --var replicas=5 \
-  --var enable_monitoring=true \
-  --runner production-runner
+# Add new context
+kubiya config add <context-name>
+
+# Switch context
+kubiya config use <context-name>
+
+# Show current context
+kubiya config current
+
+# Remove context
+kubiya config remove <context-name>
 ```
 
-### Workflow Composition
+### Environment Variables
 
-```bash
-# Chain multiple workflows
-kubiya workflow execute myorg/workflows/build.yaml && \
-kubiya workflow execute myorg/workflows/test.yaml && \
-kubiya workflow execute myorg/workflows/deploy.yaml
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `KUBIYA_API_KEY` | API authentication key | - |
+| `KUBIYA_BASE_URL` | Control Plane URL | `https://control-plane.kubiya.ai` |
+| `KUBIYA_AUTOMATION` | Skip interactive prompts | `false` |
+| `KUBIYA_OUTPUT` | Default output format | `table` |
 
-# Conditional execution
-kubiya workflow execute myorg/workflows/build.yaml \
-  --var run_tests=true \
-  --var deploy_on_success=true
-```
+## 🤝 Contributing
 
-## Support and Documentation 📚
-
-### Official Documentation
-- **Main Documentation**: [https://docs.kubiya.ai](https://docs.kubiya.ai)
-- **API Reference**: [https://api.kubiya.ai/docs](https://api.kubiya.ai/docs)
-- **Worker Guide**: [Worker Guide](docs/worker-guide.md)
-- **Environment Variables**: [Environment Variables Reference](docs/environment-variables.md)
-- **MCP Integration**: [MCP Comprehensive Guide](docs/mcp-comprehensive-guide.md)
-- **Workflow Examples**: [Workflow Commands Guide](docs/workflow-commands.md)
-
-### Community Resources
-- **GitHub Repository**: [https://github.com/kubiyabot/cli](https://github.com/kubiyabot/cli)
-- **Issue Tracker**: [GitHub Issues](https://github.com/kubiyabot/cli/issues)
-- **Community Examples**: [examples/](examples/)
-
-### Getting Help
-
-1. **Check the documentation**: Most questions are answered in the guides above
-2. **Search existing issues**: Someone may have encountered the same problem
-3. **Enable debug mode**: Use `KUBIYA_DEBUG=true` for detailed error information
-4. **Create an issue**: Provide detailed information about your environment and the problem
-
-## Quick Reference 📖
-
-### Common Commands Cheat Sheet
-
-```bash
-# Worker Operations
-kubiya worker start --queue-id=<id> --type=local       # Start local worker
-kubiya worker start --queue-id=<id> -d                 # Start daemon worker
-tail -f ~/.kubiya/workers/<id>/logs/worker.log         # View logs
-
-# Agent Management
-kubiya agent list                                       # List all agents
-kubiya agent create --interactive                       # Create agent interactively
-kubiya chat -n "Agent Name" -m "message"               # Chat with agent
-
-# Workflow Execution
-kubiya workflow execute workflow.yaml                   # Execute local workflow
-kubiya workflow execute myorg/repo/workflow.yaml       # Execute from GitHub
-kubiya workflow execute --var env=prod workflow.yaml   # With variables
-
-# Tool Management
-kubiya tool list                                        # List available tools
-kubiya tool exec --name "tool" --content "command"     # Execute tool
-
-# Source Management
-kubiya source list                                      # List sources
-kubiya source scan .                                    # Scan current directory
-kubiya source add https://github.com/org/repo          # Add source
-
-# Secret Management
-kubiya secret create KEY "value"                        # Create secret
-kubiya secret list                                      # List secrets
-
-# Runner Management
-kubiya runner list                                      # List runners
-kubiya runner describe <name>                           # Describe runner
-```
-
-### Environment Variables Quick Reference
-
-| Variable | Purpose | Example |
-|----------|---------|---------|
-| `KUBIYA_API_KEY` | Authentication | `export KUBIYA_API_KEY="kby_..."` |
-| `CONTROL_PLANE_GATEWAY_URL` | Custom control plane | `export CONTROL_PLANE_GATEWAY_URL="https://..."` |
-| `LOG_LEVEL` | Logging verbosity | `export LOG_LEVEL="DEBUG"` |
-| `KUBIYA_DEBUG` | Debug mode | `export KUBIYA_DEBUG=true` |
-
-**📖 Full reference: [Environment Variables](docs/environment-variables.md)**
-
-### Deployment Quick Reference
-
-| Mode | Command | Use Case |
-|------|---------|----------|
-| Local Dev | `kubiya worker start --queue-id=dev --type=local` | Development & testing |
-| Production Daemon | `kubiya worker start --queue-id=prod -d` | Production standalone |
-| Docker | `docker run ghcr.io/kubiyabot/agent-worker:latest` | Container deployment |
-| Kubernetes | `kubectl apply -f worker.yaml` | Scalable production |
-
-### Architecture Diagram Quick View
-
-```mermaid
-graph LR
-    User[👤 User] --> CLI[💻 CLI/UI]
-    CLI --> CP[🎯 Control Plane]
-    CP --> Temporal[⚡ Temporal]
-    Temporal --> Worker[🔧 Worker]
-    Worker --> Agent[🤖 Agent]
-    Agent --> Tools[🛠️ Tools]
-
-    style CP fill:#4CAF50,color:#fff
-    style Worker fill:#FF9800,color:#fff
-    style Agent fill:#2196F3,color:#fff
-```
-
-### Troubleshooting Quick Fixes
-
-| Issue | Quick Fix |
-|-------|-----------|
-| Worker won't start | `rm -rf ~/.kubiya/workers/<id>/venv && kubiya worker start --queue-id=<id>` |
-| Connection errors | `curl https://control-plane.kubiya.ai/health` |
-| Authentication fails | `echo $KUBIYA_API_KEY` - verify it's set |
-| Debug mode | `export LOG_LEVEL=DEBUG && kubiya worker start --queue-id=<id>` |
-
-## Tab Completion 🎯
-
-Enable tab completion for enhanced CLI experience:
-
-```bash
-# Bash
-echo 'source <(kubiya completion bash)' >> ~/.bashrc
-
-# Zsh
-echo 'source <(kubiya completion zsh)' >> ~/.zshrc
-
-# Fish
-kubiya completion fish | source
-```
-
-## Contributing 🤝
-
-We welcome contributions! Here's how you can help:
-
-1. **Report Issues**: Found a bug? [Open an issue](https://github.com/kubiyabot/cli/issues)
-2. **Suggest Features**: Have an idea? Start a discussion
-3. **Submit PRs**: Fork, create a branch, and submit a pull request
-4. **Improve Docs**: Documentation improvements are always welcome
+We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for details.
 
 ### Development Setup
 
 ```bash
-# Clone the repository
+# Clone repository
 git clone https://github.com/kubiyabot/cli.git
 cd cli
 
-# Build from source
-make build
+# Install dependencies
+go mod download
+
+# Build
+go build -o kubiya .
 
 # Run tests
-make test
+go test ./...
 
-# Install locally
-make install
+# Run locally
+./kubiya --help
 ```
 
-## License 📄
+### Code Structure
+
+```
+cli/
+├── cmd/              # Command implementations
+├── internal/
+│   ├── api/         # API client
+│   ├── config/      # Configuration management
+│   ├── controlplane/# Control Plane integration
+│   └── display/     # Output formatting
+├── pkg/             # Public packages
+└── main.go          # Entry point
+```
+
+## 📄 License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
+## 🆘 Support
+
+- Documentation: https://docs.kubiya.ai
+- Issues: https://github.com/kubiyabot/cli/issues
+- Community: https://community.kubiya.ai
+
 ---
 
-<div align="center">
-
-**Built with ❤️ by the Kubiya team**
-
-Deploy AI agents on your infrastructure and automate everything! 🚀
-
-[Website](https://kubiya.ai) • [Documentation](https://docs.kubiya.ai) • [GitHub](https://github.com/kubiyabot/cli) • [Community](https://community.kubiya.ai)
-
-</div>
+Made with ❤️ by the Kubiya team

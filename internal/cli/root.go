@@ -33,13 +33,13 @@ Quick Start:
   • Manage policies:  kubiya policy list
   • View executions:  kubiya execution list
   • Schedule jobs:    kubiya job list
-  • Manage operators: kubiya operator list
-  • Manage webhooks:  kubiya webhook list
   • Manage workflows: kubiya workflow list|run|execute|compose
   • Update CLI:       kubiya update
 
 Need help? Visit: https://docs.kubiya.ai`,
-		Version: version.GetVersion(),
+		Version:       version.GetVersion(),
+		SilenceUsage:  true,  // Never show usage on errors - errors are formatted by handleError in main.go
+		SilenceErrors: false, // Let errors propagate to main.go for proper handling
 		PersistentPreRun: func(cmd *cobra.Command, args []string) {
 			// Skip update check for version and update commands
 			if cmd.Name() == "version" || cmd.Name() == "update" {
@@ -93,6 +93,7 @@ Need help? Visit: https://docs.kubiya.ai
 	// V2 Control Plane Commands
 	rootCmd.AddCommand(
 		// Core V2 Commands
+		NewExecCommand(cfg),        // V2: Smart exec with auto-planning
 		newAgentCommand(cfg),       // V2: Agents
 		newTeamCommand(cfg),        // V2: Teams
 		newExecutionCommand(cfg),   // V2: Executions (one-time task runs)
@@ -102,17 +103,19 @@ Need help? Visit: https://docs.kubiya.ai
 		newPolicyCommand(cfg),      // V2: Policies
 		newEnvironmentCommand(cfg), // V2: Environments
 		newProjectCommand(cfg),     // V2: Projects
-		newOperatorCommand(cfg),    // V2: Operators (formerly runners)
 		newWorkerCommand(cfg),      // V2: Worker management
+		newControlplaneCommand(cfg), // V2: Control Plane server management
+		newGraphCommand(cfg),       // V2: Context Graph (includes intelligent search)
+		newMemoryCommand(cfg),      // V2: Cognitive memory management
 
 		// V1 Legacy Commands (still on api.kubiya.ai)
 		newWorkflowCommand(cfg), // V1: Workflows
 		newUsersCommand(cfg),    // V1: User management
-		newWebhooksCommand(cfg), // V1: Webhooks
 		newSecretsCommand(cfg),  // V1: Secrets
 		newKnowledgeCommand(cfg), // V1: Knowledge service
 
 		// System Commands
+		newAuthCommand(cfg),  // Authentication management
 		newLoginCommand(cfg),
 		newUpdateCommand(cfg),
 		newVersionCommand(cfg),
@@ -135,10 +138,9 @@ func showAuthHintIfNeeded(cmd *cobra.Command, cfg *config.Config) {
 		"model":     true,
 		"skill":     true,
 		"policy":    true,
-		"operator":  true,
-		"webhook":   true,
 		"secret":    true,
 		"knowledge": true,
+		"graph":     true,
 	}
 
 	// Check if this command or its parent requires auth

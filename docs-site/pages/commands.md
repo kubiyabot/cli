@@ -977,6 +977,91 @@ kubiya integration list
 kubiya integration list --type github
 ```
 
+## Control Plane Management
+
+### kubiya control-plane start
+
+Start the Kubiya Control Plane API server locally for self-hosting.
+
+```bash
+kubiya control-plane start [OPTIONS]
+```
+
+**Package Source Options:**
+- `--package-source`: Package source (PyPI version, git URL, local path, GitHub shorthand)
+- `--package-version`: PyPI version specifier (e.g., "0.6.0", ">=0.5.0")
+- `--local-wheel`: Path to wheel file
+- `--no-update`: Skip checking for package updates
+- `--no-cache`: Force package reinstall
+
+**Server Options:**
+- `--host`: Bind address (default: 0.0.0.0)
+- `--port`: Server port (default: 7777)
+
+**Database Options (Required):**
+- `--database-url`: PostgreSQL connection URL (required)
+- `--supabase-url`: Supabase project URL (legacy)
+- `--supabase-key`: Supabase service role key (legacy)
+
+**Service Options:**
+- `--redis-url`: Redis URL (default: redis://localhost:6379/0)
+- `--temporal-host`: Temporal server (default: localhost:7233)
+- `--secret-key`: JWT secret key (⚠️ required for production)
+- `--litellm-api-key`: LiteLLM API key for LLM features
+
+**WebUI Options:**
+- `--webui-port`: WebUI port (0 = auto-assign, default: 0)
+- `--no-webui`: Disable monitoring WebUI
+
+**Examples:**
+```bash
+# Local development
+export DATABASE_URL='postgresql://localhost/kubiya_dev'
+kubiya control-plane start --package-source=/path/to/control-plane
+
+# Production with custom configuration
+kubiya control-plane start \
+  --database-url='postgresql://user:pass@db-host:5432/kubiya' \
+  --redis-url='redis://redis-host:6379/0' \
+  --temporal-host='temporal.example.com:7233' \
+  --secret-key='your-secret-key' \
+  --port=8080
+
+# Git source with specific commit
+kubiya control-plane start \
+  --package-source='git+https://github.com/kubiyabot/control-plane-api.git@abc123' \
+  --database-url='postgresql://...'
+
+# GitHub shorthand with branch
+kubiya control-plane start \
+  --package-source='kubiyabot/control-plane-api@main' \
+  --database-url='postgresql://...'
+
+# Without WebUI
+kubiya control-plane start \
+  --database-url='postgresql://...' \
+  --no-webui
+
+# Custom host binding (localhost only)
+kubiya control-plane start \
+  --host=127.0.0.1 \
+  --port=7777 \
+  --database-url='postgresql://...'
+```
+
+**Features:**
+- 🚀 REST API for agent orchestration
+- 📚 Built-in Swagger UI documentation at `/api/docs`
+- 🔄 Real-time execution streaming via WebSocket
+- 🏢 Multi-tenant agent management
+- ⚡ Temporal workflow integration
+- 📊 Optional monitoring WebUI
+- 🔧 Automatic database migrations on startup
+
+**See also:**
+- [Control Plane Self-Hosting Guide](../docs/control-plane-guide.md) - Comprehensive deployment guide
+- [Environment Variables](../docs/environment-variables.md) - Complete environment reference
+
 ## Utility Commands
 
 ### kubiya completion
