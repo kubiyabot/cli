@@ -120,6 +120,7 @@ function AppContent() {
       connected={connected}
       queueId={config?.queue_id}
       controlPlane={controlPlane}
+      config={config}
     >
       {renderPage()}
     </Layout>

@@ -47,6 +47,14 @@ type ServerConfig struct {
 
 	// DaemonMode indicates if worker is running as daemon
 	DaemonMode bool
+
+	// Version info for UI display
+	Version     string
+	BuildCommit string
+	BuildDate   string
+	GoVersion   string
+	OS          string
+	Arch        string
 }
 
 // Server is the WebUI HTTP server
@@ -159,6 +167,12 @@ func NewServer(config ServerConfig) (*Server, error) {
 		ModelOverride:    config.ModelOverride,
 		DaemonMode:       config.DaemonMode,
 		WorkerDir:        config.WorkerDir,
+		Version:          config.Version,
+		BuildCommit:      config.BuildCommit,
+		BuildDate:        config.BuildDate,
+		GoVersion:        config.GoVersion,
+		OS:               config.OS,
+		Arch:             config.Arch,
 	})
 
 	// Initialize control plane client if we have credentials

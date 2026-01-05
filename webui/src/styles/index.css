@@ -107,22 +107,35 @@ body {
   gap: 0.75rem;
 }
 
-.header-logo {
-  width: 36px;
-  height: 36px;
+/* KUBIYA.AI Text Logo */
+.header-logo-text {
   display: flex;
-  align-items: center;
-  justify-content: center;
-  color: hsl(var(--primary));
-  background: linear-gradient(135deg, hsl(var(--primary) / 0.15), hsl(var(--primary) / 0.05));
-  border-radius: var(--radius);
-  padding: 0.375rem;
-  transition: all 0.2s ease;
+  align-items: baseline;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter', sans-serif;
+  font-weight: 800;
+  font-size: 1.5rem;
+  letter-spacing: -0.03em;
 }
 
-.header-logo:hover {
-  transform: scale(1.05);
-  background: linear-gradient(135deg, hsl(var(--primary) / 0.2), hsl(var(--primary) / 0.1));
+.logo-kubiya {
+  color: hsl(var(--foreground));
+}
+
+.logo-dot {
+  color: hsl(var(--primary));
+  margin: 0 0.025em;
+}
+
+.logo-ai {
+  color: hsl(var(--foreground));
+}
+
+/* Divider between logo and title */
+.header-brand-divider {
+  width: 1px;
+  height: 32px;
+  background: hsl(var(--border));
+  margin: 0 0.25rem;
 }
 
 .header-brand-text {
@@ -132,13 +145,40 @@ body {
 }
 
 .header-brand-text h1 {
-  font-size: 1.125rem;
-  font-weight: 700;
-  line-height: 1.1;
-  background: linear-gradient(135deg, hsl(var(--foreground)) 0%, hsl(var(--primary)) 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
+  font-size: 1.0625rem;
+  font-weight: 600;
+  line-height: 1.2;
+  color: hsl(var(--foreground));
+}
+
+/* System info meta line */
+.header-brand-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.125rem;
+}
+
+.header-version {
+  font-size: 0.6875rem;
+  font-weight: 500;
+  color: hsl(var(--primary));
+  padding: 0.125rem 0.375rem;
+  background: hsl(var(--primary) / 0.1);
+  border-radius: var(--radius);
+}
+
+.header-build {
+  font-size: 0.625rem;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  color: hsl(var(--foreground-subtle));
+}
+
+.header-os {
+  font-size: 0.625rem;
+  color: hsl(var(--foreground-muted));
+  padding-left: 0.5rem;
+  border-left: 1px solid hsl(var(--border));
 }
 
 .header-brand-subtitle {
@@ -865,7 +905,7 @@ body {
   margin: 0 auto;
 }
 
-/* Loading Spinner */
+/* Loading Spinner - Professional Dual Ring */
 .loading {
   display: flex;
   align-items: center;
@@ -876,16 +916,168 @@ body {
 }
 
 .spinner {
-  width: 32px;
-  height: 32px;
+  width: 40px;
+  height: 40px;
+  position: relative;
+}
+
+.spinner::before,
+.spinner::after {
+  content: '';
+  position: absolute;
+  border-radius: 50%;
+}
+
+.spinner::before {
+  width: 100%;
+  height: 100%;
   border: 3px solid hsl(var(--border));
   border-top-color: hsl(var(--primary));
-  border-radius: 50%;
-  animation: spin 0.8s linear infinite;
+  animation: spin 0.85s cubic-bezier(0.5, 0.1, 0.5, 0.9) infinite;
+}
+
+.spinner::after {
+  width: 60%;
+  height: 60%;
+  top: 20%;
+  left: 20%;
+  border: 2px solid hsl(var(--border) / 0.5);
+  border-bottom-color: hsl(var(--primary) / 0.7);
+  animation: spin-reverse 0.65s cubic-bezier(0.5, 0.1, 0.5, 0.9) infinite;
 }
 
 @keyframes spin {
   to { transform: rotate(360deg); }
+}
+
+@keyframes spin-reverse {
+  to { transform: rotate(-360deg); }
+}
+
+/* Spinner size variants */
+.spinner-sm {
+  width: 24px;
+  height: 24px;
+}
+
+.spinner-sm::before {
+  border-width: 2px;
+}
+
+.spinner-sm::after {
+  border-width: 1.5px;
+}
+
+.spinner-lg {
+  width: 56px;
+  height: 56px;
+}
+
+.spinner-lg::before {
+  border-width: 4px;
+}
+
+.spinner-lg::after {
+  border-width: 3px;
+}
+
+/* Inline spinner for buttons */
+.spinner-inline {
+  width: 16px;
+  height: 16px;
+  display: inline-block;
+  vertical-align: middle;
+}
+
+.spinner-inline::before {
+  border-width: 2px;
+}
+
+.spinner-inline::after {
+  border-width: 1.5px;
+}
+
+/* Loading text */
+.loading-text {
+  font-size: 0.875rem;
+  color: hsl(var(--foreground-muted));
+  margin-top: 0.5rem;
+}
+
+/* Loading dots animation */
+.loading-dots {
+  display: inline-flex;
+  gap: 4px;
+}
+
+.loading-dots span {
+  width: 6px;
+  height: 6px;
+  background: hsl(var(--primary));
+  border-radius: 50%;
+  animation: loading-dots 1.4s infinite ease-in-out both;
+}
+
+.loading-dots span:nth-child(1) {
+  animation-delay: -0.32s;
+}
+
+.loading-dots span:nth-child(2) {
+  animation-delay: -0.16s;
+}
+
+@keyframes loading-dots {
+  0%, 80%, 100% {
+    transform: scale(0.6);
+    opacity: 0.5;
+  }
+  40% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+/* Progress bar loading */
+.progress-bar {
+  width: 100%;
+  height: 4px;
+  background: hsl(var(--background-muted));
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.progress-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, hsl(var(--primary)) 0%, hsl(271 91% 65%) 100%);
+  border-radius: 2px;
+  transition: width 0.3s ease;
+}
+
+.progress-bar-indeterminate .progress-bar-fill {
+  width: 30%;
+  animation: progress-indeterminate 1.5s infinite ease-in-out;
+}
+
+@keyframes progress-indeterminate {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(400%);
+  }
+}
+
+/* Loading overlay */
+.loading-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: hsl(var(--background) / 0.8);
+  backdrop-filter: blur(4px);
+  z-index: 10;
+  border-radius: inherit;
 }
 
 /* ===============================
@@ -2044,20 +2236,21 @@ body {
   background: linear-gradient(
     90deg,
     hsl(var(--background-muted)) 0%,
-    hsl(var(--background-hover)) 20%,
-    hsl(var(--background-muted)) 40%,
+    hsl(var(--background-hover)) 25%,
+    hsl(var(--foreground-subtle) / 0.15) 50%,
+    hsl(var(--background-hover)) 75%,
     hsl(var(--background-muted)) 100%
   );
-  background-size: 200% 100%;
-  animation: skeleton-wave 1.5s linear infinite;
+  background-size: 400% 100%;
+  animation: skeleton-wave 2s ease-in-out infinite;
 }
 
 @keyframes skeleton-wave {
   0% {
-    background-position: 200% 0;
+    background-position: 100% 50%;
   }
   100% {
-    background-position: -200% 0;
+    background-position: 0% 50%;
   }
 }
 

@@ -213,6 +213,13 @@ type WorkerConfig struct {
 	DaemonMode         bool              `json:"daemon_mode"`
 	WorkerDir          string            `json:"worker_dir"`
 	Environment        map[string]string `json:"environment,omitempty"`
+	// System info for UI display
+	Version            string            `json:"version,omitempty"`
+	BuildCommit        string            `json:"build_commit,omitempty"`
+	BuildDate          string            `json:"build_date,omitempty"`
+	GoVersion          string            `json:"go_version,omitempty"`
+	OS                 string            `json:"os,omitempty"`
+	Arch               string            `json:"arch,omitempty"`
 }
 
 // ActionResponse is returned by action endpoints
