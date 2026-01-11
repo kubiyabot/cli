@@ -112,20 +112,17 @@ func TestRecallMemory(t *testing.T) {
 			name: "successful recall",
 			request: &entities.MemoryRecallRequest{
 				Query: "AWS configuration",
-				TopK:  10,
 			},
 			mockResponse: &entities.MemoryRecallResponse{
 				Results: []entities.MemorySearchResult{
 					{
-						Memory: entities.Memory{
-							MemoryID: "mem_123",
-							Context: entities.MemoryContext{
-								Title:   "AWS Config",
-								Content: "Region: us-east-1",
-								Tags:    []string{"aws"},
-							},
+						Content:         "Region: us-east-1",
+						SimilarityScore: 0.95,
+						Metadata: map[string]interface{}{
+							"title": "AWS Config",
+							"tags":  []string{"aws"},
 						},
-						Score: 0.95,
+						Source: "test",
 					},
 				},
 				Query: "AWS configuration",
@@ -138,7 +135,6 @@ func TestRecallMemory(t *testing.T) {
 			name: "recall with filters",
 			request: &entities.MemoryRecallRequest{
 				Query:    "database",
-				TopK:     5,
 				Tags:     []string{"production"},
 				MinScore: 0.7,
 			},
@@ -268,13 +264,15 @@ func TestGetMemoryJobStatus(t *testing.T) {
 	tests := []struct {
 		name           string
 		jobID          string
+		datasetID      string
 		mockResponse   *entities.MemoryJobStatus
 		mockStatusCode int
 		expectError    bool
 	}{
 		{
-			name:  "successful status check",
-			jobID: "job_123",
+			name:      "successful status check",
+			jobID:     "job_123",
+			datasetID: "ds_123",
 			mockResponse: &entities.MemoryJobStatus{
 				JobID:    "job_123",
 				Status:   "completed",
@@ -285,8 +283,9 @@ func TestGetMemoryJobStatus(t *testing.T) {
 			expectError:    false,
 		},
 		{
-			name:  "processing status",
-			jobID: "job_456",
+			name:      "processing status",
+			jobID:     "job_456",
+			datasetID: "ds_456",
 			mockResponse: &entities.MemoryJobStatus{
 				JobID:    "job_456",
 				Status:   "processing",
@@ -298,6 +297,7 @@ func TestGetMemoryJobStatus(t *testing.T) {
 		{
 			name:           "job not found",
 			jobID:          "job_999",
+			datasetID:      "ds_999",
 			mockStatusCode: http.StatusNotFound,
 			expectError:    true,
 		},
@@ -308,6 +308,7 @@ func TestGetMemoryJobStatus(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				assert.Equal(t, "GET", r.Method)
 				assert.Equal(t, "/api/v1/context-graph/api/v1/graph/memory/status/"+tt.jobID, r.URL.Path)
+				assert.Equal(t, tt.datasetID, r.URL.Query().Get("dataset_id"))
 				assert.Equal(t, "Bearer test-api-key", r.Header.Get("Authorization"))
 
 				w.WriteHeader(tt.mockStatusCode)
@@ -320,7 +321,7 @@ func TestGetMemoryJobStatus(t *testing.T) {
 			client, err := NewWithURL("test-api-key", server.URL, false)
 			require.NoError(t, err)
 
-			result, err := client.GetMemoryJobStatus(tt.jobID)
+			result, err := client.GetMemoryJobStatus(tt.jobID, tt.datasetID)
 
 			if tt.expectError {
 				assert.Error(t, err)

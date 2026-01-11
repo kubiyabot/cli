@@ -181,7 +181,6 @@ func newMemoryRecallCommand(cfg *config.Config) *cobra.Command {
 	var (
 		query        string
 		tags         []string
-		topK         int
 		minScore     float64
 		searchType   string
 		outputFormat string
@@ -198,7 +197,7 @@ and set minimum similarity scores.`,
   kubiya memory recall "AWS configuration"
 
   # Recall with filters
-  kubiya memory recall "database setup" --tags production --top-k 5
+  kubiya memory recall "database setup" --tags production
 
   # Recall with minimum score
   kubiya memory recall "deployment process" --min-score 0.7
@@ -231,7 +230,6 @@ and set minimum similarity scores.`,
 			req := &entities.MemoryRecallRequest{
 				Query:      query,
 				Tags:       tags,
-				TopK:       topK,
 				MinScore:   minScore,
 				SearchType: searchType,
 			}
@@ -307,7 +305,6 @@ and set minimum similarity scores.`,
 
 	cmd.Flags().StringVar(&query, "query", "", "Search query")
 	cmd.Flags().StringSliceVar(&tags, "tags", nil, "Filter by tags (comma-separated)")
-	cmd.Flags().IntVar(&topK, "top-k", 10, "Number of results to return")
 	cmd.Flags().Float64Var(&minScore, "min-score", 0.0, "Minimum similarity score (0.0-1.0)")
 	cmd.Flags().StringVar(&searchType, "search-type", "", "Search type: GRAPH_COMPLETION, TEMPORAL, FEEDBACK, RAG_COMPLETION, CHUNKS")
 	cmd.Flags().StringVarP(&outputFormat, "output", "o", "", "Output format (json, yaml)")
@@ -404,20 +401,27 @@ func newMemoryListCommand(cfg *config.Config) *cobra.Command {
 }
 
 func newMemoryStatusCommand(cfg *config.Config) *cobra.Command {
-	var outputFormat string
+	var (
+		outputFormat string
+		datasetID    string
+	)
 
 	cmd := &cobra.Command{
 		Use:   "status <job-id>",
 		Short: "Check memory job status",
 		Long:  `Check the status of an async memory processing job.`,
 		Example: `  # Check job status
-  kubiya memory status job_abc123
+  kubiya memory status job_abc123 --dataset-id abc-123
 
   # Output as JSON
-  kubiya memory status job_abc123 --output json`,
+  kubiya memory status job_abc123 --dataset-id abc-123 --output json`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			jobID := args[0]
+
+			if datasetID == "" {
+				return fmt.Errorf("--dataset-id is required")
+			}
 
 			// Create client
 			client, err := controlplane.New(cfg.APIKey, cfg.Debug)
@@ -426,7 +430,7 @@ func newMemoryStatusCommand(cfg *config.Config) *cobra.Command {
 			}
 
 			// Get job status
-			status, err := client.GetMemoryJobStatus(jobID)
+			status, err := client.GetMemoryJobStatus(jobID, datasetID)
 			if err != nil {
 				return fmt.Errorf("failed to get job status: %w", err)
 			}
@@ -466,6 +470,7 @@ func newMemoryStatusCommand(cfg *config.Config) *cobra.Command {
 	}
 
 	cmd.Flags().StringVarP(&outputFormat, "output", "o", "", "Output format (json, yaml)")
+	cmd.Flags().StringVar(&datasetID, "dataset-id", "", "Dataset ID (required)")
 
 	return cmd
 }

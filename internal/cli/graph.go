@@ -45,6 +45,10 @@ Use this to understand your organization's infrastructure and context.`,
 
   # List integrations
   kubiya graph integrations list`,
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return cmd.Help()
+		},
 	}
 
 	// Add subcommands
@@ -142,6 +146,10 @@ func newGraphNodesCommand(cfg *config.Config) *cobra.Command {
 		Use:   "nodes",
 		Short: "Manage and query graph nodes",
 		Long:  `Query and explore nodes in the context graph.`,
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return cmd.Help()
+		},
 	}
 
 	cmd.AddCommand(
@@ -621,6 +629,10 @@ func newGraphIntegrationsCommand(cfg *config.Config) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "integrations",
 		Short: "Manage graph integrations",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return cmd.Help()
+		},
 	}
 
 	cmd.AddCommand(newGraphIntegrationsListCommand(cfg))
