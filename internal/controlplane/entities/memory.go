@@ -34,7 +34,6 @@ type MemoryStoreResponse struct {
 // MemoryRecallRequest represents the request to recall memories
 type MemoryRecallRequest struct {
 	Query      string   `json:"query"`
-	TopK       int      `json:"top_k,omitempty"`
 	Tags       []string `json:"tags,omitempty"`
 	MinScore   float64  `json:"min_score,omitempty"`
 	SearchType string   `json:"search_type,omitempty"`

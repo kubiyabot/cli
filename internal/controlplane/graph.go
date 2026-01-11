@@ -98,9 +98,12 @@ func (c *Client) ListNodes(integration string, skip, limit int) ([]GraphNode, er
 		path += fmt.Sprintf("&integration=%s", integration)
 	}
 
-	var nodes []GraphNode
-	err := c.get(path, &nodes)
-	return nodes, err
+	var response struct {
+		Nodes []GraphNode `json:"nodes"`
+		Count int         `json:"count"`
+	}
+	err := c.get(path, &response)
+	return response.Nodes, err
 }
 
 // SearchNodes searches for nodes in the graph
@@ -110,9 +113,12 @@ func (c *Client) SearchNodes(req *NodeSearchRequest, integration string, skip, l
 		path += fmt.Sprintf("&integration=%s", integration)
 	}
 
-	var nodes []GraphNode
-	err := c.post(path, req, &nodes)
-	return nodes, err
+	var response struct {
+		Nodes []GraphNode `json:"nodes"`
+		Count int         `json:"count"`
+	}
+	err := c.post(path, req, &response)
+	return response.Nodes, err
 }
 
 // GetNode retrieves a specific node by ID
@@ -151,9 +157,12 @@ func (c *Client) SearchNodesByText(req *TextSearchRequest, integration string, s
 		path += fmt.Sprintf("&integration=%s", integration)
 	}
 
-	var nodes []GraphNode
-	err := c.post(path, req, &nodes)
-	return nodes, err
+	var response struct {
+		Nodes []GraphNode `json:"nodes"`
+		Count int         `json:"count"`
+	}
+	err := c.post(path, req, &response)
+	return response.Nodes, err
 }
 
 // GetSubgraph retrieves a subgraph starting from a node
@@ -222,13 +231,28 @@ func (c *Client) ListIntegrations(skip, limit int) ([]Integration, error) {
 	return integrations, nil
 }
 
+// CustomQueryResponse represents the response from a custom Cypher query
+type CustomQueryResponse struct {
+	Results []map[string]interface{} `json:"results"`
+	Count   int                      `json:"count"`
+}
+
 // ExecuteCustomQuery executes a custom Cypher query (read-only)
 func (c *Client) ExecuteCustomQuery(req *CustomQueryRequest) ([]map[string]interface{}, error) {
-	path := "/api/v1/context-graph/api/v1/graph/query"
+	// Get context graph API base URL
+	config, err := c.GetClientConfig()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get client config: %w", err)
+	}
 
-	var results []map[string]interface{}
-	err := c.post(path, req, &results)
-	return results, err
+	path := config.ContextGraphAPIBase + "/api/v1/graph/query"
+
+	var response CustomQueryResponse
+	err = c.post(path, req, &response)
+	if err != nil {
+		return nil, err
+	}
+	return response.Results, nil
 }
 
 // ============================================================================

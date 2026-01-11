@@ -62,14 +62,14 @@ func (c *Client) ListMemories() ([]*entities.Memory, error) {
 }
 
 // GetMemoryJobStatus checks the status of an async memory job
-func (c *Client) GetMemoryJobStatus(jobID string) (*entities.MemoryJobStatus, error) {
+func (c *Client) GetMemoryJobStatus(jobID, datasetID string) (*entities.MemoryJobStatus, error) {
 	// Get context graph API base URL
 	config, err := c.GetClientConfig()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get client config: %w", err)
 	}
 
-	path := fmt.Sprintf("%s/api/v1/graph/memory/status/%s", config.ContextGraphAPIBase, jobID)
+	path := fmt.Sprintf("%s/api/v1/graph/memory/status/%s?dataset_id=%s", config.ContextGraphAPIBase, jobID, datasetID)
 
 	var status entities.MemoryJobStatus
 	if err := c.get(path, &status); err != nil {
