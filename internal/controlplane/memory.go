@@ -43,15 +43,15 @@ func (c *Client) RecallMemory(req *entities.MemoryRecallRequest) (*entities.Memo
 	return &resp, nil
 }
 
-// ListMemories lists all memories for the authenticated user
-func (c *Client) ListMemories() ([]*entities.Memory, error) {
+// ListMemories lists all memories for a specific dataset
+func (c *Client) ListMemories(datasetID string) ([]*entities.Memory, error) {
 	// Get context graph API base URL
 	config, err := c.GetClientConfig()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get client config: %w", err)
 	}
 
-	path := config.ContextGraphAPIBase + "/api/v1/graph/memory/list"
+	path := fmt.Sprintf("%s/api/v1/graph/memory/list?dataset_id=%s", config.ContextGraphAPIBase, datasetID)
 
 	var memories []*entities.Memory
 	if err := c.get(path, &memories); err != nil {

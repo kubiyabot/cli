@@ -25,13 +25,13 @@ func newMemoryCommand(cfg *config.Config) *cobra.Command {
 Cognitive memory allows you to store and recall context using semantic search,
 enabling your agents to remember and learn from past interactions.`,
 		Example: `  # Store a memory
-  kubiya memory store --title "AWS Setup" --content "Region: us-east-1"
+  kubiya memory store --title "AWS Setup" --content "Region: us-east-1" --dataset-id abc-123
 
   # Recall memories
   kubiya memory recall "AWS configuration"
 
-  # List all memories
-  kubiya memory list
+  # List memories in a dataset
+  kubiya memory list --dataset-id abc-123
 
   # Manage datasets
   kubiya memory dataset create --name "production-context" --scope org`,
@@ -313,21 +313,28 @@ and set minimum similarity scores.`,
 }
 
 func newMemoryListCommand(cfg *config.Config) *cobra.Command {
-	var outputFormat string
+	var (
+		outputFormat string
+		datasetID    string
+	)
 
 	cmd := &cobra.Command{
 		Use:   "list",
-		Short: "List all stored memories",
-		Long:  `List all memories stored in your organization's context graph.`,
-		Example: `  # List all memories
-  kubiya memory list
+		Short: "List memories in a dataset",
+		Long:  `List all memories stored in a specific dataset.`,
+		Example: `  # List memories in a dataset
+  kubiya memory list --dataset-id abc-123
 
   # List as JSON
-  kubiya memory list --output json
+  kubiya memory list --dataset-id abc-123 --output json
 
   # List as YAML
-  kubiya memory list --output yaml`,
+  kubiya memory list --dataset-id abc-123 --output yaml`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if datasetID == "" {
+				return fmt.Errorf("--dataset-id is required")
+			}
+
 			// Create client
 			client, err := controlplane.New(cfg.APIKey, cfg.Debug)
 			if err != nil {
@@ -335,7 +342,7 @@ func newMemoryListCommand(cfg *config.Config) *cobra.Command {
 			}
 
 			// List memories
-			memories, err := client.ListMemories()
+			memories, err := client.ListMemories(datasetID)
 			if err != nil {
 				return fmt.Errorf("failed to list memories: %w", err)
 			}
@@ -395,6 +402,7 @@ func newMemoryListCommand(cfg *config.Config) *cobra.Command {
 		},
 	}
 
+	cmd.Flags().StringVar(&datasetID, "dataset-id", "", "Dataset ID (required)")
 	cmd.Flags().StringVarP(&outputFormat, "output", "o", "", "Output format (json, yaml, table)")
 
 	return cmd

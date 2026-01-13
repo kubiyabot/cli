@@ -191,12 +191,14 @@ func TestRecallMemory(t *testing.T) {
 func TestListMemories(t *testing.T) {
 	tests := []struct {
 		name           string
+		datasetID      string
 		mockResponse   []*entities.Memory
 		mockStatusCode int
 		expectError    bool
 	}{
 		{
-			name: "successful list",
+			name:      "successful list",
+			datasetID: "ds_123",
 			mockResponse: []*entities.Memory{
 				{
 					MemoryID: "mem_123",
@@ -218,12 +220,14 @@ func TestListMemories(t *testing.T) {
 		},
 		{
 			name:           "empty list",
+			datasetID:      "ds_456",
 			mockResponse:   []*entities.Memory{},
 			mockStatusCode: http.StatusOK,
 			expectError:    false,
 		},
 		{
 			name:           "api error",
+			datasetID:      "ds_789",
 			mockStatusCode: http.StatusUnauthorized,
 			expectError:    true,
 		},
@@ -234,6 +238,7 @@ func TestListMemories(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				assert.Equal(t, "GET", r.Method)
 				assert.Equal(t, "/api/v1/context-graph/api/v1/graph/memory/list", r.URL.Path)
+				assert.Equal(t, tt.datasetID, r.URL.Query().Get("dataset_id"))
 				assert.Equal(t, "Bearer test-api-key", r.Header.Get("Authorization"))
 
 				w.WriteHeader(tt.mockStatusCode)
@@ -246,7 +251,7 @@ func TestListMemories(t *testing.T) {
 			client, err := NewWithURL("test-api-key", server.URL, false)
 			require.NoError(t, err)
 
-			result, err := client.ListMemories()
+			result, err := client.ListMemories(tt.datasetID)
 
 			if tt.expectError {
 				assert.Error(t, err)
