@@ -591,7 +591,7 @@ func (ec *ExecCommand) executeLocal(ctx context.Context, plan *kubiya.PlanRespon
 		fmt.Println("🧹 Cleaning up ephemeral queue...")
 
 		maxRetries := 5
-		retryDelay := 2 * time.Second
+		retryDelay := 500 * time.Millisecond // Fast retries for quick cleanup
 
 		for i := 0; i < maxRetries; i++ {
 			// Check if there are still workers registered
@@ -730,10 +730,10 @@ func (ec *ExecCommand) executeLocal(ctx context.Context, plan *kubiya.PlanRespon
 		select {
 		case <-workerErrChan:
 			close(workerExited)
-		case <-time.After(20 * time.Second):
-			// Worker should exit within 15-20 seconds after execution completes:
-			// - 9s for 3 consecutive completion checks (3 checks × 3s)
-			// - 5s grace period for SSE stream completion
+		case <-time.After(10 * time.Second):
+			// Worker should exit within 6-10 seconds after execution completes:
+			// - 4s for 2 consecutive completion checks (2 checks × 2s)
+			// - 2s grace period for SSE stream completion
 			// - Buffer for final cleanup and process exit
 			// If it doesn't, proceed with cleanup anyway
 			close(workerExited)
@@ -745,8 +745,7 @@ func (ec *ExecCommand) executeLocal(ctx context.Context, plan *kubiya.PlanRespon
 	case <-workerExited:
 		fmt.Println("✓ Worker shut down")
 		// Brief pause to allow worker to fully unregister from queue
-		// Reduced from 3s to 1s since Python worker handles cleanup
-		time.Sleep(1 * time.Second)
+		time.Sleep(200 * time.Millisecond)
 	case reason := <-shutdownChan:
 		if reason == "force-killed" {
 			// Force kill was triggered - give worker process a brief moment to be killed
@@ -788,6 +787,17 @@ func (ec *ExecCommand) executeLocal(ctx context.Context, plan *kubiya.PlanRespon
 			err = workerErr
 		}
 	default:
+	}
+
+	// Stop signal notification - the signal handler goroutine is blocked on <-sigChan
+	// and won't exit on its own. We need to stop the notification to allow cleanup.
+	signal.Stop(sigChan)
+
+	// In local execution mode, exit immediately with success code if no error
+	// This ensures the CLI exits cleanly without waiting for lingering goroutines
+	// (same pattern used in worker_start.go for SingleExecutionMode)
+	if err == nil {
+		os.Exit(0)
 	}
 
 	return err
@@ -918,7 +928,7 @@ func (ec *ExecCommand) waitForWorkerReady(ctx context.Context, queueID string, t
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	ticker := time.NewTicker(2 * time.Second) // Less frequent polling
+	ticker := time.NewTicker(500 * time.Millisecond) // Fast polling for quick worker detection
 	defer ticker.Stop()
 
 	startTime := time.Now()
