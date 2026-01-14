@@ -51,6 +51,9 @@ func NewExecCommand(cfg *config.Config) *cobra.Command {
 		packageSource    string // For local mode: specify worker package source
 		localWheel       string // For local mode: path to local wheel file
 		cwd              string // Working directory for execution
+
+		// Entity matching flag
+		findEntity string // --find: Fuzzy entity matching pattern
 	)
 
 	cmd := &cobra.Command{
@@ -71,6 +74,11 @@ All plans are automatically saved to ~/.kubiya/plans/ for future reference.`,
   kubiya exec "Deploy my app to production"
   kubiya exec "Analyze security vulnerabilities in my cluster"
   kubiya exec "Create a new microservice with tests" --yes
+
+  # Fuzzy entity matching (bypasses planner)
+  kubiya exec --find "kubernetes" "Deploy my app"
+  kubiya exec -f "k8s-deploy" "Check pod status"
+  kubiya exec --find "security" "Scan for vulnerabilities"
 
   # Streaming is enabled by default - see live tool calls and agent reasoning
   kubiya exec "Deploy my app"                       # Formatted text output with tool inputs/outputs
@@ -141,12 +149,22 @@ All plans are automatically saved to ~/.kubiya/plans/ for future reference.`,
 				PackageSource:   packageSource,
 				LocalWheel:      localWheel,
 				Cwd:             cwd,
+				FindEntity:      findEntity,
 			}
 
 			// Route based on input
 			if planFile != "" {
 				// Load existing plan
 				return executor.ExecuteFromPlan(cmd.Context(), planFile)
+			}
+
+			// Fuzzy entity matching mode
+			if findEntity != "" {
+				prompt := strings.Join(args, " ")
+				if prompt == "" {
+					return fmt.Errorf("prompt is required")
+				}
+				return executor.ExecuteWithEntityMatching(cmd.Context(), findEntity, prompt)
 			}
 
 			// Parse arguments
@@ -201,6 +219,9 @@ All plans are automatically saved to ~/.kubiya/plans/ for future reference.`,
 	cmd.Flags().StringVar(&localWheel, "local-wheel", "", "Path to local wheel file for local mode (for development/testing)")
 	cmd.Flags().StringVar(&cwd, "cwd", "", "Working directory for execution (overrides default workspace)")
 
+	// Entity matching flag
+	cmd.Flags().StringVarP(&findEntity, "find", "f", "", "Find agent/team by fuzzy name matching (bypasses planner)")
+
 	return cmd
 }
 
@@ -235,6 +256,9 @@ type ExecCommand struct {
 	PackageSource   string   // --package-source: Worker package source for local mode
 	LocalWheel      string   // --local-wheel: Path to local wheel file for local mode
 	Cwd             string   // --cwd: Working directory for execution
+
+	// Entity matching flag
+	FindEntity string // --find: Fuzzy entity matching pattern
 }
 
 // ExecuteWithPlanning runs the full planning workflow
@@ -1192,6 +1216,80 @@ func (ec *ExecCommand) ExecuteDirect(ctx context.Context, entityType, entityID, 
 
 	// Stream output
 	return ec.streamExecutionOutput(ctx, execution.GetID())
+}
+
+// ExecuteWithEntityMatching finds an agent/team by fuzzy name matching and executes
+func (ec *ExecCommand) ExecuteWithEntityMatching(ctx context.Context, pattern, prompt string) error {
+	fmt.Println()
+	fmt.Println(style.CreateTaskHeader(prompt))
+	fmt.Println()
+
+	fmt.Printf("🔍 Searching for entities matching %s...\n\n", style.HighlightStyle.Render(pattern))
+
+	// Fetch all agents and teams
+	agents, err := ec.client.ListAgents()
+	if err != nil {
+		return fmt.Errorf("failed to list agents: %w", err)
+	}
+
+	teams, err := ec.client.ListTeams()
+	if err != nil {
+		return fmt.Errorf("failed to list teams: %w", err)
+	}
+
+	// Find matches using fuzzy matching
+	matcher := NewEntityMatcher(agents, teams)
+	matches := matcher.FindMatches(pattern, 0.5) // 50% threshold
+
+	if len(matches) == 0 {
+		fmt.Printf("❌ No agents or teams found matching %s\n\n", style.HighlightStyle.Render(pattern))
+		fmt.Println("💡 Try a different search term or use 'kubiya agent list' to see available agents.")
+		return fmt.Errorf("no matches found for pattern: %s", pattern)
+	}
+
+	// Select entity based on number of matches and mode
+	var selected *EntityMatch
+
+	if len(matches) == 1 {
+		// Single match - auto-select
+		selected = &matches[0]
+		fmt.Printf("✓ Found match: %s %s\n\n", getEntityIcon(selected.EntityType), style.HighlightStyle.Render(selected.EntityName))
+	} else if ec.nonInteractive {
+		// Non-interactive mode - use best match
+		selected = &matches[0]
+		fmt.Printf("Found %d matches, using best match: %s %s (Score: %.0f%%)\n\n",
+			len(matches), getEntityIcon(selected.EntityType), style.HighlightStyle.Render(selected.EntityName), selected.Score*100)
+	} else {
+		// Interactive mode - show selector
+		fmt.Printf("Found %d matches:\n\n", len(matches))
+
+		var err error
+		selected, err = ShowEntitySelector(matches)
+		if err != nil {
+			return fmt.Errorf("entity selection failed: %w", err)
+		}
+		if selected == nil {
+			return fmt.Errorf("entity selection cancelled")
+		}
+		fmt.Println()
+	}
+
+	// Execute with selected entity
+	fmt.Println(style.CreateDivider(80))
+	fmt.Println()
+	fmt.Printf("⚡ %s\n", style.BoldStyle.Render("Direct Execution"))
+	fmt.Println()
+	fmt.Printf("%s Using %s: %s\n\n", getEntityIcon(selected.EntityType), selected.EntityType, style.HighlightStyle.Render(selected.EntityName))
+
+	return ec.ExecuteDirect(ctx, selected.EntityType, selected.EntityID, prompt)
+}
+
+// getEntityIcon returns the icon for an entity type
+func getEntityIcon(entityType string) string {
+	if entityType == "team" {
+		return "👥"
+	}
+	return "🤖"
 }
 
 // resolveQueueIDs resolves queue IDs from either --queue or --queue-name flags
