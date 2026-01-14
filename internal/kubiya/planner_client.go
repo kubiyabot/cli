@@ -90,44 +90,98 @@ func (pc *PlannerClient) StreamPlanProgress(ctx context.Context, req *PlanReques
 			return
 		}
 
-		// Create SSE request
-		sseURL := fmt.Sprintf("%s/api/v1/tasks/plan/stream", pc.client.GetBaseURL())
-		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, sseURL, bytes.NewBuffer(reqBody))
-		if err != nil {
-			errChan <- fmt.Errorf("failed to create request: %w", err)
+		// Retry configuration for transient errors (502, 503, 504, connection errors)
+		maxRetries := 3
+		baseDelay := 2 * time.Second
+
+		var resp *http.Response
+		var lastErr error
+
+		for attempt := 0; attempt <= maxRetries; attempt++ {
+			if attempt > 0 {
+				// Exponential backoff: 2s, 4s, 8s
+				delay := baseDelay * time.Duration(1<<(attempt-1))
+				select {
+				case <-time.After(delay):
+				case <-ctx.Done():
+					errChan <- ctx.Err()
+					return
+				}
+
+				// Send retry event to UI
+				select {
+				case eventChan <- PlanStreamEvent{
+					Type: "progress",
+					Data: map[string]interface{}{
+						"stage":   "retrying",
+						"message": fmt.Sprintf("Retrying request (attempt %d/%d)...", attempt+1, maxRetries+1),
+					},
+				}:
+				case <-ctx.Done():
+					errChan <- ctx.Err()
+					return
+				}
+			}
+
+			// Create SSE request (must recreate for each attempt since body is consumed)
+			sseURL := fmt.Sprintf("%s/api/v1/tasks/plan/stream", pc.client.GetBaseURL())
+			httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, sseURL, bytes.NewBuffer(reqBody))
+			if err != nil {
+				errChan <- fmt.Errorf("failed to create request: %w", err)
+				return
+			}
+
+			// Set SSE headers
+			httpReq.Header.Set("Accept", "text/event-stream")
+			httpReq.Header.Set("Content-Type", "application/json")
+			httpReq.Header.Set("Cache-Control", "no-cache")
+			httpReq.Header.Set("Connection", "keep-alive")
+
+			// IMPORTANT: Add Authorization header (required for backend)
+			if pc.client.cfg.APIKey != "" {
+				httpReq.Header.Set("Authorization", fmt.Sprintf("UserKey %s", pc.client.cfg.APIKey))
+			}
+
+			// Execute request with no timeout for streaming
+			httpClient := &http.Client{
+				Timeout: 0, // No timeout for SSE streams
+			}
+			resp, err = httpClient.Do(httpReq)
+			if err != nil {
+				lastErr = fmt.Errorf("failed to execute request: %w", err)
+				continue // Retry on connection errors
+			}
+
+			// Check for retryable status codes (502, 503, 504)
+			if resp.StatusCode == http.StatusBadGateway ||
+				resp.StatusCode == http.StatusServiceUnavailable ||
+				resp.StatusCode == http.StatusGatewayTimeout {
+				body, _ := io.ReadAll(resp.Body)
+				resp.Body.Close()
+				lastErr = fmt.Errorf("server returned status %d: %s", resp.StatusCode, string(body))
+				continue // Retry on server errors
+			}
+
+			// Non-retryable error
+			if resp.StatusCode != http.StatusOK {
+				body, _ := io.ReadAll(resp.Body)
+				resp.Body.Close()
+				errChan <- fmt.Errorf("unexpected status code: %d, body: %s", resp.StatusCode, string(body))
+				return
+			}
+
+			// Success - break out of retry loop
+			lastErr = nil
+			break
+		}
+
+		// If all retries failed
+		if lastErr != nil {
+			errChan <- fmt.Errorf("request failed after %d retries: %w", maxRetries+1, lastErr)
 			return
 		}
 
-		// Set SSE headers
-		httpReq.Header.Set("Accept", "text/event-stream")
-		httpReq.Header.Set("Content-Type", "application/json")
-		httpReq.Header.Set("Cache-Control", "no-cache")
-		httpReq.Header.Set("Connection", "keep-alive")
-
-		// IMPORTANT: Add Authorization header (required for backend)
-		// The backend expects: "Authorization: Bearer <token>" or "Authorization: UserKey <token>"
-		if pc.client.cfg.APIKey != "" {
-			httpReq.Header.Set("Authorization", fmt.Sprintf("UserKey %s", pc.client.cfg.APIKey))
-		}
-
-		// Execute request with no timeout for streaming
-		// Note: We can't use pc.client.client here because it has a 30s timeout
-		// SSE streams need no timeout, but we need the auth header added above
-		httpClient := &http.Client{
-			Timeout: 0, // No timeout for SSE streams
-		}
-		resp, err := httpClient.Do(httpReq)
-		if err != nil {
-			errChan <- fmt.Errorf("failed to execute request: %w", err)
-			return
-		}
 		defer resp.Body.Close()
-
-		if resp.StatusCode != http.StatusOK {
-			body, _ := io.ReadAll(resp.Body)
-			errChan <- fmt.Errorf("unexpected status code: %d, body: %s", resp.StatusCode, string(body))
-			return
-		}
 
 		// Parse SSE stream
 		reader := bufio.NewReader(resp.Body)
@@ -137,9 +191,16 @@ func (pc *PlannerClient) StreamPlanProgress(ctx context.Context, req *PlanReques
 			line, err := reader.ReadString('\n')
 			if err != nil {
 				if err == io.EOF {
-					return // Stream completed
+					// Stream completed - close eventChan first to signal completion
+					// Note: The deferred close will handle cleanup
+					return
 				}
-				errChan <- fmt.Errorf("stream read error: %w", err)
+				// Only send error for non-EOF errors
+				select {
+				case errChan <- fmt.Errorf("stream read error: %w", err):
+				default:
+					// Channel might be full or closed
+				}
 				return
 			}
 

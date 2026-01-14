@@ -261,6 +261,15 @@ func (m planProgressModel) handleSSEEvent(event kubiya.PlanStreamEvent) (tea.Mod
 			m.done = true
 			m.progressPercent = 100
 			return m, tea.Quit
+		} else {
+			// Plan data was not in expected format or is missing
+			m.done = true
+			if event.Data["plan"] == nil {
+				m.err = fmt.Errorf("complete event received but plan data is missing")
+			} else {
+				m.err = fmt.Errorf("complete event received but plan data is in unexpected format: %T", event.Data["plan"])
+			}
+			return m, tea.Quit
 		}
 
 	case "error":
@@ -429,10 +438,18 @@ func waitForSSEEvent(eventChan <-chan kubiya.PlanStreamEvent, errChan <-chan err
 		case event, ok := <-eventChan:
 			if !ok {
 				// Channel closed, treat as completion
-				return sseErrorMsg{err: fmt.Errorf("event stream closed unexpectedly")}
+				return sseErrorMsg{err: fmt.Errorf("event stream closed unexpectedly without sending complete event")}
 			}
 			return sseEventMsg{event: event}
-		case err := <-errChan:
+		case err, ok := <-errChan:
+			if !ok {
+				// Error channel closed without sending error - stream ended unexpectedly
+				return sseErrorMsg{err: fmt.Errorf("error channel closed unexpectedly")}
+			}
+			if err == nil {
+				// Nil error received - treat as unexpected stream end
+				return sseErrorMsg{err: fmt.Errorf("stream ended without plan data")}
+			}
 			return sseErrorMsg{err: err}
 		}
 	}
@@ -509,7 +526,7 @@ func runPlanProgressTUI(ctx context.Context, eventChan <-chan kubiya.PlanStreamE
 	m := finalModel.(planProgressModel)
 	if m.err != nil {
 		// Print error log
-		fmt.Printf("\n❌ Error: %s\n\n", m.err.Error())
+		fmt.Printf("\n❌ Error: %v\n\n", m.err)
 		return nil, m.err
 	}
 	if m.plan == nil {
@@ -630,6 +647,14 @@ func runPlanProgressLogger(ctx context.Context, eventChan <-chan kubiya.PlanStre
 					plan = &planObj
 					printPlanCompletionLog(plan)
 					return plan, nil
+				} else {
+					// Plan data was not in expected format or is missing
+					if event.Data["plan"] == nil {
+						fmt.Printf("\n❌ Error: complete event received but plan data is missing\n\n")
+						return nil, fmt.Errorf("complete event received but plan data is missing")
+					}
+					fmt.Printf("\n❌ Error: complete event received but plan data is in unexpected format: %T\n\n", event.Data["plan"])
+					return nil, fmt.Errorf("complete event received but plan data is in unexpected format: %T", event.Data["plan"])
 				}
 
 			case "error":
@@ -643,7 +668,23 @@ func runPlanProgressLogger(ctx context.Context, eventChan <-chan kubiya.PlanStre
 				return nil, fmt.Errorf("planning error: %s", errMsg)
 			}
 
-		case err := <-errChan:
+		case err, ok := <-errChan:
+			if !ok {
+				// Error channel closed without plan - stream ended unexpectedly
+				if plan == nil {
+					fmt.Printf("\n❌ Error: stream ended unexpectedly without plan data\n\n")
+					return nil, fmt.Errorf("stream ended unexpectedly without plan data")
+				}
+				return plan, nil
+			}
+			if err == nil {
+				// Nil error - stream completed but plan might not have been received yet
+				if plan == nil {
+					fmt.Printf("\n❌ Error: stream completed without plan data\n\n")
+					return nil, fmt.Errorf("stream completed without plan data")
+				}
+				return plan, nil
+			}
 			fmt.Printf("\n❌ Error: %v\n\n", err)
 			return nil, err
 
