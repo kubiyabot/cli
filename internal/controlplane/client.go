@@ -38,7 +38,7 @@ func NewWithURL(apiKey, baseURL string, debug bool) (*Client, error) {
 	}
 
 	httpClient := &http.Client{
-		Timeout: 60 * time.Second,
+		Timeout: 180 * time.Second,
 	}
 
 	client := &Client{

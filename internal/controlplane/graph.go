@@ -81,19 +81,27 @@ func (c *Client) GraphHealth() error {
 
 // GetGraphStats retrieves statistics about the context graph
 func (c *Client) GetGraphStats(integration string) (*GraphStats, error) {
-	path := "/api/v1/context-graph/api/v1/graph/stats"
+	config, err := c.GetClientConfig()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get client config: %w", err)
+	}
+	path := fmt.Sprintf("%s/api/v1/graph/stats", config.ContextGraphAPIBase)
 	if integration != "" {
 		path += fmt.Sprintf("?integration=%s", integration)
 	}
 
 	var stats GraphStats
-	err := c.get(path, &stats)
+	err = c.get(path, &stats)
 	return &stats, err
 }
 
 // ListNodes retrieves all nodes in the graph
 func (c *Client) ListNodes(integration string, skip, limit int) ([]GraphNode, error) {
-	path := fmt.Sprintf("/api/v1/context-graph/api/v1/graph/nodes?skip=%d&limit=%d", skip, limit)
+	config, err := c.GetClientConfig()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get client config: %w", err)
+	}
+	path := fmt.Sprintf("%s/api/v1/graph/nodes?skip=%d&limit=%d", config.ContextGraphAPIBase, skip, limit)
 	if integration != "" {
 		path += fmt.Sprintf("&integration=%s", integration)
 	}
@@ -102,13 +110,17 @@ func (c *Client) ListNodes(integration string, skip, limit int) ([]GraphNode, er
 		Nodes []GraphNode `json:"nodes"`
 		Count int         `json:"count"`
 	}
-	err := c.get(path, &response)
+	err = c.get(path, &response)
 	return response.Nodes, err
 }
 
 // SearchNodes searches for nodes in the graph
 func (c *Client) SearchNodes(req *NodeSearchRequest, integration string, skip, limit int) ([]GraphNode, error) {
-	path := fmt.Sprintf("/api/v1/context-graph/api/v1/graph/nodes/search?skip=%d&limit=%d", skip, limit)
+	config, err := c.GetClientConfig()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get client config: %w", err)
+	}
+	path := fmt.Sprintf("%s/api/v1/graph/nodes/search?skip=%d&limit=%d", config.ContextGraphAPIBase, skip, limit)
 	if integration != "" {
 		path += fmt.Sprintf("&integration=%s", integration)
 	}
@@ -117,26 +129,34 @@ func (c *Client) SearchNodes(req *NodeSearchRequest, integration string, skip, l
 		Nodes []GraphNode `json:"nodes"`
 		Count int         `json:"count"`
 	}
-	err := c.post(path, req, &response)
+	err = c.post(path, req, &response)
 	return response.Nodes, err
 }
 
 // GetNode retrieves a specific node by ID
 func (c *Client) GetNode(nodeID string, integration string) (*GraphNode, error) {
-	path := fmt.Sprintf("/api/v1/context-graph/api/v1/graph/nodes/%s", nodeID)
+	config, err := c.GetClientConfig()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get client config: %w", err)
+	}
+	path := fmt.Sprintf("%s/api/v1/graph/nodes/%s", config.ContextGraphAPIBase, nodeID)
 	if integration != "" {
 		path += fmt.Sprintf("?integration=%s", integration)
 	}
 
 	var node GraphNode
-	err := c.get(path, &node)
+	err = c.get(path, &node)
 	return &node, err
 }
 
 // GetNodeRelationships retrieves relationships for a node
 func (c *Client) GetNodeRelationships(nodeID string, direction, relType, integration string, skip, limit int) ([]GraphRelationship, error) {
-	path := fmt.Sprintf("/api/v1/context-graph/api/v1/graph/nodes/%s/relationships?direction=%s&skip=%d&limit=%d",
-		nodeID, direction, skip, limit)
+	config, err := c.GetClientConfig()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get client config: %w", err)
+	}
+	path := fmt.Sprintf("%s/api/v1/graph/nodes/%s/relationships?direction=%s&skip=%d&limit=%d",
+		config.ContextGraphAPIBase, nodeID, direction, skip, limit)
 
 	if relType != "" {
 		path += fmt.Sprintf("&relationship_type=%s", relType)
@@ -146,13 +166,17 @@ func (c *Client) GetNodeRelationships(nodeID string, direction, relType, integra
 	}
 
 	var relationships []GraphRelationship
-	err := c.get(path, &relationships)
+	err = c.get(path, &relationships)
 	return relationships, err
 }
 
 // SearchNodesByText searches for nodes using text search
 func (c *Client) SearchNodesByText(req *TextSearchRequest, integration string, skip, limit int) ([]GraphNode, error) {
-	path := fmt.Sprintf("/api/v1/context-graph/api/v1/graph/nodes/search/text?skip=%d&limit=%d", skip, limit)
+	config, err := c.GetClientConfig()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get client config: %w", err)
+	}
+	path := fmt.Sprintf("%s/api/v1/graph/nodes/search/text?skip=%d&limit=%d", config.ContextGraphAPIBase, skip, limit)
 	if integration != "" {
 		path += fmt.Sprintf("&integration=%s", integration)
 	}
@@ -161,25 +185,33 @@ func (c *Client) SearchNodesByText(req *TextSearchRequest, integration string, s
 		Nodes []GraphNode `json:"nodes"`
 		Count int         `json:"count"`
 	}
-	err := c.post(path, req, &response)
+	err = c.post(path, req, &response)
 	return response.Nodes, err
 }
 
 // GetSubgraph retrieves a subgraph starting from a node
 func (c *Client) GetSubgraph(req *SubgraphRequest, integration string) (*SubgraphResponse, error) {
-	path := "/api/v1/context-graph/api/v1/graph/subgraph"
+	config, err := c.GetClientConfig()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get client config: %w", err)
+	}
+	path := fmt.Sprintf("%s/api/v1/graph/subgraph", config.ContextGraphAPIBase)
 	if integration != "" {
 		path += fmt.Sprintf("?integration=%s", integration)
 	}
 
 	var subgraph SubgraphResponse
-	err := c.post(path, req, &subgraph)
+	err = c.post(path, req, &subgraph)
 	return &subgraph, err
 }
 
 // ListLabels retrieves all node labels in the graph
 func (c *Client) ListLabels(integration string, skip, limit int) ([]string, error) {
-	path := fmt.Sprintf("/api/v1/context-graph/api/v1/graph/labels?skip=%d&limit=%d", skip, limit)
+	config, err := c.GetClientConfig()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get client config: %w", err)
+	}
+	path := fmt.Sprintf("%s/api/v1/graph/labels?skip=%d&limit=%d", config.ContextGraphAPIBase, skip, limit)
 	if integration != "" {
 		path += fmt.Sprintf("&integration=%s", integration)
 	}
@@ -188,13 +220,17 @@ func (c *Client) ListLabels(integration string, skip, limit int) ([]string, erro
 		Labels []string `json:"labels"`
 		Count  int      `json:"count"`
 	}
-	err := c.get(path, &response)
+	err = c.get(path, &response)
 	return response.Labels, err
 }
 
 // ListRelationshipTypes retrieves all relationship types in the graph
 func (c *Client) ListRelationshipTypes(integration string, skip, limit int) ([]string, error) {
-	path := fmt.Sprintf("/api/v1/context-graph/api/v1/graph/relationship-types?skip=%d&limit=%d", skip, limit)
+	config, err := c.GetClientConfig()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get client config: %w", err)
+	}
+	path := fmt.Sprintf("%s/api/v1/graph/relationship-types?skip=%d&limit=%d", config.ContextGraphAPIBase, skip, limit)
 	if integration != "" {
 		path += fmt.Sprintf("&integration=%s", integration)
 	}
@@ -203,19 +239,23 @@ func (c *Client) ListRelationshipTypes(integration string, skip, limit int) ([]s
 		RelationshipTypes []string `json:"relationship_types"`
 		Count             int      `json:"count"`
 	}
-	err := c.get(path, &response)
+	err = c.get(path, &response)
 	return response.RelationshipTypes, err
 }
 
 // ListIntegrations retrieves all available integrations
 func (c *Client) ListIntegrations(skip, limit int) ([]Integration, error) {
-	path := fmt.Sprintf("/api/v1/context-graph/api/v1/graph/integrations?skip=%d&limit=%d", skip, limit)
+	config, err := c.GetClientConfig()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get client config: %w", err)
+	}
+	path := fmt.Sprintf("%s/api/v1/graph/integrations?skip=%d&limit=%d", config.ContextGraphAPIBase, skip, limit)
 
 	var response struct {
 		Integrations []string `json:"integrations"`
 		Count        int      `json:"count"`
 	}
-	err := c.get(path, &response)
+	err = c.get(path, &response)
 	if err != nil {
 		return nil, err
 	}
