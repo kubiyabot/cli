@@ -1,0 +1,28 @@
+-----BEGIN PGP SIGNED MESSAGE-----
+Hash: SHA512
+
+Origin: Kubiya
+Label: Kubiya APT Repository
+Suite: stable
+Version: v6.3.9
+Codename: stable
+Date: Thu, 15 Jan 2026 00:47:43 UTC
+Architectures: amd64
+Components: main
+Description: APT repository for Kubiya CLI
+-----BEGIN PGP SIGNATURE-----
+
+iQIzBAEBCgAdFiEEh4p571o9TCAe+87I/PHDCfXOmkkFAmloOS8ACgkQ/PHDCfXO
+mkl68Q//eyW7Vlsnu+Plttb5pjbhtqaDiV3JOP1ha9Kk21HjjqLX0nU0TSrg0gnH
+YlajC/cayOxXbOSkA242/1WdVyvCuDhsDkuV5BY72Xj0NfcQ5uSJlzyph++B3IU0
+hCEg8xOeB3ZRkePAdX1rmCZuvNSFQvAjxwnpdu/IneOakN8VEKfG4NJCgBIbcUqU
+R0YM++FiS9jDHVSKE4s/dO8WqYtYQb6bnv8HZh2ALs7q3WqJyRZY9Rbi7cRnnKe+
+DTAO1ZkjjcEcfXbCaQe2B2BZB6pn+ShM5hQzMa4phCAldbOM7v4NkEpBt7BaqPWc
+0TX5BHFCNIDgYDJtCTtC3DWWV3t4e3wSuEacnVUCOG9FdyWjCu6vURyuf+J3upzJ
+b3PmohA1TpLf6S1lMyZDYsIGebbLoSxKPKTWr/NfyR08cnwgw29dUJILRAc8qGFF
+Jf1nRzgoRnHj1DgL/IWCDeboRuhTGhEOTW4NyNErLeXo2cgriCl1PvtUpe8/qQe7
+uNodXvfIlmREGRAGH1BxXfBYj/j+jMlC9yU1G7Rug5DVnIut61MqmpOJPWA28ZK0
+d1KyI5EeTeppwFpeEZzM4fR6W75MU8FI1wbvJLph8phUeHWUgv3NaKBwz/8SEp2v
+t3+qHxvXztdrHK1v4F9s8pIM4BTzXj7z5p7+iyKK8BVTa2zktFg=
+=h4dg
+-----END PGP SIGNATURE-----
