@@ -654,8 +654,8 @@ func (opts *WorkerStartOptions) runLocalForeground(ctx context.Context) error {
 		}
 
 		// Install langfuse - LiteLLM tries to initialize it for logging
-		// Pin to version compatible with LiteLLM's sdk_integration parameter
-		err = pkgMgr.Install(liteLLMCtx, venvDir, "langfuse>=2.36.0", false, false)
+		// Pin to version compatible with LiteLLM's sdk_integration parameter (>=2.36.0, <3.0.0)
+		err = pkgMgr.Install(liteLLMCtx, venvDir, "langfuse>=2.36.0,<3.0.0", false, false)
 		if err != nil {
 			// Non-fatal: langfuse is optional, just log a warning
 			logger.Warning("Failed to install langfuse (optional)", "error", err)
