@@ -1193,19 +1193,43 @@ func (ec *ExecCommand) ExecuteDirect(ctx context.Context, entityType, entityID, 
 	// Submit execution (use default queue for the entity's environment)
 	streamFlag := true
 
+	// Prepare optional fields
+	var queuePtr *string
+	if len(ec.QueueIDs) > 0 {
+		queuePtr = &ec.QueueIDs[0]
+	}
+
+	var parentExecPtr *string
+	if ec.ParentExecution != "" {
+		parentExecPtr = &ec.ParentExecution
+	}
+
+	var execEnv *entities.ExecutionEnvironmentOverride
+	if ec.Cwd != "" {
+		execEnv = &entities.ExecutionEnvironmentOverride{
+			WorkingDir: ec.Cwd,
+		}
+	}
+
 	var execution *entities.AgentExecution
 	var err error
 
 	if entityType == "agent" {
 		req := &entities.ExecuteAgentRequest{
-			Prompt: prompt,
-			Stream: &streamFlag,
+			Prompt:               prompt,
+			WorkerQueueID:        queuePtr,
+			ParentExecutionID:    parentExecPtr,
+			Stream:               &streamFlag,
+			ExecutionEnvironment: execEnv,
 		}
 		execution, err = ec.client.ExecuteAgentV2(entityID, req)
 	} else {
 		req := &entities.ExecuteTeamRequest{
-			Prompt: prompt,
-			Stream: &streamFlag,
+			Prompt:               prompt,
+			WorkerQueueID:        queuePtr,
+			ParentExecutionID:    parentExecPtr,
+			Stream:               &streamFlag,
+			ExecutionEnvironment: execEnv,
 		}
 		execution, err = ec.client.ExecuteTeamV2(entityID, req)
 	}
