@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"fmt"
 	"text/tabwriter"
 	"time"
@@ -57,12 +58,17 @@ or trigger them manually via webhooks.`,
 }
 
 func newListJobsCommand(cfg *config.Config) *cobra.Command {
+	var outputFormat string
+
 	cmd := &cobra.Command{
 		Use:     "list",
 		Aliases: []string{"ls", "l"},
 		Short:   "📋 List all jobs",
 		Example: `  # List all jobs
-  kubiya job list`,
+  kubiya job list
+
+  # List all jobs in JSON format
+  kubiya job list -o json`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			client, err := controlplane.New(cfg.APIKey, cfg.Debug)
 			if err != nil {
@@ -75,68 +81,82 @@ func newListJobsCommand(cfg *config.Config) *cobra.Command {
 			}
 
 			if len(jobs) == 0 {
+				if outputFormat == "json" {
+					fmt.Println("[]")
+					return nil
+				}
 				fmt.Println(style.CreateHelpBox("No jobs found"))
 				return nil
 			}
 
-			// Beautiful header
-			fmt.Println()
-			fmt.Println(style.CreateBanner(fmt.Sprintf("Scheduled Jobs (%d)", len(jobs)), "⏰"))
-			fmt.Println()
+			// Handle output format
+			switch outputFormat {
+			case "json":
+				encoder := json.NewEncoder(cmd.OutOrStdout())
+				encoder.SetIndent("", "  ")
+				return encoder.Encode(jobs)
+			default:
+				// Beautiful header
+				fmt.Println()
+				fmt.Println(style.CreateBanner(fmt.Sprintf("Scheduled Jobs (%d)", len(jobs)), "⏰"))
+				fmt.Println()
 
-			// Display in table format
-			w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 3, ' ', 0)
-			fmt.Fprintln(w, style.TableHeaderStyle.Render("ID\tNAME\tENTITY\tSCHEDULE\tENABLED\tNEXT RUN"))
-			fmt.Fprintln(w, style.CreateDivider(100))
+				// Display in table format
+				w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 3, ' ', 0)
+				fmt.Fprintln(w, style.TableHeaderStyle.Render("ID\tNAME\tENTITY\tSCHEDULE\tENABLED\tNEXT RUN"))
+				fmt.Fprintln(w, style.CreateDivider(100))
 
-			for _, job := range jobs {
-				id := truncateID(job.ID)
-				name := job.Name
-				if len(name) > 30 {
-					name = name[:27] + "..."
-				}
-
-				// Determine entity type and ID
-				entity := "-"
-				if job.AgentID != nil {
-					entity = "agent:" + truncateID(*job.AgentID)
-				} else if job.TeamID != nil {
-					entity = "team:" + truncateID(*job.TeamID)
-				}
-
-				schedule := "-"
-				if job.Schedule != nil {
-					schedule = *job.Schedule
-					if len(schedule) > 20 {
-						schedule = schedule[:17] + "..."
+				for _, job := range jobs {
+					id := truncateID(job.ID)
+					name := job.Name
+					if len(name) > 30 {
+						name = name[:27] + "..."
 					}
+
+					// Determine entity type and ID
+					entity := "-"
+					if job.AgentID != nil {
+						entity = "agent:" + truncateID(*job.AgentID)
+					} else if job.TeamID != nil {
+						entity = "team:" + truncateID(*job.TeamID)
+					}
+
+					schedule := "-"
+					if job.Schedule != nil {
+						schedule = *job.Schedule
+						if len(schedule) > 20 {
+							schedule = schedule[:17] + "..."
+						}
+					}
+
+					enabled := "❌"
+					if job.Enabled {
+						enabled = "✅"
+					}
+
+					nextRun := "-"
+					if job.NextRunAt != nil {
+						nextRun = job.NextRunAt.Format("2006-01-02 15:04")
+					}
+
+					fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n",
+						style.ValueStyle.Render(id),
+						style.InfoStyle.Render(name),
+						style.DimStyle.Render(entity),
+						style.MetadataValueStyle.Render(schedule),
+						enabled,
+						style.DimStyle.Render(nextRun))
 				}
 
-				enabled := "❌"
-				if job.Enabled {
-					enabled = "✅"
-				}
+				w.Flush()
+				fmt.Println()
 
-				nextRun := "-"
-				if job.NextRunAt != nil {
-					nextRun = job.NextRunAt.Format("2006-01-02 15:04")
-				}
-
-				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n",
-					style.ValueStyle.Render(id),
-					style.InfoStyle.Render(name),
-					style.DimStyle.Render(entity),
-					style.MetadataValueStyle.Render(schedule),
-					enabled,
-					style.DimStyle.Render(nextRun))
+				return nil
 			}
-
-			w.Flush()
-			fmt.Println()
-
-			return nil
 		},
 	}
+
+	cmd.Flags().StringVarP(&outputFormat, "output", "o", "text", "Output format (text|json)")
 
 	return cmd
 }
